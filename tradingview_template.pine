@@ -1,0 +1,86 @@
+//@version=6
+indicator("RSI divergence + BB · local Telegram", overlay=true, max_bars_back=500)
+// Generated from skills/rsi-divergence/SKILL.md. Regenerate and recreate alerts after rule changes.
+string webhookSecret = input.string("", "Webhook secret", tooltip="Use WEBHOOK_SECRET from your local .env. Do not enter your Telegram token here.")
+int rsiPeriod = __RSI_PERIOD__
+int bbPeriod = __BB_PERIOD__
+float bbMultiplier = __BB_MULTIPLIER__
+int leftBars = __PIVOT_LEFT__
+int rightBars = __PIVOT_RIGHT__
+int minSpacing = __MIN_SPACING__
+int maxSpacing = __MAX_SPACING__
+
+float change = ta.change(close)
+float avgGain = ta.rma(math.max(change, 0), rsiPeriod)
+float avgLoss = ta.rma(math.max(-change, 0), rsiPeriod)
+float rsi = na(avgGain) or na(avgLoss) ? na : avgGain == 0 and avgLoss == 0 ? 50 : avgLoss == 0 ? 100 : avgGain == 0 ? 0 : 100 - 100 / (1 + avgGain / avgLoss)
+float basis = ta.sma(close, bbPeriod)
+float deviation = bbMultiplier * ta.stdev(close, bbPeriod, true)
+float lower = basis - deviation
+float upper = basis + deviation
+plot(basis, "BB basis", color=color.gray)
+plot(lower, "BB lower", color=color.teal)
+plot(upper, "BB upper", color=color.orange)
+
+strictPivot(bool isLow) =>
+    bool found = bar_index >= leftBars + rightBars
+    float candidate = isLow ? low[rightBars] : high[rightBars]
+    for offset = 0 to leftBars + rightBars
+        if offset != rightBars
+            float other = isLow ? low[offset] : high[offset]
+            found := found and (isLow ? candidate < other : candidate > other)
+    found
+
+number(float value) =>
+    str.tostring(value, "#.################")
+
+payload(string direction, float price1, float price2, float rsi1, float rsi2, float band1, float band2, int pivot1, int pivot2, int spacing) =>
+    '{"secret":"' + webhookSecret + '","symbol":"' + syminfo.tickerid + '","timeframe":"' + timeframe.period + '","direction":"' + direction + '","price1":' + number(price1) + ',"price2":' + number(price2) + ',"rsi1":' + number(rsi1) + ',"rsi2":' + number(rsi2) + ',"band1":' + number(band1) + ',"band2":' + number(band2) + ',"pivot1":' + str.tostring(pivot1) + ',"pivot2":' + str.tostring(pivot2) + ',"confirmed_at":' + str.tostring(time_close) + ',"spacing":' + str.tostring(spacing) + ',"rules":__RULES_JSON__}'
+
+var float lastLow = na
+var float lastLowRsi = na
+var float lastLower = na
+var int lastLowIndex = na
+var int lastLowTime = na
+var float lastHigh = na
+var float lastHighRsi = na
+var float lastUpper = na
+var int lastHighIndex = na
+var int lastHighTime = na
+bool bullish = false
+bool bearish = false
+bool lowPivot = strictPivot(true)
+bool highPivot = strictPivot(false)
+bool supportedChart = chart.is_standard and (timeframe.period == "240" or timeframe.period == "1D" or timeframe.period == "1W" or timeframe.period == "1M")
+
+if barstate.isconfirmed and supportedChart
+    int pivotIndex = bar_index - rightBars
+    int pivotTime = time[rightBars]
+    float pivotRsi = rsi[rightBars]
+    if lowPivot
+        int spacing = pivotIndex - lastLowIndex
+        bullish := bar_index >= 249 and not na(lastLowRsi) and not na(lastLower) and not na(pivotRsi) and not na(lower[rightBars]) and spacing >= minSpacing and spacing <= maxSpacing and low[rightBars] < lastLow and pivotRsi > lastLowRsi and low[rightBars] <= lower[rightBars]
+        if bullish and str.length(webhookSecret) >= 32
+            alert(payload("bullish", lastLow, low[rightBars], lastLowRsi, pivotRsi, lastLower, lower[rightBars], lastLowTime, pivotTime, spacing), alert.freq_all)
+        // Always remember the consecutive pivot, even when it did not form a signal.
+        lastLow := low[rightBars]
+        lastLowRsi := pivotRsi
+        lastLower := lower[rightBars]
+        lastLowIndex := pivotIndex
+        lastLowTime := pivotTime
+    if highPivot
+        int spacing = pivotIndex - lastHighIndex
+        bearish := bar_index >= 249 and not na(lastHighRsi) and not na(lastUpper) and not na(pivotRsi) and not na(upper[rightBars]) and spacing >= minSpacing and spacing <= maxSpacing and high[rightBars] > lastHigh and pivotRsi < lastHighRsi and high[rightBars] >= upper[rightBars]
+        if bearish and str.length(webhookSecret) >= 32
+            alert(payload("bearish", lastHigh, high[rightBars], lastHighRsi, pivotRsi, lastUpper, upper[rightBars], lastHighTime, pivotTime, spacing), alert.freq_all)
+        lastHigh := high[rightBars]
+        lastHighRsi := pivotRsi
+        lastUpper := upper[rightBars]
+        lastHighIndex := pivotIndex
+        lastHighTime := pivotTime
+
+// Mark confirmation candles, not the earlier pivot candles.
+plotshape(bullish, title="Bullish confirmed", style=shape.triangleup, location=location.belowbar, color=color.lime, text="BULL")
+plotshape(bearish, title="Bearish confirmed", style=shape.triangledown, location=location.abovebar, color=color.red, text="BEAR")
+bgcolor(not supportedChart ? color.new(color.red, 85) : na, title="Unsupported chart/timeframe")
+

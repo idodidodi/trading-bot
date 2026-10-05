@@ -1,0 +1,12 @@
+{
+  "poll_seconds": 300,
+  "timeframes": ["monthly", "weekly", "daily", "4h"],
+  "assets": [
+    {"id": "EURUSD", "provider": "csv", "path": "data/candles/{asset}-{timeframe}.csv"},
+    {"id": "DAX", "provider": "csv", "path": "data/candles/{asset}-{timeframe}.csv"},
+    {"id": "DOLLAR_INDEX", "provider": "csv", "path": "data/candles/{asset}-{timeframe}.csv"},
+    {"id": "BTCUSD", "provider": "csv", "path": "data/candles/{asset}-{timeframe}.csv"},
+    {"id": "NEARUSD", "provider": "csv", "path": "data/candles/{asset}-{timeframe}.csv"},
+    {"id": "NVDA", "provider": "csv", "path": "data/candles/{asset}-{timeframe}.csv"}
+  ]
+}
