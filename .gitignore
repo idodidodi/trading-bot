@@ -3,3 +3,6 @@ data/
 __pycache__/
 *.pyc
 .idea/
+dist/
+.wrangler/
+node_modules/

@@ -27,3 +27,11 @@ Local `.env` retains all previous values and has additive cloud connection setti
 The static-only deployment bundle is ready at `data/cloudflare-pages/`, with this project's public browser configuration. Deploy that folder's contents to Cloudflare Pages. It contains only browser assets and routing; local `.env` and databases are excluded. Cloudflare publishing and browser sign-in remain to be verified. The owner dashboard API was verified against the uploaded assets, backtests and logs.
 
 For a bounded manual catch-up without starting scanning or Telegram delivery, run `python3 cloud/sync_once.py`. The durable local queue retains unacknowledged records if the command is interrupted.
+
+## GitHub-connected Cloudflare Worker
+
+The `family-trading-bot` Worker builds automatically from `main` in `idodidodi/trading-bot`. Set its root directory to `/`, build command to `node cloud/build.mjs`, and deploy command to `npx wrangler@4.147.0 deploy`. The checked-in Wrangler configuration serves only `dist/`, with a single-page fallback for dashboard routes.
+
+The build copies an explicit list of browser assets, retains `/web/` URLs, and generates public Supabase settings from `cloud/browser-config.json`. It excludes tests, scanner code, local databases and `.env`. Optional build variables are `DASHBOARD_SUPABASE_URL`, `DASHBOARD_PUBLISHABLE_KEY`, and `DASHBOARD_INSTALLATION_ID`; private keys and machine tokens must never be supplied to this browser build.
+
+Run `node cloud/build.mjs` locally to prepare the same static output. No npm dependencies or Python process are required by the UI build. Changes become live after their GitHub push and a successful Cloudflare build.
