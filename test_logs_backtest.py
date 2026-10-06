@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from pathlib import Path
 import tempfile
@@ -36,17 +37,18 @@ class TabsTests(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever)
             thread.start()
             try:
-                for path, expected in [('/', 'Backtest 2020'),('/logs','Scan cycle completed'),('/backtest','unavailable')]:
-                    with urllib.request.urlopen(f'http://127.0.0.1:{server.server_port}{path}') as response:
+                url=f'http://127.0.0.1:{server.server_port}'
+                for path in ['/', '/logs', '/backtest', '/signals']:
+                    with urllib.request.urlopen(url+path) as response:
                         self.assertEqual(response.status,200)
-                        page = response.read().decode()
-                        self.assertIn(expected, page)
-                        if path == '/':
-                            self.assertIn('Next scan (Israel time)', page)
-                            self.assertIn('Awaiting scanner schedule', page)
-                            self.assertIn('class="data-warning"', page)
-                            self.assertIn('Live data warning', page)
-                            self.assertIn('Candle CSV missing', page)
+                        self.assertIn('/web/app.js',response.read().decode())
+                with urllib.request.urlopen(url+'/api/logs?filter=errors') as response:
+                    rows=json.load(response)['rows']
+                    self.assertTrue(any('unavailable' in r['details'] for r in rows))
+                with urllib.request.urlopen(url+'/api/findings?source=backtest') as response:
+                    self.assertEqual(json.load(response)['summary'][0]['status'],'unavailable')
+                with urllib.request.urlopen(url+'/api/findings?source=live') as response:
+                    self.assertEqual(json.load(response)['summary'][0]['status'],'unavailable')
             finally:
                 server.shutdown()
                 server.server_close()

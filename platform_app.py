@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import signal
 import ssl
 import threading
 import time
@@ -121,6 +122,8 @@ class Store:
 
     def insert(self, payload):
         identity = [payload[k] for k in ('symbol', 'timeframe', 'direction', 'pivot1', 'pivot2')]
+        if payload.get('signal_status') == 'provisional': identity.append('warmup')
+        if payload.get('review_slot'): identity.append(payload['review_slot'])
         key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
         with self.connect() as db:
             result = db.execute('INSERT OR IGNORE INTO signals(id,payload,received) VALUES(?,?,?)',
@@ -154,7 +157,7 @@ def message(payload):
             f"Price: {payload['price1']:g} → {payload['price2']:g}\n"
             f"RSI({payload['rules']['rsi_period']}): {payload['rsi1']:.2f} → {payload['rsi2']:.2f}\n"
             f"{'Lower' if payload['direction'] == 'bullish' else 'Upper'} BB touch: {payload['band2']:g}\n"
-            f"{timing}\n{footer}")
+            f"{timing}\n{payload.get('stage_description', 'Warm-up / potential divergence; awaiting pivot confirmation.' if provisional else 'Confirmed divergence / structural pivot confirmation after the next candle.')}\n{footer}")
 
 
 def telegram_connection_error(exc):
@@ -235,7 +238,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 return
             from urllib.parse import urlsplit
             route = urlsplit(self.path).path
-            if route in ('/assets', '/candle', '/dashboard'):
+            if route in ('/', '/signals', '/logs', '/backtest', '/assets', '/candle', '/dashboard'):
                 self.respond(200, (ROOT / 'web/index.html').read_text(), 'text/html; charset=utf-8')
                 return
             if route.startswith('/web/'):
@@ -246,7 +249,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 else:
                     self.respond(404, {'error':'Not found'})
                 return
-            if route in ('/api/assets', '/api/findings', '/api/candles', '/api/logs'):
+            if route in ('/api/assets', '/api/findings', '/api/candles', '/api/logs', '/api/backtests'):
                 from dashboard_api import read
                 try:
                     self.respond(200, read(store, self.path))
@@ -306,7 +309,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 self.respond(404, {'error': 'Not found'})
 
         def do_POST(self):
-            if dashboard and self.path in ('/api/feedback', '/api/assets'):
+            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests'):
                 from finding_feedback import save
                 host = self.headers.get('Host')
                 allowed = (f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}')
@@ -322,7 +325,10 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     body = json.loads(self.rfile.read(size))
                     if not isinstance(body, dict):
                         raise ValueError('Expected JSON object')
-                    if self.path == '/api/assets':
+                    if self.path == '/api/backtests':
+                        from backtest_jobs import start
+                        self.respond(202, start(store, body))
+                    elif self.path == '/api/assets':
                         from dashboard_api import ensure
                         from managed_assets import change
                         ensure(store)
@@ -415,17 +421,23 @@ def main():
         prepare_store(store)
         scanner_thread = threading.Thread(target=scanner_worker, args=(store, config, rules, stop), daemon=True)
         scanner_thread.start()
+        from alert_reviews import worker as review_worker
+        threading.Thread(target=review_worker, args=(store, stop), daemon=True).start()
     server = LocalHTTPServer((host, int(os.environ.get('PORT', '8080'))), handler_factory(store, rules, secret, dry_run, dashboard=True))
     webhook_server = None
     if legacy_webhook:
         webhook_server = ThreadingHTTPServer((host, int(os.environ.get('WEBHOOK_PORT', '8081'))), handler_factory(store, rules, secret, dry_run))
         threading.Thread(target=webhook_server.serve_forever, daemon=True).start()
     print(f'Dashboard port={server.server_port}; source={"legacy webhook" if legacy_webhook else "local scanner"}; delivery={"dry-run" if dry_run else "Telegram"}.')
+    def terminate(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, terminate)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        stop.set()
         server.shutdown()
         server.server_close()
         if webhook_server:

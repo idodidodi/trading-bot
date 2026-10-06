@@ -35,3 +35,12 @@ The `family-trading-bot` Worker builds automatically from `main` in `idodidodi/t
 The build copies an explicit list of browser assets, retains `/web/` URLs, and generates public Supabase settings from `cloud/browser-config.json`. It excludes tests, scanner code, local databases and `.env`. Optional build variables are `DASHBOARD_SUPABASE_URL`, `DASHBOARD_PUBLISHABLE_KEY`, and `DASHBOARD_INSTALLATION_ID`; private keys and machine tokens must never be supplied to this browser build.
 
 Run `node cloud/build.mjs` locally to prepare the same static output. No npm dependencies or Python process are required by the UI build. Changes become live after their GitHub push and a successful Cloudflare build.
+
+
+## Cloud backtest upgrade
+
+Apply `backtests.sql` to the existing project, then deploy `functions/backtests` with JWT verification enabled. The function validates the signed-in owner through `/auth/v1/user` and the owner-scoped SQL API before creating a job. Background replay uses only the stored historical candles and rule metadata. It does not use the private machine token or send Telegram alerts. The `dashboard_finish_backtest` and failure functions are restricted to `service_role`; completion is atomic and existing matching evidence/feedback is preserved. Browser sign-in uses tab-scoped refresh tokens and automatic refresh.
+
+From the repository root, `SUPABASE_ACCESS_TOKEN` configured locally plus `./scripts/deploy-cloud.sh` applies the migration, sets/reads back `jwt_exp=604800`, deploys the backtests function and builds the static UI. `schema.sql` must be installed before `backtests.sql`; on subsequent upgrades, apply changes to `dashboard_api_base` rather than replacing the wrapper with the old schema API.
+
+The backtest migration and `backtests` function were deployed on 6 October 2026; unauthenticated calls return HTTP 401. The gateway's existing JWT verification setting remains enabled. The seven-day access-token expiry is prepared but not saved pending the browser confirmation required for extending authentication validity.

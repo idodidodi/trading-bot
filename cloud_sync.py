@@ -50,6 +50,9 @@ def snapshot(store):
             enqueue(db,'feedback',key,dict(finding_id=key,source=source,evidence=json.loads(evidence),rating=rating,comment=comment,revision=revision,updated_at=updated))
         for seq,key,source,evidence,rating,comment,revision,updated in db.execute('SELECT * FROM feedback_history'):
             enqueue(db,'feedback_history',f'{key}:{revision}',dict(finding_id=key,source=source,evidence=json.loads(evidence),rating=rating,comment=comment,revision=revision,updated_at=updated))
+        status_exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='scanner_status'").fetchone()
+        scan=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone() if status_exists else None
+        if scan: enqueue(db,'summary','live',json.loads(scan[0]).get('coverage',[]))
         report=latest_report(db,ROOT)
         if report:
             enqueue(db,'summary','backtest',[dict(asset=r['asset'],timeframe=r['timeframe'],status=r['status'],signals=len(r['signals']),note=r.get('reason',r.get('note',''))) for r in report['results']])

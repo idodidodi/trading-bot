@@ -267,8 +267,8 @@ def scan_once(store, config, rules, now=None, stop=None):
                     if asset.get('continuous') and any(a.end != b.start for a, b in zip(candles, candles[1:])):
                         raise ValueError('Missing candles in continuous-market feed')
                     source_id = f"{asset['provider']}:{asset.get('exchange') or 'configured'}:{asset.get('symbol') or asset['id']}"
-                    state_id = f"{asset['id']}@{source_id}@{rules['skill_hash']}@confirmed-v1"
-                    matches = detect(candles, rules, source_id, timeframe)
+                    state_id = f"{asset['id']}@{source_id}@{rules['skill_hash']}@all-stages-v2"
+                    matches = detect(candles, rules, source_id, timeframe) + detect(candles, rules, source_id, timeframe, provisional=True)
                     with store.connect() as db:
                         state = db.execute('SELECT last_end FROM scan_state WHERE asset=? AND timeframe=?', (state_id, timeframe)).fetchone()
                     # First run establishes a baseline without flooding Telegram with history.
@@ -280,7 +280,7 @@ def scan_once(store, config, rules, now=None, stop=None):
                     age_seconds = max(0, (now - candles[-1].end) // 1000)
                     if asset.get('max_data_age_seconds') and age_seconds > asset['max_data_age_seconds']:
                         raise ValueError('Latest closed candle is older than the configured freshness limit')
-                    pending = [s for s in matches if s['confirmed_at'] > cutoff]
+                    pending = sorted((s for s in matches if s['confirmed_at'] > cutoff), key=lambda s:(s['confirmed_at'],s.get('signal_status')!='provisional'))
                     new = sum(store.insert(validate_signal(s, rules)) for s in pending)
                     with store.connect() as db:
                         db.execute('INSERT INTO scan_state(asset,timeframe,last_end) VALUES(?,?,?) ON CONFLICT(asset,timeframe) DO UPDATE SET last_end=MAX(last_end,excluded.last_end)',

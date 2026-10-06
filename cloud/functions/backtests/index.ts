@@ -1,0 +1,21 @@
+import {detect,validateCandles} from './engine.mjs';
+const url=Deno.env.get('SUPABASE_URL'),key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type','Access-Control-Allow-Methods':'POST,OPTIONS'};
+const admin={apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json'};
+async function api(path,body){const r=await fetch(url+'/rest/v1/'+path,{headers:admin,method:body?'POST':'GET',body:body?JSON.stringify(body):undefined});if(!r.ok)throw Error('Cloud storage operation failed');return r.status===204?null:await r.json();}
+async function run(installation,job,input){try{
+ const history=await api('dashboard_records?'+new URLSearchParams({installation:'eq.'+installation,kind:'eq.backtest_run',select:'payload',order:'updated_at.desc',limit:'1'}));const rules=history[0]?.payload.rules;if(!rules)throw Error('Historical rules have not synced');
+ const start=Date.UTC(2020,0,1),end=Date.UTC(2021,0,1),results=[],findings=[];
+ for(const asset of input.assets)for(const timeframe of input.timeframes){const candles=[];for(let offset=0;offset<10000;offset+=1000){const rows=await api('dashboard_records?'+new URLSearchParams({installation:'eq.'+installation,kind:'eq.candle','payload->>source':'eq.backtest','payload->>symbol':'eq.'+asset,'payload->>timeframe':'eq.'+timeframe,select:'payload',order:'payload->>start.asc',offset:String(offset),limit:'1000'}));candles.push(...rows.map((r)=>r.payload));if(rows.length<1000)break;if(offset===9000)throw Error('Historical series exceeds replay limit');}
+ let row={asset,timeframe,status:'unavailable',signals:0,note:'Historical candles have not synced'};
+ if(candles.length){const bars=validateCandles(candles.filter(c=>c.end<=end));const matches=detect(bars,rules,asset,timeframe,input.strategy==='warmup').filter((s)=>s.confirmed_at>=start&&s.confirmed_at<end);row={asset,timeframe,status:'partial history',signals:matches.length,note:'Stored historical candles; calendar coverage checked, exchange sessions not verified.'};const minimum=Math.max(rules.bb_period+rules.pivot_left+rules.pivot_right,rules.max_spacing+rules.pivot_left+rules.pivot_right+1,rules.rsi_period+1);const duration={'4h':14400000,daily:86400000,weekly:604800000,monthly:2678400000};if(bars.filter(c=>c.end<=start).length>=minimum&&bars.at(-1)?.end>=end-duration[timeframe])row.status='replayed';
+ for(const signal of matches){const text=JSON.stringify(['backtest',signal]);const id=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))).map(v=>v.toString(16).padStart(2,'0')).join('');findings.push({id,signal});}}
+ const provenance=history[0]?.payload.results?.find((r)=>r.asset===asset&&r.timeframe===timeframe);if(provenance?.note?.includes('malformed source rows')){row.status='partial history';row.note=provenance.note;}results.push(row);}
+ await api('rpc/dashboard_finish_backtest',{installation,job_id:job,summary:results,findings});
+ }catch(e){await api('rpc/dashboard_fail_backtest',{installation,job_id:job,reason:e instanceof Error?e.message:'Cloud replay failed'});}}
+Deno.serve(async request=>{if(request.method==='OPTIONS')return new Response(null,{headers:cors});if(request.method!=='POST')return new Response('Method not allowed',{status:405,headers:cors});try{
+ const auth=request.headers.get('Authorization')||'';const user=await fetch(url+'/auth/v1/user',{headers:{apikey:key,Authorization:auth}});if(!user.ok)return Response.json({error:'Sign in required'},{status:401,headers:cors});const body=await request.json();const installation=body.installation;
+ // Owner check and validation occur in the SQL API with the caller's JWT.
+ const response=await fetch(url+'/rest/v1/rpc/dashboard_api',{method:'POST',headers:{apikey:key,Authorization:auth,'Content-Type':'application/json'},body:JSON.stringify({installation,operation:'/api/backtests',input:body.input})});const job=await response.json();if(!response.ok||job.error)return Response.json(job,{status:400,headers:cors});
+ EdgeRuntime.waitUntil(run(installation,job.id,body.input));return Response.json(job,{status:202,headers:cors});
+ }catch{return Response.json({error:'Invalid backtest request'},{status:400,headers:cors});}});

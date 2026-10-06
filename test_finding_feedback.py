@@ -87,8 +87,12 @@ class FeedbackTests(unittest.TestCase):
                     self.assertEqual(caught.exception.code, 403)
             with urllib.request.urlopen(url+'/signals') as response:
                 page = response.read().decode()
-                self.assertIn('data-rating="4" aria-label="4 stars" aria-pressed="true"', page)
-                self.assertIn('&lt;script&gt;', page)
+                self.assertIn('/web/app.js', page)
+                self.assertNotIn('<script>alert', page)
+            with urllib.request.urlopen(url+'/api/findings?source=live') as response:
+                findings = json.load(response)['findings']
+                self.assertEqual(findings[0]['feedback']['rating'], 4)
+                self.assertEqual(findings[0]['feedback']['comment'], self.body['comment'])
                 self.assertNotIn('http-equiv="refresh"', page)
             with urllib.request.urlopen(url+'/api/feedback/export') as response:
                 self.assertEqual(len(json.load(response)['feedback_history']), 1)

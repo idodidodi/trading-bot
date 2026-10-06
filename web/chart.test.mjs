@@ -37,7 +37,7 @@ test('draw overlays bands and puts RSI on a separate pane with a 0–100 scale',
 });
 
 test('closing a direct candle page returns to its findings; an in-page dialog stays put',async()=>{
- for(const [path,source,destination] of [['/candle','live','/'],['/candle','backtest','/backtest'],['/dashboard','live',undefined]]){
+ for(const [path,source,destination] of [['/candle','live','/signals'],['/candle','backtest','/backtest'],['/dashboard','live',undefined]]){
   const elements=new Map();
   const element=()=>({textContent:'',append(){},replaceChildren(){},addEventListener(event,fn){this[event]=fn;},showModal(){this.open=true;},close(){this.open=false;this['close-event']?.();}});
   const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id);};

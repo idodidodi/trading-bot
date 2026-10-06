@@ -1,3 +1,4 @@
+import json
 import csv
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -203,11 +204,12 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(scan_once(store, config, load_rules(), bars[-1].end)[0]['status'], 'baseline set')
             self.assertEqual(store.rows(), [])
             write(bars[:257])
-            self.assertEqual(scan_once(store, config, load_rules(), bars[-1].end)[0]['new_signals'], 0)
+            self.assertEqual(scan_once(store, config, load_rules(), bars[-1].end)[0]['new_signals'], 1)
+            self.assertEqual(json.loads(store.rows()[0][0])['signal_status'], 'provisional')
             write(bars[:258])
             result = scan_once(store, config, load_rules(), bars[-1].end)
             self.assertEqual(result[0]['new_signals'], 1)
-            self.assertEqual(len(store.rows()), 1)
+            self.assertEqual(len(store.rows()), 2)
             write(bars)  # A second following candle must not send a duplicate alert.
             restored = Store(Path(folder) / 'db.sqlite3')
             self.assertEqual(scan_once(restored, config, load_rules(), bars[-1].end)[0]['new_signals'], 0)

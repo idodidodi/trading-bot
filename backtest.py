@@ -9,17 +9,17 @@ START = timestamp('2020-01-01T00:00:00Z')
 END = timestamp('2021-01-01T00:00:00Z')
 
 
-def replay(candles, rules, symbol, timeframe):
+def replay(candles, rules, symbol, timeframe, *, provisional=False):
     # Exclude future candles before calculating indicators and confirming pivots.
     bars = check_candles(candles, END)
-    signals = [s for s in detect(bars, rules, symbol, timeframe) if START <= s['confirmed_at'] < END]
+    signals = [s for s in detect(bars, rules, symbol, timeframe, provisional=provisional) if START <= s['confirmed_at'] < END]
     warmup = sum(c.end <= START for c in bars)
     complete = bool(bars and warmup >= minimum_history(rules) and bars[-1].end >= END - {'4h': 14400000, 'daily': 86400000, 'weekly': 604800000, 'monthly': 2678400000}[timeframe])
     return dict(status='replayed' if complete else 'partial history', candles=len(bars), warmup_candles=warmup, signals=signals,
                 note='Calendar range checked; trading-session gaps are not verified.')
 
 
-def run_backtest(store, config, rules):
+def run_backtest(store, config, rules, *, provisional=False):
     results = []
     for asset in config['assets']:
         for timeframe in config['timeframes']:
@@ -27,7 +27,7 @@ def run_backtest(store, config, rules):
             try:
                 if asset['provider'] != 'csv':
                     raise ValueError('Supply historical CSV files; live provider requests do not cover 2020.')
-                row.update(replay(read_csv(asset, timeframe), rules, asset['id'], timeframe))
+                row.update(replay(read_csv(asset, timeframe), rules, asset['id'], timeframe, provisional=provisional))
                 csv_path = Path(asset['path'].format(asset=asset['id'], timeframe=timeframe))
                 if not csv_path.is_absolute():
                     csv_path = ROOT / csv_path
