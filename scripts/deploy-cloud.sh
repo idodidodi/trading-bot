@@ -7,6 +7,7 @@ python3 scripts/configure-cloud.py
 # Install the function into the CLI project layout.
 mkdir -p supabase/functions
 cp -R cloud/functions/backtests supabase/functions/
-supabase functions deploy backtests --project-ref "$PROJECT_REF"
+# The handler verifies current ECC user JWTs with Supabase Auth and checks ownership.
+supabase functions deploy backtests --project-ref "$PROJECT_REF" --no-verify-jwt
 node cloud/build.mjs
 printf '%s\n' 'Backtests function deployed. Publish dist/ through the existing Cloudflare build.'
