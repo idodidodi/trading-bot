@@ -2,7 +2,7 @@
 import argparse
 import calendar
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import json
 import math
@@ -11,6 +11,7 @@ from pathlib import Path
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 
 from platform_app import ROOT, Store, load_env, load_rules, validate_signal
 
@@ -30,6 +31,34 @@ class Candle:
     high: float
     low: float
     close: float
+
+
+class ProviderCandles(list):
+    """Candle data with visible provider-normalization notes."""
+    def __init__(self, candles, notes):
+        super().__init__(candles)
+        self.notes = notes
+
+
+def normalize_provider_candles(candles):
+    # APIs can repeat a timestamp with a corrected close. Retain the last
+    # revision in the ordered response, just as the persistent cache does.
+    unique = {c.start: c for c in candles}
+    ordered = sorted(unique.values(), key=lambda c: c.start)
+    revisions = len(candles) - len(ordered)
+    shortened = 0
+    for i in range(len(ordered) - 1):
+        # The next native bar start is a stronger boundary than our nominal
+        # duration (provider sessions/DST can produce a short final bucket).
+        if ordered[i].end > ordered[i + 1].start:
+            ordered[i] = replace(ordered[i], end=ordered[i + 1].start)
+            shortened += 1
+    notes = []
+    if revisions:
+        notes.append(f'{revisions} provider candle revision(s): last returned version used')
+    if shortened:
+        notes.append(f'{shortened} shortened provider interval(s): closed at next native bar start')
+    return ProviderCandles(ordered, notes)
 
 
 def timestamp(value):
@@ -81,7 +110,7 @@ def indicators(candles, rules):
     return rsi, lower, upper
 
 
-def detect(candles, rules, symbol, timeframe):
+def detect(candles, rules, symbol, timeframe, *, provisional=False):
     rsi, lower, upper = indicators(candles, rules)
     left, right = rules['pivot_left'], rules['pivot_right']
     signals = []
@@ -89,12 +118,23 @@ def detect(candles, rules, symbol, timeframe):
         previous = None
         prices = [c.low if direction == 'bullish' else c.high for c in candles]
         bands = lower if direction == 'bullish' else upper
-        for i in range(left, len(candles) - right):
-            neighbours = prices[i - left:i] + prices[i + 1:i + right + 1]
+        for i in range(left, len(candles) if provisional else len(candles) - right):
+            if provisional:
+                # Only promote a first pivot after its right-hand candles have
+                # closed. Candidate P2 never reads candles after its own close.
+                j = i - right
+                if j >= left:
+                    neighbours = prices[j - left:j] + prices[j + 1:i + 1]
+                    confirmed = all(prices[j] < v for v in neighbours) if direction == 'bullish' else all(prices[j] > v for v in neighbours)
+                    if confirmed:
+                        previous = j
+            neighbours = prices[i - left:i] + ([] if provisional else prices[i + 1:i + right + 1])
             pivot = all(prices[i] < v for v in neighbours) if direction == 'bullish' else all(prices[i] > v for v in neighbours)
             if not pivot:
                 continue
-            first, previous = previous, i
+            first = previous
+            if not provisional:
+                previous = i
             # Remember every pivot, including those in indicator warm-up.
             if first is None or any(v is None for v in (rsi[first], rsi[i], bands[first], bands[i])):
                 continue
@@ -102,13 +142,19 @@ def detect(candles, rules, symbol, timeframe):
             if not rules['min_spacing'] <= spacing <= rules['max_spacing']:
                 continue
             valid = (prices[i] < prices[first] and rsi[i] > rsi[first] and prices[i] <= bands[i]) if direction == 'bullish' else (prices[i] > prices[first] and rsi[i] < rsi[first] and prices[i] >= bands[i])
-            if not valid or i + right < minimum_history(rules) - 1:
+            event_index = i if provisional else i + right
+            if not valid or event_index < minimum_history(rules) - 1:
                 continue
             signals.append(dict(symbol=symbol, timeframe=timeframe, direction=direction,
                                 price1=prices[first], price2=prices[i], rsi1=rsi[first], rsi2=rsi[i],
                                 band1=bands[first], band2=bands[i], pivot1=candles[first].start,
-                                pivot2=candles[i].start, confirmed_at=candles[i + right].end,
+                                pivot2=candles[i].start, confirmed_at=candles[event_index].end,
                                 spacing=spacing, rules=rules))
+            if provisional:
+                # confirmed_at is the legacy event-time storage field. Explicit
+                # timing metadata prevents presenting it as pivot confirmation.
+                signals[-1].update(signal_status='provisional', alert_timing='pivot_close',
+                                   pivot_closed_at=candles[i].end)
     return sorted(signals, key=lambda s: s['confirmed_at'])
 
 
@@ -142,10 +188,14 @@ def fetch_twelve_data(asset, timeframe):
         params['exchange'] = asset['exchange']
     # Errors are sanitized by scan_once; never print the URL containing the API key.
     url = 'https://api.twelvedata.com/time_series?' + urllib.parse.urlencode(params)
-    with urllib.request.urlopen(url, timeout=20) as response:
-        data = json.load(response)
+    try:
+        with urllib.request.urlopen(url, timeout=20) as response:
+            data = json.load(response)
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        raise ValueError(provider_error(exc.code)) from None
     if data.get('status') == 'error' or not isinstance(data.get('values'), list):
-        raise ValueError('Provider rejected request; check symbol, entitlement, quota, and API key')
+        raise ValueError(provider_error(data.get('code')))
     meta = data.get('meta', {})
     if meta.get('interval') != TIMEFRAMES[timeframe] or meta.get('symbol') != asset['symbol']:
         raise ValueError('Provider returned a different symbol or interval')
@@ -158,19 +208,58 @@ def fetch_twelve_data(asset, timeframe):
         end = interval_end(start, timeframe)
         candles.append(Candle(int(start.timestamp() * 1000), int(end.timestamp() * 1000),
                               *(float(row[k]) for k in ('open', 'high', 'low', 'close'))))
-    return candles
+    return normalize_provider_candles(candles)
 
 
-def scan_once(store, config, rules, now=None):
+def provider_error(code):
+    return {
+        401: 'Twelve Data API key is invalid',
+        403: 'Twelve Data plan does not include this feed',
+        404: 'Twelve Data symbol is unavailable; configure a supported exact feed in Assets',
+        429: 'Twelve Data quota reached; waiting for the next scheduled scan',
+    }.get(code, 'Provider rejected request; check symbol, entitlement, quota, and API key')
+
+
+def scan_once(store, config, rules, now=None, stop=None):
+    from managed_assets import effective, cache_candles
+    config, config_revision = effective(store, config)
     now = int(time.time() * 1000) if now is None else now
+    from daily_universe import resolve
+    config, selection = resolve(store, config, now)
     store.log('Scan cycle started', f'{len(config["assets"])} assets')
     coverage = []
+    if selection and selection['status'] == 'unavailable':
+        coverage.append(dict(asset='DAILY_SELECTION', timeframe='daily', provider='Kraken', status='unavailable', reason=selection['reason']))
+    last_request = None
     for asset in config['assets']:
-        for timeframe in config['timeframes']:
+        if not asset.get('enabled', True):
+            continue
+        for timeframe in asset.get('timeframes', config['timeframes']):
             row = dict(asset=asset['id'], timeframe=timeframe, provider=asset['provider'])
             try:
+                if asset['provider'] == 'twelvedata':
+                    if last_request is not None:
+                        delay = max(0, float(config.get('request_spacing_seconds', 8)) - (time.monotonic() - last_request))
+                        if stop is not None:
+                            if stop.wait(delay):
+                                return coverage
+                        else:
+                            time.sleep(delay)
+                    if stop is not None and stop.is_set():
+                        return coverage
+                    last_request = time.monotonic()
                 raw = read_csv(asset, timeframe) if asset['provider'] == 'csv' else fetch_twelve_data(asset, timeframe)
+                if getattr(raw, 'notes', None):
+                    row['data_notes'] = '; '.join(raw.notes)
                 candles = check_candles(raw, now)
+                future_closes = [c.end for c in raw if c.end > now]
+                if future_closes:
+                    row['next_close_at'] = min(future_closes)
+                elif candles and timeframe == '4h':
+                    # Preserve the feed's native four-hour alignment.
+                    period = 4 * 60 * 60 * 1000
+                    row['next_close_at'] = candles[-1].end + ((now - candles[-1].end) // period + 1) * period
+                cache_candles(store, asset, timeframe, candles)
                 if len(candles) < minimum_history(rules):
                     row.update(status='insufficient history', candles=len(candles))
                 else:
@@ -178,12 +267,14 @@ def scan_once(store, config, rules, now=None):
                     if asset.get('continuous') and any(a.end != b.start for a, b in zip(candles, candles[1:])):
                         raise ValueError('Missing candles in continuous-market feed')
                     source_id = f"{asset['provider']}:{asset.get('exchange') or 'configured'}:{asset.get('symbol') or asset['id']}"
-                    state_id = f"{asset['id']}@{source_id}@{rules['skill_hash']}"
+                    state_id = f"{asset['id']}@{source_id}@{rules['skill_hash']}@confirmed-v1"
                     matches = detect(candles, rules, source_id, timeframe)
                     with store.connect() as db:
                         state = db.execute('SELECT last_end FROM scan_state WHERE asset=? AND timeframe=?', (state_id, timeframe)).fetchone()
                     # First run establishes a baseline without flooding Telegram with history.
                     cutoff = state[0] if state else candles[-1].end
+                    if asset.get('daily_selected') and selection:
+                        cutoff = max(cutoff, selection['starts_at'])
                     if state and cutoff < candles[0].start:
                         raise ValueError('Polling gap exceeds available history; supply candle backfill before resuming')
                     age_seconds = max(0, (now - candles[-1].end) // 1000)
@@ -199,7 +290,7 @@ def scan_once(store, config, rules, now=None):
                                last_closed_age_seconds=age_seconds)
             except (ValueError, FileNotFoundError) as exc:
                 # Only local, known ValueErrors are shown; URLs and provider payloads are never logged.
-                reason = 'Candle CSV missing' if isinstance(exc, FileNotFoundError) else str(exc)
+                reason = asset.get('unavailable_reason', 'Candle CSV missing; configure a live provider in Assets') if isinstance(exc, FileNotFoundError) else str(exc)
                 row.update(status='unavailable', reason=reason)
             except Exception:
                 row.update(status='unavailable', reason='Data request or parsing failed; check provider access and format')
@@ -207,6 +298,9 @@ def scan_once(store, config, rules, now=None):
             store.log('Market check', json.dumps(row))
     with store.connect() as db:
         db.execute('INSERT OR REPLACE INTO scanner_status(id,payload) VALUES(1,?)', (json.dumps(dict(scanned_at=now, coverage=coverage)),))
+    if config_revision is not None:
+        with store.connect() as db:
+            db.execute('UPDATE managed_config SET applied_revision=? WHERE id=1', (config_revision,))
     store.log('Scan cycle completed', f'{len(coverage)} market checks')
     return coverage
 
@@ -232,9 +326,26 @@ def load_config():
 
 def scanner_worker(store, config, rules, stop):
     prepare_store(store)
+    from managed_assets import ensure
+    ensure(store, config)
     while not stop.is_set():
-        scan_once(store, config, rules)
-        stop.wait(max(30, config.get('poll_seconds', 300)))
+        coverage = scan_once(store, config, rules, stop=stop)
+        from managed_assets import effective
+        current, _ = effective(store, config)
+        delay = max(30, current.get('poll_seconds', 300))
+        closes = [r['next_close_at'] / 1000 for r in (coverage or [])
+                  if r.get('next_close_at') and r.get('status') in ('scanned', 'baseline set')]
+        if closes:
+            delay = min(delay, max(30, min(closes) + 15 - time.time()))
+        policy = current.get('daily_universe', {})
+        if policy.get('enabled'):
+            from daily_universe import seconds_to_refresh, status, session
+            clock_now = time.time()
+            delay = min(delay, seconds_to_refresh(policy, clock_now))
+            selected = status(store)
+            if selected and selected['session'] != session(policy, clock_now * 1000)[0]:
+                delay = 1  # A long scan crossed the morning boundary.
+        stop.wait(delay)
 
 
 if __name__ == '__main__':

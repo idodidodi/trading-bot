@@ -1,0 +1,59 @@
+const config=window.DASHBOARD_CONFIG||{}, online=Boolean(config.supabaseUrl);
+const $=id=>document.getElementById(id),content=$('content'),status=$('status');
+const frames=['monthly','weekly','daily','4h'];let state,token=sessionStorage.getItem('dashboard_token'),chart=null;
+const node=(tag,text)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;return n;};
+function message(text,error=false){status.textContent=text;status.className=error?'error':'';}
+async function request(path,body){
+ let url=path,headers={},method=body?'POST':'GET';
+ if(online){url=config.supabaseUrl+'/rest/v1/rpc/dashboard_api';method='POST';headers={apikey:config.publishableKey,Authorization:'Bearer '+token};body={installation:config.installationId,operation:path,input:body||{}};}
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+ try{const r=await fetch(url,{method,headers:{...headers,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,signal:controller.signal});const result=await r.json();if(online&&r.status===401){sessionStorage.removeItem('dashboard_token');token=null;$('login').hidden=false;}if(!r.ok||result.error)throw Error(result.error||result.message||'Request failed');return result;}finally{clearTimeout(timer);}
+}
+$('signin').onclick=async()=>{try{const r=await fetch(config.supabaseUrl+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:config.publishableKey,'Content-Type':'application/json'},body:JSON.stringify({email:$('email').value,password:$('password').value})});const data=await r.json();if(!r.ok)throw Error(data.msg||'Sign in failed');token=data.access_token;sessionStorage.setItem('dashboard_token',token);$('password').value='';$('login').hidden=true;await load();}catch(e){message(e.message,true);}};
+function button(text,fn){const b=node('button',text);b.type='button';b.onclick=fn;return b;}
+async function loadAssets(){state=await request('/api/assets');content.replaceChildren();
+ content.append(node('h2','Live assets'),node('p',`Configuration ${state.revision}; scanner applied ${state.applied_revision}. New tickers are disabled drafts until you configure their data feed.`));
+ const form=node('form'),input=node('input');input.name='tickers';input.placeholder='NVDA, EURUSD, BTCUSD';input.required=true;input.maxLength=10000;form.append(input,node('button','Add tickers'));form.onsubmit=async e=>{e.preventDefault();await mutate({action:'bulk',tickers:input.value});};if(state.sync?.error)content.append(node('p','Sync: '+state.sync.error));
+ if(!online&&state.configuration_conflict)content.append(button('Use online configuration',()=>mutate({action:'accept_online'})));
+ if(!online&&state.conflicts)content.append(node('p',`${state.conflicts} sync conflicts retained for review. Pending local edits are preserved.`));
+ content.append(form,node('p',`Candle timeframes are independent per asset. Polling interval: ${state.config.poll_seconds/3600} hours.`));
+ if(state.config.daily_universe?.enabled){
+  content.append(node('h3','Morning selection'),node('p','Five extra forex and five extra crypto pairs at 08:00 Israel time, held until the next morning. Ranked by Kraken 24-hour volume in USD; candles from Twelve Data.'));
+  const daily=state.daily_selection;
+  if(daily){content.append(node('p',`${daily.session}: ${daily.status}. ${daily.reason||''}`));for(const market of ['forex','crypto'])content.append(table([market,'24h volume (USD)'],daily.selected[market].map(r=>[r.symbol,Math.round(r.volume_usd).toLocaleString()])));}
+  else content.append(node('p','Daily selection will appear after the local worker refreshes it.'));
+ }
+ for(const asset of state.config.assets){const field=node('fieldset'),legend=node('legend',asset.id);field.append(legend);
+ const enabled=node('input');enabled.type='checkbox';enabled.checked=asset.enabled;const enablelabel=node('label','Scan enabled');enablelabel.append(enabled);field.append(enablelabel);
+ const provider=node('select');for(const p of ['csv','twelvedata']){const o=node('option',p==='csv'?'Candle CSV files':'Twelve Data');o.value=p;provider.append(o);}provider.value=asset.provider;field.append(provider);
+ const inputs={};for(const [key,title] of [['symbol','Provider symbol'],['exchange','Provider exchange'],['tradingview_symbol','TradingView exchange:ticker']]){const l=node('label',title),i=node('input');i.value=asset[key]||'';i.maxLength=100;inputs[key]=i;l.append(i);field.append(l);}
+ const confirmed=node('input');confirmed.type='checkbox';confirmed.checked=asset.feed_confirmed===true;const cl=node('label','I verified this provider feed');cl.append(confirmed);field.append(cl);
+ const selected={};for(const f of frames){const l=node('label',f),i=node('input');i.type='checkbox';i.checked=(asset.timeframes||frames).includes(f);selected[f]=i;l.append(i);field.append(l);}
+ field.append(node('p',asset.provider==='csv'?`CSV: ${asset.path||'data/candles/{asset}-{timeframe}.csv'}`:'Provider entitlement and native intervals must be verified.'));
+ field.append(button('Save asset',()=>mutate({action:'save',asset:{id:asset.id,provider:provider.value,enabled:enabled.checked,timeframes:frames.filter(f=>selected[f].checked),feed_confirmed:confirmed.checked,...Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value.trim()]))}})),button('Disable',()=>mutate({action:'save',asset:{...asset,enabled:false}})));content.append(field);
+ }
+}
+async function mutate(body){try{message('Saving…');const result=await request('/api/assets',{...body,revision:state.revision});await loadAssets();message(result.results.map(r=>r.ticker+': '+r.status).join('; ')+(online?' — pending local scanner':' — saved locally'));}catch(e){message(e.message,true);}}
+function displayTime(ms){return new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Jerusalem',dateStyle:'medium',timeStyle:'short'}).format(new Date(ms));}
+function table(headers,rows){const t=node('table'),head=node('tr');for(const h of headers)head.append(node('th',h));t.append(head);for(const row of rows){const tr=node('tr');for(const value of row){const td=node('td');td.append(value instanceof Node?value:node('span',String(value??'')));tr.append(td);}t.append(tr);}const wrap=node('div');wrap.className='scroll';wrap.append(t);return wrap;}
+let page=0;
+async function findings(source){const result=await request(`/api/findings?source=${source}&page=${page}`);content.replaceChildren(node('h2',source==='live'?'Live findings':'Backtest findings'));
+ if(result.summary)content.append(table(['Asset','Timeframe','Status','Signals','Details'],result.summary.map(r=>[r.asset,r.timeframe,r.status,r.signals,r.note])));
+ const rows=result.findings.map(r=>{const s=r.signal;return[s.symbol,s.timeframe,s.direction+(s.signal_status==='provisional'?' (provisional)':''),displayTime(s.confirmed_at),s.price1,s.price2,s.rsi1.toFixed(2),s.rsi2.toFixed(2),button('View candles',()=>openCandle(source,r.id)),feedback(source,r)];});
+ content.append(table(['Asset','Timeframe','Direction','Signal time (Israel)','Price 1','Price 2','RSI 1','RSI 2','Candle','Feedback'],rows),button('Previous',()=>{page=Math.max(0,page-1);findings(source).catch(e=>message(e.message,true));}),button('Next',()=>{if(result.has_more){page++;findings(source).catch(e=>message(e.message,true));}}));
+}
+function feedback(source,r){const wrap=node('div');wrap.className='feedback';let rating=r.feedback?.rating??null,revision=r.feedback?.revision||0,timer,saving=false,dirty=false;const stars=[];const comment=node('textarea');comment.maxLength=4000;comment.value=r.feedback?.comment||'';comment.placeholder='Comment';const progress=node('span');
+ for(let i=1;i<=5;i++){const b=button(i<=rating?'★':'☆',()=>{rating=i;stars.forEach((s,k)=>s.textContent=k<i?'★':'☆');changed(0);});b.className='star';b.setAttribute('aria-label',`${i} stars`);stars.push(b);wrap.append(b);}wrap.append(comment,progress);
+ function changed(delay){dirty=true;clearTimeout(timer);timer=setTimeout(save,delay);progress.textContent='Saving…';}
+ async function save(){if(saving)return;saving=true;const submitted={rating,comment:comment.value};dirty=false;try{const value=await request('/api/feedback',{source,finding_id:r.id,revision,...submitted});revision=value.revision;progress.textContent=online?'Saved online':'Saved locally';}catch(e){dirty=true;progress.textContent=e.message;}finally{saving=false;if(dirty&&progress.textContent==='Saving…')timer=setTimeout(save,0);}}
+ comment.oninput=()=>changed(600);comment.onblur=()=>{if(dirty&&!saving)save();};return wrap;
+}
+async function openCandle(source,id,target='pivot2'){try{const data=await request(`/api/candles?source=${source}&finding=${id}&target=${target}`);if(!$('candle-dialog').open)$('candle-dialog').showModal();$('candle-title').textContent=`${data.signal.symbol} · ${({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','240':'4 hours','D':'Daily','W':'Weekly','M':'Monthly'})[data.signal.timeframe]||data.signal.timeframe} candles`;const rules=data.signal.rules;$('candle-legend').textContent=`Bollinger Bands (${rules.bb_period}, ${rules.bb_multiplier}σ) · RSI (${rules.rsi_period}, Wilder), calculated from the loaded window; saved finding evidence remains authoritative.`; $('candle-note').textContent=data.note;if(online&&!data.tradingview_url){const settings=await request('/api/assets');const a=settings.config.assets.find(a=>a.id===data.signal.symbol||`${a.provider}:${a.exchange||'configured'}:${a.symbol||a.id}`===data.signal.symbol);if(a?.tradingview_symbol){const interval={monthly:'M',weekly:'W',daily:'D','4h':'240'}[data.signal.timeframe];data.tradingview_url='https://www.tradingview.com/chart/?'+new URLSearchParams({symbol:a.tradingview_symbol,interval});}}const actions=$('candle-actions');actions.replaceChildren();for(const [key,label] of [['pivot1','First pivot'],['pivot2','Second pivot'],['confirmation',data.signal.signal_status==='provisional'?'Signal candle close':'Confirmation']])actions.append(button(label,()=>openCandle(source,id,key)));
+ if(data.tradingview_url){const a=node('a','Open TradingView');a.href=data.tradingview_url;a.target='_blank';a.rel='noopener';actions.append(a);}else actions.append(node('span',' No verified TradingView mapping. Configure it in Assets.'));
+ const candles=data.candles;if(chart){chart.remove();chart=null;}$('chart').replaceChildren();$('candle-table').replaceChildren();
+ if(candles.length){const library=await import('/web/chart.js');chart=await library.draw($('chart'),candles,data.signal,target);$('candle-table').replaceChildren(table(['Candle (Israel)','Open','High','Low','Close'],candles.filter(c=>c.start===data.signal.pivot1||c.start===data.signal.pivot2||c.end===data.signal.confirmed_at).map(c=>[displayTime(c.start),c.open,c.high,c.low,c.close])));}else{$('candle-note').textContent+=' No stored source candles are available for this finding.';}
+ }catch(e){message(e.message,true);}}
+$('close-chart').onclick=()=>$('candle-dialog').close();
+$('candle-dialog').addEventListener('close',()=>{if(chart){chart.remove();chart=null;}if(location.pathname==='/candle'){const source=new URLSearchParams(location.search).get('source');location.assign(source==='backtest'?'/backtest':'/');}});
+async function load(){if(online&&!token){$('login').hidden=false;return;}try{const path=location.pathname;$('connection').textContent=online?'Online database':'Local SQLite';if(path==='/assets')await loadAssets();else if(path==='/candle'){const p=new URLSearchParams(location.search);await openCandle(p.get('source'),p.get('finding'));}else if(path==='/backtest')await findings('backtest');else if(path==='/logs'){const result=await request('/api/logs');content.replaceChildren(table(['Time (Israel)','Event','Details'],result.rows.map(r=>[displayTime(r.occurred*1000),r.event,r.details])));}else await findings('live');}catch(e){message(e.message,true);}}
+load();

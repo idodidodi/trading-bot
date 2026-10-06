@@ -15,7 +15,7 @@ Report signals only, following the user's preference. Do not include entry, stop
 - Timeframes: required; accept monthly/1mo, weekly/1w, daily/1d, and 4h/4 hours. `1mo` is a calendar month, not 30 days. Never interpret monthly as one minute.
 - RSI: 3 periods, Wilder smoothing, close prices.
 - Bollinger Bands: 20-period simple moving average of closes, plus/minus 2 population standard deviations (`ddof=0`).
-- Pivot confirmation: 2 candles to the left and 2 to the right.
+- Pivot confirmation: 2 candles to the left and 1 to the right.
 - Pivot spacing: 5–60 candles inclusive; compare consecutive confirmed pivots of the same type. Do not search older pivots to cherry-pick a match.
 - History: aim for at least 250 closed candles per combination. Report limited history and exclude indicator warm-up candles from signal comparisons.
 - Recent signals: confirmation within the last 10 closed candles. Allow user overrides for these parameters and disclose the actual values.
@@ -38,7 +38,7 @@ For each candle with 20 closes available, calculate the Bollinger midline and po
 
 ## Detect confirmed signals
 
-A pivot low is a candle whose low is strictly below the lows of both of the preceding two and following two candles. A pivot high is strictly above their highs. Equal values do not form a pivot. A pivot becomes known only at the close of the second candle to its right; do not backdate confirmation to the pivot candle.
+A pivot low is a candle whose low is strictly below the lows of the preceding two candles and the following one candle. A pivot high is strictly above their highs. Equal values do not form a pivot. A pivot becomes known only at the close of the first candle to its right; do not backdate confirmation to the pivot candle.
 
 For consecutive confirmed pivot lows `P1` and `P2`, a **bullish divergence / long bias** requires all of:
 

@@ -1,0 +1,7 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Divergence dashboard</title><link rel="stylesheet" href="/web/style.css"></head><body>
+<header><h1>Divergence dashboard</h1><span id="connection"></span></header>
+<nav><a href="/">Overview</a><a href="/logs">Logs</a><a href="/backtest">Backtests</a><a href="/assets">Assets</a></nav>
+<div id="login" hidden><p>Sign in to your private online dashboard.</p><input id="email" type="email" placeholder="Email" autocomplete="username"><input id="password" type="password" placeholder="Password" autocomplete="current-password"><button id="signin">Sign in</button></div>
+<div id="status" role="status" aria-live="polite"></div><main id="content"></main>
+<dialog id="candle-dialog" aria-labelledby="candle-title"><header><h2 id="candle-title">Signal candles</h2><button id="close-chart">Close</button></header><div id="candle-actions"></div><p id="candle-note"></p><p id="candle-legend" class="muted"></p><div id="chart"></div><div id="candle-table" class="scroll"></div></dialog>
+<script src="/web/config.js"></script><script type="module" src="/web/app.js"></script></body></html>

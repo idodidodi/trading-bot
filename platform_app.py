@@ -85,7 +85,13 @@ def validate_signal(body, rules):
     if not valid:
         raise ValueError('Divergence or band-touch rule failed')
     # Store only known fields; never persist the webhook authentication secret.
-    return {k: body[k] for k in ('symbol', 'timeframe', 'direction', *keys, 'pivot1', 'pivot2', 'confirmed_at', 'spacing', 'rules')}
+    clean = {k: body[k] for k in ('symbol', 'timeframe', 'direction', *keys, 'pivot1', 'pivot2', 'confirmed_at', 'spacing', 'rules')}
+    if any(k in body for k in ('signal_status', 'alert_timing', 'pivot_closed_at')):
+        if (body.get('signal_status') != 'provisional' or body.get('alert_timing') != 'pivot_close'
+                or type(body.get('pivot_closed_at')) is not int or body['pivot_closed_at'] != body['confirmed_at']):
+            raise ValueError('Invalid provisional signal timing')
+        clean.update(signal_status='provisional', alert_timing='pivot_close', pivot_closed_at=body['pivot_closed_at'])
+    return clean
 
 
 class Store:
@@ -96,6 +102,12 @@ class Store:
                 id TEXT PRIMARY KEY, payload TEXT NOT NULL, received REAL NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
                 next_attempt REAL NOT NULL DEFAULT 0, error TEXT)''')
+            from finding_feedback import initialize
+            initialize(db)
+            from managed_assets import initialize as initialize_assets
+            initialize_assets(db)
+            from cloud_sync import initialize as initialize_sync
+            initialize_sync(db)
 
     @contextmanager
     def connect(self):
@@ -127,12 +139,21 @@ class Store:
 def message(payload):
     from datetime import datetime, timezone
     stamp = datetime.fromtimestamp(payload['confirmed_at'] / 1000, timezone.utc).isoformat()
-    return (f"{payload['direction'].upper()} RSI divergence\n"
+    provisional = payload.get('signal_status') == 'provisional'
+    if provisional:
+        from zoneinfo import ZoneInfo
+        stamp = datetime.fromtimestamp(payload['pivot_closed_at'] / 1000, ZoneInfo('Asia/Jerusalem')).isoformat()
+    if not provisional:
+        from zoneinfo import ZoneInfo
+        stamp = datetime.fromtimestamp(payload['confirmed_at'] / 1000, ZoneInfo('Asia/Jerusalem')).isoformat()
+    timing = f"Second pivot closed: {stamp}" if provisional else f"Confirmed: {stamp} ({payload['rules']['pivot_right']} following candle(s))"
+    footer = 'Signal only · provisional pivot · closed candle' if provisional else 'Signal only · closed-candle divergence'
+    return (f"{payload['direction'].upper()} RSI divergence{' (provisional)' if provisional else ''}\n"
             f"{payload['symbol']} · {payload['timeframe']}\n"
             f"Price: {payload['price1']:g} → {payload['price2']:g}\n"
             f"RSI({payload['rules']['rsi_period']}): {payload['rsi1']:.2f} → {payload['rsi2']:.2f}\n"
             f"{'Lower' if payload['direction'] == 'bullish' else 'Upper'} BB touch: {payload['band2']:g}\n"
-            f"Confirmed: {stamp}\nSignal only · closed-candle divergence")
+            f"{timing}\n{footer}")
 
 
 def telegram_connection_error(exc):
@@ -211,39 +232,105 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
             if self.headers.get('Host') not in ('localhost:8080', '127.0.0.1:8080', f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}'):
                 self.respond(404, {'error': 'Not found'})
                 return
+            from urllib.parse import urlsplit
+            route = urlsplit(self.path).path
+            if route in ('/assets', '/candle', '/dashboard'):
+                self.respond(200, (ROOT / 'web/index.html').read_text(), 'text/html; charset=utf-8')
+                return
+            if route.startswith('/web/'):
+                allowed_files = {'style.css':'text/css', 'app.js':'text/javascript', 'config.js':'text/javascript', 'chart.js':'text/javascript', 'vendor/lightweight-charts.js':'text/javascript'}
+                name = route.removeprefix('/web/')
+                if name in allowed_files:
+                    self.respond(200, (ROOT / 'web' / name).read_text(), allowed_files[name])
+                else:
+                    self.respond(404, {'error':'Not found'})
+                return
+            if route in ('/api/assets', '/api/findings', '/api/candles', '/api/logs'):
+                from dashboard_api import read
+                try:
+                    self.respond(200, read(store, self.path))
+                except LookupError as exc:
+                    self.respond(404, {'error':str(exc)})
+                except (ValueError, TypeError):
+                    self.respond(400, {'error':'Invalid dashboard request'})
+                return
             if self.path == '/health':
                 self.respond(200, {'ok': True, 'dry_run': dry_run, 'rules': rules})
+            elif self.path == '/api/feedback/export':
+                from finding_feedback import export
+                self.respond(200, export(store))
             elif self.path in ('/logs', '/backtest'):
                 from dashboard_pages import render_page
                 self.respond(200, render_page(store, self.path), 'text/html; charset=utf-8')
             elif self.path == '/':
                 coverage = ''
+                scan_note = 'Waiting for the first scan cycle.'
                 with store.connect() as db:
                     exists = db.execute("SELECT name FROM sqlite_master WHERE name='scanner_status'").fetchone()
                     state = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone() if exists else None
                 if state:
-                    for item in json.loads(state[0])['coverage']:
+                    scan_state = json.loads(state[0])
+                    scanned_at = datetime.fromtimestamp(scan_state['scanned_at'] / 1000, timezone.utc).isoformat()
+                    from managed_assets import effective
+                    config, _ = effective(store, {})
+                    poll_seconds = config.get('poll_seconds', 300)
+                    scan_note = f'Latest cycle started: {scanned_at}. Polling at candle closes or within {poll_seconds // 60} minutes after each cycle. Reload to see updates.'
+                    for item in scan_state['coverage']:
                         last_close = datetime.fromtimestamp(item['last_closed_at'] / 1000, timezone.utc).isoformat() if item.get('last_closed_at') else ''
-                        details = item.get('reason', '') or ('Limited history' if item.get('limited_history') else '')
+                        details = '; '.join(filter(None, [item.get('reason', ''), item.get('data_notes', ''), 'Limited history' if item.get('limited_history') else '']))
                         values = (item['asset'], item['timeframe'], item['status'], item.get('candles', ''), last_close, details)
                         coverage += '<tr>' + ''.join(f'<td>{html.escape(str(v))}</td>' for v in values) + '</tr>'
+                from finding_feedback import feedback_map, cell, STYLE, SCRIPT
+                with store.connect() as db:
+                    feedback = feedback_map(db)
                 rows = ''
                 for raw, status, attempts, error in store.rows():
                     p = json.loads(raw)
-                    values = (p['symbol'], p['timeframe'], p['direction'], f"{p['price1']:g} → {p['price2']:g}",
+                    values = (p['symbol'], p['timeframe'], p['direction'] + (' (provisional)' if p.get('signal_status') == 'provisional' else ''), f"{p['price1']:g} → {p['price2']:g}",
                               f"{p['rsi1']:.2f} → {p['rsi2']:.2f}", status, attempts, error or '')
-                    rows += '<tr>' + ''.join(f'<td>{html.escape(str(v))}</td>' for v in values) + '</tr>'
-                self.respond(200, '''<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="10">
+                    from candle_views import link
+                    rows += '<tr>' + ''.join(f'<td>{html.escape(str(v))}</td>' for v in values) + '<td>' + link('live', p) + '</td>' + cell('live', p, feedback) + '</tr>'
+                self.respond(200, '''<!doctype html><html><head><meta charset="utf-8">
                 <title>Divergence alerts</title><style>body{font:16px system-ui;background:#111827;color:#e5e7eb;margin:40px}table{border-collapse:collapse;width:100%}td,th{padding:12px;text-align:left;border-bottom:1px solid #374151}code{color:#67e8f9}</style></head><body>
-                <nav><a href="/">Overview</a> · <a href="/logs">Logs</a> · <a href="/backtest">Backtest 2020</a></nav><h1>Divergence alerts</h1><p>Market candles → local scanner → Telegram · signals only</p>'''
+                <nav><a href="/">Overview</a> · <a href="/logs">Logs</a> · <a href="/backtest">Backtest 2020</a> · <a href="/assets">Assets</a></nav><h1>Divergence alerts</h1><p>Market candles → local scanner → Telegram · signals only</p>'''
                 + f'<p>RSI({rules["rsi_period"]}) close · BB({rules["bb_period"]}, {rules["bb_multiplier"]:g}) · Mode: {"dry run" if dry_run else "Telegram"}</p>'
-                + '<h2>Scanner coverage</h2><table><tr><th>Asset</th><th>Timeframe</th><th>Status</th><th>Closed candles</th><th>Last close (UTC)</th><th>Details</th></tr>' + coverage + '</table><h2>Signals</h2>'
-                + '<table><tr><th>Asset</th><th>Timeframe</th><th>Signal</th><th>Price pivots</th><th>RSI pivots</th><th>Delivery</th><th>Attempts</th><th>Error</th></tr>'
-                + rows + '</table><p>Last 100 received signals. No rows means no signals received; it does not establish market coverage.</p></body></html>', 'text/html; charset=utf-8')
+                + '<h2>Scanner coverage</h2><p>' + html.escape(scan_note) + '</p><table><tr><th>Asset</th><th>Timeframe</th><th>Status</th><th>Closed candles</th><th>Last close (UTC)</th><th>Details</th></tr>' + coverage + '</table><h2>Signals</h2>'
+                + STYLE + '<table><tr><th>Asset</th><th>Timeframe</th><th>Signal</th><th>Price pivots</th><th>RSI pivots</th><th>Delivery</th><th>Attempts</th><th>Error</th><th>Candle</th><th>Feedback</th></tr>'
+                + rows + '</table><p>Last 100 received signals. No rows means no signals received; it does not establish market coverage.</p><p><a href="/api/feedback/export">Export feedback history</a> · Saved in local SQLite. Online storage not configured.</p>' + SCRIPT + '</body></html>', 'text/html; charset=utf-8')
             else:
                 self.respond(404, {'error': 'Not found'})
 
         def do_POST(self):
+            if dashboard and self.path in ('/api/feedback', '/api/assets'):
+                from finding_feedback import save
+                host = self.headers.get('Host')
+                allowed = (f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}')
+                if (host not in allowed or self.headers.get('Origin') not in ('http://' + host,)
+                        or self.headers.get('Content-Type') != 'application/json'):
+                    self.respond(403, {'error': 'Feedback must be saved from the local dashboard'})
+                    return
+                try:
+                    size = int(self.headers.get('Content-Length', '0'))
+                    if not 0 < size <= 32768:
+                        raise ValueError('Invalid body size')
+                    self.connection.settimeout(2)
+                    body = json.loads(self.rfile.read(size))
+                    if not isinstance(body, dict):
+                        raise ValueError('Expected JSON object')
+                    if self.path == '/api/assets':
+                        from dashboard_api import ensure
+                        from managed_assets import change
+                        ensure(store)
+                        self.respond(200, change(store, body))
+                    else:
+                        self.respond(200, save(store, ROOT, body))
+                except LookupError as exc:
+                    self.respond(409, {'error': str(exc)})
+                except (ValueError, TypeError, OSError):
+                    self.respond(400, {'error': 'Invalid asset configuration or feedback'})
+                except sqlite3.Error:
+                    self.respond(503, {'error': 'Local storage unavailable. Try saving again.'})
+                return
             if dashboard or self.path != '/webhook':
                 self.respond(404, {'error': 'Not found'})
                 return
@@ -267,6 +354,32 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
     return Handler
 
 
+class LocalHTTPServer(ThreadingHTTPServer):
+    """Bounded request concurrency for small local machines."""
+    def __init__(self, *args, **kwargs):
+        self.request_slots = threading.BoundedSemaphore(8)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self.request_slots.acquire(blocking=False):
+            try:
+                request.sendall(b'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.request_slots.release()
+
+
 def main():
     load_env()
     rules = load_rules()
@@ -286,6 +399,9 @@ def main():
     stop = threading.Event()
     worker = threading.Thread(target=delivery_worker, args=(store, token, chat_id, dry_run, stop), daemon=True)
     worker.start()
+    from cloud_sync import worker as sync_worker
+    sync_thread = threading.Thread(target=sync_worker, args=(store, stop), daemon=True)
+    sync_thread.start()
     host = os.environ.get('HOST', '127.0.0.1')
     scanner_thread = None
     if not legacy_webhook:
@@ -294,7 +410,7 @@ def main():
         prepare_store(store)
         scanner_thread = threading.Thread(target=scanner_worker, args=(store, config, rules, stop), daemon=True)
         scanner_thread.start()
-    server = ThreadingHTTPServer((host, int(os.environ.get('PORT', '8080'))), handler_factory(store, rules, secret, dry_run, dashboard=True))
+    server = LocalHTTPServer((host, int(os.environ.get('PORT', '8080'))), handler_factory(store, rules, secret, dry_run, dashboard=True))
     webhook_server = None
     if legacy_webhook:
         webhook_server = ThreadingHTTPServer((host, int(os.environ.get('WEBHOOK_PORT', '8081'))), handler_factory(store, rules, secret, dry_run))
@@ -312,6 +428,7 @@ def main():
             webhook_server.server_close()
         stop.set()
         worker.join(timeout=20)
+        sync_thread.join(timeout=12)
         if scanner_thread:
             scanner_thread.join(timeout=21)
 
