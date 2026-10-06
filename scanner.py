@@ -329,7 +329,15 @@ def scanner_worker(store, config, rules, stop):
     from managed_assets import ensure
     ensure(store, config)
     while not stop.is_set():
+        with store.connect() as db:
+            previous = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
+            if previous:
+                progress = json.loads(previous[0])
+                progress.update(phase='scanning', next_scan_at=None)
+                db.execute('UPDATE scanner_status SET payload=? WHERE id=1', (json.dumps(progress),))
         coverage = scan_once(store, config, rules, stop=stop)
+        if stop.is_set():
+            break
         from managed_assets import effective
         current, _ = effective(store, config)
         delay = max(30, current.get('poll_seconds', 300))
@@ -345,6 +353,11 @@ def scanner_worker(store, config, rules, stop):
             selected = status(store)
             if selected and selected['session'] != session(policy, clock_now * 1000)[0]:
                 delay = 1  # A long scan crossed the morning boundary.
+        with store.connect() as db:
+            saved = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
+            schedule = json.loads(saved[0]) if saved else dict(scanned_at=int(time.time() * 1000), coverage=coverage or [])
+            schedule.update(phase='waiting', next_scan_at=int((time.time() + delay) * 1000))
+            db.execute('INSERT OR REPLACE INTO scanner_status(id,payload) VALUES(1,?)', (json.dumps(schedule),))
         stop.wait(delay)
 
 

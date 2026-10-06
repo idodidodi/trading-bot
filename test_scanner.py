@@ -75,7 +75,7 @@ class EngineTests(unittest.TestCase):
             store = Store(Path(folder) / 'db.sqlite3')
             config = dict(assets=[], timeframes=['4h'], poll_seconds=3600)
             ensure(store, config)
-            stop = Mock(); stop.is_set.side_effect = [False, True]
+            stop = Mock(); stop.is_set.side_effect = [False, False, True]
             with patch('scanner.scan_once', return_value=[]):
                 scanner_worker(store, config | {'poll_seconds': 300}, load_rules(), stop)
             stop.wait.assert_called_once_with(3600)
@@ -84,10 +84,15 @@ class EngineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             store = Store(Path(folder) / 'db.sqlite3')
             config = dict(assets=[], timeframes=['4h'], poll_seconds=14400)
-            stop = Mock(); stop.is_set.side_effect = [False, True]
+            stop = Mock(); stop.is_set.side_effect = [False, False, True]
             with patch('scanner.scan_once', return_value=[dict(status='scanned', next_close_at=2000000)]), patch('scanner.time.time', return_value=1900):
                 scanner_worker(store, config, load_rules(), stop)
             stop.wait.assert_called_once_with(115)
+            import json
+            with store.connect() as db:
+                schedule = json.loads(db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()[0])
+            self.assertEqual(schedule['next_scan_at'], 2015000)
+            self.assertEqual(schedule['phase'], 'waiting')
 
     def test_provisional_at_pivot_close_without_future_candles(self):
         from platform_app import validate_signal, message

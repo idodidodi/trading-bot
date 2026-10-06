@@ -85,7 +85,7 @@ class FeedbackTests(unittest.TestCase):
                     with self.assertRaises(urllib.error.HTTPError) as caught:
                         urllib.request.urlopen(request)
                     self.assertEqual(caught.exception.code, 403)
-            with urllib.request.urlopen(url) as response:
+            with urllib.request.urlopen(url+'/signals') as response:
                 page = response.read().decode()
                 self.assertIn('data-rating="4" aria-label="4 stars" aria-pressed="true"', page)
                 self.assertIn('&lt;script&gt;', page)

@@ -39,7 +39,14 @@ class TabsTests(unittest.TestCase):
                 for path, expected in [('/', 'Backtest 2020'),('/logs','Scan cycle completed'),('/backtest','unavailable')]:
                     with urllib.request.urlopen(f'http://127.0.0.1:{server.server_port}{path}') as response:
                         self.assertEqual(response.status,200)
-                        self.assertIn(expected,response.read().decode())
+                        page = response.read().decode()
+                        self.assertIn(expected, page)
+                        if path == '/':
+                            self.assertIn('Next scan (Israel time)', page)
+                            self.assertIn('Awaiting scanner schedule', page)
+                            self.assertIn('class="data-warning"', page)
+                            self.assertIn('Live data warning', page)
+                            self.assertIn('Candle CSV missing', page)
             finally:
                 server.shutdown()
                 server.server_close()

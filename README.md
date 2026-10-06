@@ -22,7 +22,7 @@ cp .env.example .env
 python3 platform_app.py
 ```
 
-Open `http://127.0.0.1:8080` on the computer running the app. No public port, webhook secret, HTTPS tunnel, or TradingView alert is needed in the default `MODE=scanner`. The local dashboard shows every configured asset/timeframe's coverage status and received signals. Missing data is shown as unavailable, not as no signal. It shows the latest closed-candle timestamp; a successful scan alone does not guarantee a feed is current.
+Open `http://127.0.0.1:8080` on the computer running the app. No public port, webhook secret, HTTPS tunnel, or TradingView alert is needed in the default `MODE=scanner`. The local dashboard shows every configured asset/timeframe's coverage status on Overview and received signals on the Signals tab. Missing data is shown as unavailable, not as no signal. It shows the latest closed-candle timestamp; a successful scan alone does not guarantee a feed is current.
 
 ## Configure assets and timeframes
 

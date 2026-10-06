@@ -5,6 +5,7 @@ import hmac
 import html
 import json
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import math
 import os
 from pathlib import Path
@@ -259,7 +260,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
             elif self.path == '/api/feedback/export':
                 from finding_feedback import export
                 self.respond(200, export(store))
-            elif self.path in ('/logs', '/backtest'):
+            elif self.path in ('/signals', '/logs', '/backtest'):
                 from dashboard_pages import render_page
                 self.respond(200, render_page(store, self.path), 'text/html; charset=utf-8')
             elif self.path == '/':
@@ -275,28 +276,32 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     config, _ = effective(store, {})
                     poll_seconds = config.get('poll_seconds', 300)
                     scan_note = f'Latest cycle started: {scanned_at}. Polling at candle closes or within {poll_seconds // 60} minutes after each cycle. Reload to see updates.'
+                    next_scan_at = scan_state.get('next_scan_at')
+                    if scan_state.get('phase') == 'scanning':
+                        next_scan = 'Scan cycle in progress'
+                    elif next_scan_at and next_scan_at > time.time() * 1000:
+                        next_scan = datetime.fromtimestamp(next_scan_at / 1000, ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y, %H:%M:%S %Z')
+                    elif next_scan_at:
+                        next_scan = 'Scheduled time passed — reload for status'
+                    else:
+                        next_scan = 'Awaiting scanner schedule'
+                    scan_note += ' Next scan is the scheduled cycle start; rows are checked in sequence.'
                     for item in scan_state['coverage']:
                         last_close = datetime.fromtimestamp(item['last_closed_at'] / 1000, timezone.utc).isoformat() if item.get('last_closed_at') else ''
                         details = '; '.join(filter(None, [item.get('reason', ''), item.get('data_notes', ''), 'Limited history' if item.get('limited_history') else '']))
-                        values = (item['asset'], item['timeframe'], item['status'], item.get('candles', ''), last_close, details)
-                        coverage += '<tr>' + ''.join(f'<td>{html.escape(str(v))}</td>' for v in values) + '</tr>'
-                from finding_feedback import feedback_map, cell, STYLE, SCRIPT
-                with store.connect() as db:
-                    feedback = feedback_map(db)
-                rows = ''
-                for raw, status, attempts, error in store.rows():
-                    p = json.loads(raw)
-                    values = (p['symbol'], p['timeframe'], p['direction'] + (' (provisional)' if p.get('signal_status') == 'provisional' else ''), f"{p['price1']:g} → {p['price2']:g}",
-                              f"{p['rsi1']:.2f} → {p['rsi2']:.2f}", status, attempts, error or '')
-                    from candle_views import link
-                    rows += '<tr>' + ''.join(f'<td>{html.escape(str(v))}</td>' for v in values) + '<td>' + link('live', p) + '</td>' + cell('live', p, feedback) + '</tr>'
+                        warning = item['status'] in ('unavailable', 'insufficient history') or item.get('provider') == 'csv'
+                        if item.get('provider') == 'csv' and item['status'] != 'unavailable':
+                            details = '; '.join(filter(None, [details, 'CSV data; live feed not connected']))
+                        status_cell = html.escape(item['status'])
+                        if warning:
+                            status_cell = '<span class="data-warning" role="img" aria-label="Live data warning" title="' + html.escape(details or item['status'], quote=True) + '">⚠</span> ' + status_cell
+                        values = (item.get('candles', ''), last_close, next_scan, details)
+                        coverage += '<tr><td>' + html.escape(str(item['asset'])) + '</td><td>' + html.escape(str(item['timeframe'])) + '</td><td>' + status_cell + '</td>' + ''.join(f'<td>{html.escape(str(v))}</td>' for v in values) + '</tr>'
                 self.respond(200, '''<!doctype html><html><head><meta charset="utf-8">
-                <title>Divergence alerts</title><style>body{font:16px system-ui;background:#111827;color:#e5e7eb;margin:40px}table{border-collapse:collapse;width:100%}td,th{padding:12px;text-align:left;border-bottom:1px solid #374151}code{color:#67e8f9}</style></head><body>
-                <nav><a href="/">Overview</a> · <a href="/logs">Logs</a> · <a href="/backtest">Backtest 2020</a> · <a href="/assets">Assets</a></nav><h1>Divergence alerts</h1><p>Market candles → local scanner → Telegram · signals only</p>'''
+                <title>Divergence alerts</title><style>body{font:16px system-ui;background:#111827;color:#e5e7eb;margin:40px}a{color:#67e8f9}table{border-collapse:collapse;width:100%}td,th{padding:12px;text-align:left;border-bottom:1px solid #374151}code{color:#67e8f9}.data-warning{color:#facc15;font-size:20px;font-weight:bold}</style></head><body>
+                <nav><a href="/">Overview</a> · <a href="/signals">Signals</a> · <a href="/logs">Logs</a> · <a href="/backtest">Backtest 2020</a> · <a href="/assets">Assets</a></nav><h1>Divergence alerts</h1><p>Market candles → local scanner → Telegram · signals only</p>'''
                 + f'<p>RSI({rules["rsi_period"]}) close · BB({rules["bb_period"]}, {rules["bb_multiplier"]:g}) · Mode: {"dry run" if dry_run else "Telegram"}</p>'
-                + '<h2>Scanner coverage</h2><p>' + html.escape(scan_note) + '</p><table><tr><th>Asset</th><th>Timeframe</th><th>Status</th><th>Closed candles</th><th>Last close (UTC)</th><th>Details</th></tr>' + coverage + '</table><h2>Signals</h2>'
-                + STYLE + '<table><tr><th>Asset</th><th>Timeframe</th><th>Signal</th><th>Price pivots</th><th>RSI pivots</th><th>Delivery</th><th>Attempts</th><th>Error</th><th>Candle</th><th>Feedback</th></tr>'
-                + rows + '</table><p>Last 100 received signals. No rows means no signals received; it does not establish market coverage.</p><p><a href="/api/feedback/export">Export feedback history</a> · Saved in local SQLite. Online storage not configured.</p>' + SCRIPT + '</body></html>', 'text/html; charset=utf-8')
+                + '<h2>Scanner coverage</h2><p>' + html.escape(scan_note) + '</p><table><tr><th>Asset</th><th>Timeframe</th><th>Status</th><th>Closed candles</th><th>Last close (UTC)</th><th>Next scan (Israel time)</th><th>Details</th></tr>' + coverage + '</table></body></html>', 'text/html; charset=utf-8')
             else:
                 self.respond(404, {'error': 'Not found'})
 
