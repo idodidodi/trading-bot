@@ -25,8 +25,8 @@ const out = resolve(root, 'dist');
 await rm(out, {recursive: true, force: true});
 await mkdir(resolve(out, 'web/vendor'), {recursive: true});
 // Explicit list prevents private files, test files, and Python code being published.
-const assets = ['index.html', 'style.css', 'app.js', 'chart.js', 'vendor/lightweight-charts.js'];
+const assets = ['index.html', 'style.css', 'app.js', 'chart.js', 'vendor/lightweight-charts.js', 'favicon.svg'];
 for (const asset of assets) await copyFile(resolve(root, 'web', asset), resolve(out, 'web', asset));
 await copyFile(resolve(root, 'web/index.html'), resolve(out, 'index.html'));
 await writeFile(resolve(out, 'web/config.js'), 'window.DASHBOARD_CONFIG = ' + JSON.stringify(config) + ';\n');
-console.log('Built static dashboard in dist/ (7 public files).');
+console.log(`Built static dashboard in dist/ (${assets.length + 2} public files).`);

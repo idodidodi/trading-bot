@@ -252,7 +252,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 self.respond(200, (ROOT / 'web/index.html').read_text(), 'text/html; charset=utf-8')
                 return
             if route.startswith('/web/'):
-                allowed_files = {'style.css':'text/css', 'app.js':'text/javascript', 'config.js':'text/javascript', 'chart.js':'text/javascript', 'vendor/lightweight-charts.js':'text/javascript'}
+                allowed_files = {'style.css':'text/css', 'app.js':'text/javascript', 'config.js':'text/javascript', 'chart.js':'text/javascript', 'vendor/lightweight-charts.js':'text/javascript', 'favicon.svg':'image/svg+xml'}
                 name = route.removeprefix('/web/')
                 if name in allowed_files:
                     self.respond(200, (ROOT / 'web' / name).read_text(), allowed_files[name])
