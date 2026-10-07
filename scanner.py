@@ -15,7 +15,7 @@ import urllib.error
 
 from platform_app import ROOT, Store, load_env, load_rules, validate_signal
 
-TIMEFRAMES = {'4h': '4h', 'daily': '1day', 'weekly': '1week', 'monthly': '1month'}
+TIMEFRAMES = {'1h': '1h', '4h': '4h', 'daily': '1day', 'weekly': '1week', 'monthly': '1month'}
 
 
 def minimum_history(rules):
@@ -66,6 +66,32 @@ def timestamp(value):
     if dt.tzinfo is None:
         raise ValueError('Candle timestamps must include a timezone')
     return int(dt.timestamp() * 1000)
+
+
+def valid_ohlc(candle):
+    return (all(math.isfinite(v) for v in (candle.open, candle.high, candle.low, candle.close))
+            and candle.low <= min(candle.open, candle.close) <= max(candle.open, candle.close) <= candle.high)
+
+
+def usable_provider_history(candles, now, required):
+    """Quarantine a corrupt prefix, never stitch across a bad candle or invent prices."""
+    invalid = [i for i, candle in enumerate(candles) if not valid_ohlc(candle)]
+    if not invalid:
+        return candles
+    last = invalid[-1]
+    date = datetime.fromtimestamp(candles[last].start / 1000, timezone.utc).isoformat()
+    remaining = candles[last + 1:]
+    closed = sum(c.end <= now for c in remaining)
+    if closed < required:
+        raise ValueError(f'Invalid provider OHLC at {date}; only {closed} valid closed candles '
+                         f'follow it, need {required}. Provider correction or backfill required')
+    # Validate time boundaries even in the quarantined prefix. This recovery is
+    # specifically for bad prices, not malformed/overlapping candle intervals.
+    check_candles([replace(c, open=1, high=1, low=1, close=1) for c in candles], now)
+    notes = list(getattr(candles, 'notes', []))
+    notes.append(f'Invalid provider OHLC at {date}: excluded {last + 1} prefix candles '
+                 f'({len(invalid)} invalid); using {closed} consecutive valid closed candles')
+    return ProviderCandles(remaining, notes)
 
 
 def check_candles(candles, now):
@@ -173,7 +199,11 @@ def interval_end(start, timeframe):
         month = start.month % 12 + 1
         year = start.year + (start.month == 12)
         return start.replace(year=year, month=month, day=min(start.day, calendar.monthrange(year, month)[1]))
-    return start + {'4h': timedelta(hours=4), 'daily': timedelta(days=1), 'weekly': timedelta(days=7)}[timeframe]
+    return start + {'1h': timedelta(hours=1), '4h': timedelta(hours=4), 'daily': timedelta(days=1), 'weekly': timedelta(days=7)}[timeframe]
+
+
+class TwelveDataRateLimit(ValueError):
+    """Only a provider HTTP/payload 429 may trigger a fallback."""
 
 
 def fetch_twelve_data(asset, timeframe):
@@ -193,9 +223,9 @@ def fetch_twelve_data(asset, timeframe):
             data = json.load(response)
     except urllib.error.HTTPError as exc:
         exc.close()
-        raise ValueError(provider_error(exc.code)) from None
+        raise (TwelveDataRateLimit if exc.code == 429 else ValueError)(provider_error(exc.code)) from None
     if data.get('status') == 'error' or not isinstance(data.get('values'), list):
-        raise ValueError(provider_error(data.get('code')))
+        raise (TwelveDataRateLimit if str(data.get('code')) == '429' else ValueError)(provider_error(int(data['code']) if str(data.get('code', '')).isdigit() else None))
     meta = data.get('meta', {})
     if meta.get('interval') != TIMEFRAMES[timeframe] or meta.get('symbol') != asset['symbol']:
         raise ValueError('Provider returned a different symbol or interval')
@@ -221,7 +251,11 @@ def provider_error(code):
 
 
 def scan_once(store, config, rules, now=None, stop=None):
-    from managed_assets import effective, cache_candles
+    from managed_assets import effective, cache_candles, for_timeframe
+    from kraken_feed import fetch_kraken
+    from oanda_feed import fetch_oanda
+    from tiingo_feed import fetch_tiingo
+    from alpaca_feed import fetch_alpaca
     config, config_revision = effective(store, config)
     now = int(time.time() * 1000) if now is None else now
     from daily_universe import resolve
@@ -230,16 +264,21 @@ def scan_once(store, config, rules, now=None, stop=None):
     coverage = []
     if selection and selection['status'] == 'unavailable':
         coverage.append(dict(asset='DAILY_SELECTION', timeframe='daily', provider='Kraken', status='unavailable', reason=selection['reason']))
-    last_request = None
-    for asset in config['assets']:
-        if not asset.get('enabled', True):
+    last_requests = {}
+    for configured_asset in config['assets']:
+        if not configured_asset.get('enabled', True):
             continue
-        for timeframe in asset.get('timeframes', config['timeframes']):
-            row = dict(asset=asset['id'], timeframe=timeframe, provider=asset['provider'])
+        for timeframe in configured_asset.get('timeframes', config['timeframes']):
+            asset = for_timeframe(configured_asset, timeframe)
+            provider = asset['provider']
+            row = dict(asset=asset['id'], timeframe=timeframe, provider=provider,
+                       exchange=asset.get('exchange', ''), symbol=asset.get('symbol', asset['id']))
             try:
-                if asset['provider'] == 'twelvedata':
-                    if last_request is not None:
-                        delay = max(0, float(config.get('request_spacing_seconds', 8)) - (time.monotonic() - last_request))
+                if provider in ('twelvedata', 'kraken', 'oanda', 'tiingo'):
+                    spacing = (max(8, float(config.get('request_spacing_seconds', 8))) if provider == 'twelvedata'
+                               else max(1, float(config.get(provider + '_request_spacing_seconds', 1))))
+                    if provider in last_requests:
+                        delay = max(0, spacing - (time.monotonic() - last_requests[provider]))
                         if stop is not None:
                             if stop.wait(delay):
                                 return coverage
@@ -247,21 +286,37 @@ def scan_once(store, config, rules, now=None, stop=None):
                             time.sleep(delay)
                     if stop is not None and stop.is_set():
                         return coverage
-                    last_request = time.monotonic()
-                raw = read_csv(asset, timeframe) if asset['provider'] == 'csv' else fetch_twelve_data(asset, timeframe)
+                    last_requests[provider] = time.monotonic()
+                try:
+                    raw = {'csv': read_csv, 'twelvedata': fetch_twelve_data, 'kraken': fetch_kraken, 'oanda': fetch_oanda, 'tiingo': fetch_tiingo, 'alpaca': fetch_alpaca}[provider](asset, timeframe)
+                except TwelveDataRateLimit:
+                    from alpaca_feed import supported, fallback_asset, fetch_alpaca
+                    if not config.get('alpaca_rate_limit_fallback', True) or not supported(asset):
+                        raise
+                    asset = fallback_asset(asset)
+                    row.update(provider='alpaca', exchange=asset['exchange'], fallback_from='twelvedata',
+                               fallback_reason='Twelve Data quota reached')
+                    raw = fetch_alpaca(asset, timeframe)
+                if asset['provider'] == 'twelvedata':
+                    raw = usable_provider_history(raw, now, minimum_history(rules))
                 if getattr(raw, 'notes', None):
                     row['data_notes'] = '; '.join(raw.notes)
                 candles = check_candles(raw, now)
+                if getattr(raw, 'next_close_at', None) and raw.next_close_at > now:
+                    row['next_close_at'] = raw.next_close_at
                 future_closes = [c.end for c in raw if c.end > now]
                 if future_closes:
                     row['next_close_at'] = min(future_closes)
-                elif candles and timeframe == '4h':
-                    # Preserve the feed's native four-hour alignment.
-                    period = 4 * 60 * 60 * 1000
+                elif candles and timeframe in ('1h', '4h'):
+                    # Preserve the feed's native intraday alignment.
+                    period = (1 if timeframe == '1h' else 4) * 60 * 60 * 1000
                     row['next_close_at'] = candles[-1].end + ((now - candles[-1].end) // period + 1) * period
                 cache_candles(store, asset, timeframe, candles)
                 if len(candles) < minimum_history(rules):
-                    row.update(status='insufficient history', candles=len(candles))
+                    row.update(status='insufficient history', candles=len(candles),
+                               reason=f'Only {len(candles)} closed candles available; '
+                                      f'need {minimum_history(rules)} for this strategy. '
+                                      'Use a feed with longer history or wait for more closed candles')
                 else:
                     # Optional continuous-market validation (e.g. a verified 24/7 crypto feed).
                     if asset.get('continuous') and any(a.end != b.start for a, b in zip(candles, candles[1:])):
@@ -319,8 +374,10 @@ def load_config():
     ids = [a['id'] for a in config['assets']]
     if len(ids) != len(set(ids)):
         raise ValueError('Duplicate asset IDs')
-    if any(a.get('provider') not in ('csv', 'twelvedata') for a in config['assets']):
-        raise ValueError('Provider must be csv or twelvedata')
+    from managed_assets import validate_asset
+    for asset in config['assets']:
+        validate_asset(dict(asset, enabled=asset.get('enabled', True),
+                            timeframes=asset.get('timeframes', config['timeframes'])))
     return config
 
 

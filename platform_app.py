@@ -28,8 +28,18 @@ def load_env():
     if path.exists():
         for line in path.read_text().splitlines():
             if line.strip() and not line.lstrip().startswith('#'):
+                # Ignore notes/headings pasted alongside credentials. Never log
+                # arbitrary .env text: even a malformed line can contain a key.
+                if '=' not in line:
+                    continue
                 key, value = line.split('=', 1)
-                os.environ.setdefault(key.strip(), value.strip())
+                key = key.strip().removeprefix('export ').strip()
+                if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key):
+                    continue
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                    value = value[1:-1]
+                os.environ.setdefault(key, value)
 
 
 def load_rules():

@@ -1,4 +1,4 @@
-"""Replay historical CSV candles; never enqueue live alerts or send Telegram."""
+"""Replay historical CSV or Alpaca equity candles; never enqueue live alerts or send Telegram."""
 import json
 import os
 from pathlib import Path
@@ -14,7 +14,7 @@ def replay(candles, rules, symbol, timeframe, *, provisional=False):
     bars = check_candles(candles, END)
     signals = [s for s in detect(bars, rules, symbol, timeframe, provisional=provisional) if START <= s['confirmed_at'] < END]
     warmup = sum(c.end <= START for c in bars)
-    complete = bool(bars and warmup >= minimum_history(rules) and bars[-1].end >= END - {'4h': 14400000, 'daily': 86400000, 'weekly': 604800000, 'monthly': 2678400000}[timeframe])
+    complete = bool(bars and warmup >= minimum_history(rules) and bars[-1].end >= END - {'1h': 3600000, '4h': 14400000, 'daily': 86400000, 'weekly': 604800000, 'monthly': 2678400000}[timeframe])
     return dict(status='replayed' if complete else 'partial history', candles=len(bars), warmup_candles=warmup, signals=signals,
                 note='Calendar range checked; trading-session gaps are not verified.')
 
@@ -25,8 +25,27 @@ def run_backtest(store, config, rules, *, provisional=False):
         for timeframe in config['timeframes']:
             row = dict(asset=asset['id'], timeframe=timeframe)
             try:
+                if asset['provider'] in ('alpaca', 'tiingo'):
+                    from alpaca_feed import fetch_alpaca
+                    from tiingo_feed import fetch_tiingo
+                    if asset['provider'] == 'alpaca':
+                        bars = fetch_alpaca(asset, timeframe, start='2016-01-01T00:00:00Z', end='2021-01-01T00:00:00Z')
+                        feed_id = f"alpaca:{asset.get('exchange', 'Alpaca-' + asset.get('alpaca_feed', 'sip') + '-split')}:{asset['symbol']}"
+                        row['source'] = dict(provider='Alpaca', feed=asset.get('alpaca_feed', 'sip'), adjustment='split')
+                    else:
+                        bars = fetch_tiingo(asset, timeframe, start='2020-01-01T00:00:00Z', end='2021-01-01T00:00:00Z')
+                        feed_id = f"tiingo:Tiingo-UTC:{asset['symbol']}"
+                        row['source'] = dict(provider='Tiingo', feed='forex', alignment='UTC')
+                    row.update(replay(bars, rules, feed_id, timeframe, provisional=provisional))
+                    with store.connect() as db:
+                        db.execute('CREATE TABLE IF NOT EXISTS backtest_candle_cache(feed TEXT,timeframe TEXT,start INTEGER,end INTEGER,open REAL,high REAL,low REAL,close REAL,PRIMARY KEY(feed,timeframe,start))')
+                        db.executemany('INSERT OR REPLACE INTO backtest_candle_cache VALUES(?,?,?,?,?,?,?,?)',
+                            ((feed_id,timeframe,c.start,c.end,c.open,c.high,c.low,c.close) for c in bars))
+                    row['note'] += ' ' + '; '.join(bars.notes)
+                    results.append(row)
+                    continue
                 if asset['provider'] != 'csv':
-                    raise ValueError('Supply historical CSV files; live provider requests do not cover 2020.')
+                    raise ValueError('This asset is unavailable from the selected historical provider')
                 row.update(replay(read_csv(asset, timeframe), rules, asset['id'], timeframe, provisional=provisional))
                 csv_path = Path(asset['path'].format(asset=asset['id'], timeframe=timeframe))
                 if not csv_path.is_absolute():
@@ -39,6 +58,8 @@ def run_backtest(store, config, rules, *, provisional=False):
                         row['source'] = provenance['source']
                         if provenance.get('rejected_source_rows'):
                             row.update(status='partial history', note=f"{provenance['rejected_source_rows']} malformed source rows excluded; gaps can affect indicator and pivot results.")
+            except ValueError as exc:
+                row.update(status='unavailable', reason=str(exc), signals=[])
             except FileNotFoundError:
                 row.update(status='unavailable', reason='Historical candle CSV missing', signals=[])
             except Exception:

@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -11,7 +12,7 @@ from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
 from generate_pine import render
-from platform_app import Store, delivery_worker, handler_factory, load_rules, validate_signal
+from platform_app import Store, delivery_worker, handler_factory, load_env, load_rules, validate_signal
 
 
 def example():
@@ -19,6 +20,22 @@ def example():
                 price1=1.10, price2=1.09, rsi1=15.0, rsi2=25.0, band1=1.11, band2=1.095,
                 pivot1=1700000000000, pivot2=1700100000000, confirmed_at=1700200000000,
                 spacing=7, rules=load_rules())
+
+
+class EnvTests(unittest.TestCase):
+    def test_notes_quotes_export_and_existing_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, '.env').write_text(
+                '# comment\nPasted setup instructions\ninvalid key=ignored\n'
+                'export TEST_KEY="secret=with-equals"\nTEST_OTHER=\'value\'\n'
+                'TEST_EXISTING=file-value\n')
+            with patch('platform_app.ROOT', Path(directory)), patch.dict(
+                    os.environ, {'TEST_EXISTING': 'environment-value'}, clear=True):
+                load_env()
+                self.assertEqual(os.environ['TEST_KEY'], 'secret=with-equals')
+                self.assertEqual(os.environ['TEST_OTHER'], 'value')
+                self.assertEqual(os.environ['TEST_EXISTING'], 'environment-value')
+                self.assertEqual(len(os.environ), 3)
 
 
 class RulesTests(unittest.TestCase):

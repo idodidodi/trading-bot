@@ -24,12 +24,6 @@
       "unavailable_reason": "DAX cash-index feed is unavailable with the configured Twelve Data access; a supported index feed is required"
     },
     {
-      "id": "DOLLAR_INDEX",
-      "provider": "csv",
-      "path": "data/candles/{asset}-{timeframe}.csv",
-      "unavailable_reason": "US Dollar Index is not available in the configured Twelve Data catalogue; a supported index feed is required"
-    },
-    {
       "id": "BTCUSD",
       "provider": "twelvedata",
       "path": "data/candles/{asset}-{timeframe}.csv",
@@ -37,7 +31,13 @@
       "exchange": "Binance",
       "feed_confirmed": true,
       "market": "crypto",
-      "enabled": true
+      "enabled": true,
+      "timeframe_providers": {
+        "weekly": "kraken",
+        "daily": "kraken",
+        "4h": "kraken",
+        "1h": "kraken"
+      }
     },
     {
       "id": "NEARUSD",
@@ -47,7 +47,13 @@
       "exchange": "Binance",
       "feed_confirmed": true,
       "market": "crypto",
-      "enabled": true
+      "enabled": true,
+      "timeframe_providers": {
+        "weekly": "kraken",
+        "daily": "kraken",
+        "4h": "kraken",
+        "1h": "kraken"
+      }
     },
     {
       "id": "NVDA",
@@ -135,7 +141,13 @@
         "4h"
       ],
       "tradingview_symbol": "",
-      "market": "crypto"
+      "market": "crypto",
+      "timeframe_providers": {
+        "weekly": "kraken",
+        "daily": "kraken",
+        "4h": "kraken",
+        "1h": "kraken"
+      }
     },
     {
       "id": "SOLUSD",
@@ -151,7 +163,13 @@
         "4h"
       ],
       "tradingview_symbol": "",
-      "market": "crypto"
+      "market": "crypto",
+      "timeframe_providers": {
+        "weekly": "kraken",
+        "daily": "kraken",
+        "4h": "kraken",
+        "1h": "kraken"
+      }
     },
     {
       "id": "DOGEUSD",
@@ -167,7 +185,44 @@
         "4h"
       ],
       "tradingview_symbol": "",
-      "market": "crypto"
+      "market": "crypto",
+      "timeframe_providers": {
+        "weekly": "kraken",
+        "daily": "kraken",
+        "4h": "kraken",
+        "1h": "kraken"
+      }
+    },
+    {
+      "id": "DAX-ETF",
+      "provider": "alpaca",
+      "symbol": "DAX",
+      "exchange": "NASDAQ",
+      "market": "etf",
+      "feed_confirmed": true,
+      "enabled": true,
+      "timeframes": [
+        "monthly",
+        "weekly",
+        "daily",
+        "4h",
+        "1h"
+      ],
+      "tradingview_symbol": "NASDAQ:DAX"
+    },
+    {
+      "id": "SPX",
+      "provider": "csv",
+      "path": "data/candles/{asset}-{timeframe}.csv",
+      "enabled": false,
+      "timeframes": [
+        "monthly",
+        "weekly",
+        "daily",
+        "4h",
+        "1h"
+      ],
+      "tradingview_symbol": "SP:SPX"
     }
   ],
   "request_spacing_seconds": 8,
@@ -176,6 +231,8 @@
     "timezone": "Asia/Jerusalem",
     "hour": 8,
     "count": 5,
-    "source": "Kraken 24-hour USD turnover; Twelve Data candle feeds"
-  }
+    "source": "Kraken 24-hour USD turnover; Kraken crypto 4h/daily/weekly; Twelve Data forex and crypto monthly",
+    "crypto_native_provider": "kraken"
+  },
+  "kraken_request_spacing_seconds": 1
 }

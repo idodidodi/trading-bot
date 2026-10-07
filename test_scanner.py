@@ -9,7 +9,7 @@ from unittest.mock import patch, Mock
 import urllib.error
 
 from platform_app import Store, load_rules
-from scanner import Candle, check_candles, detect, indicators, prepare_store, scan_once, fetch_twelve_data, scanner_worker, normalize_provider_candles
+from scanner import Candle, check_candles, detect, indicators, prepare_store, scan_once, fetch_twelve_data, scanner_worker, normalize_provider_candles, usable_provider_history
 
 
 def fixture():
@@ -23,6 +23,60 @@ def fixture():
 
 
 class EngineTests(unittest.TestCase):
+    def test_corrupt_provider_prefix_is_quarantined_without_changing_prices(self):
+        bars = fixture()
+        bars[20] = replace(bars[20], close=bars[20].low - .01)
+        bars[80] = replace(bars[80], high=float('nan'))
+        recovered = usable_provider_history(bars, bars[-1].end, 64)
+        self.assertEqual(list(recovered), bars[81:])
+        self.assertIn('81 prefix candles (2 invalid)', recovered.notes[0])
+        with self.assertRaises(ValueError):
+            check_candles(bars, bars[-1].end)  # CSV remains strict.
+
+    def test_recent_bad_provider_candle_does_not_enable_partial_history(self):
+        bars = fixture()
+        bars[-64] = replace(bars[-64], low=bars[-64].high + 1)
+        with self.assertRaisesRegex(ValueError, 'only 63.*need 64'):
+            usable_provider_history(bars, bars[-1].end, 64)
+        bars[-1] = replace(bars[-1], close=float('inf'))
+        with self.assertRaisesRegex(ValueError, 'only 0'):
+            usable_provider_history(bars, bars[-1].end, 64)
+
+    def test_provider_price_recovery_does_not_hide_timestamp_errors(self):
+        bars = fixture()
+        bars[20] = replace(bars[20], low=200)
+        bars[1] = replace(bars[1], start=bars[0].start)
+        with self.assertRaisesRegex(ValueError, 'Duplicate'):
+            usable_provider_history(bars, bars[-1].end, 64)
+
+    def test_recovered_provider_history_preserves_catchup_guard(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(Path(folder) / 'db.sqlite3'); prepare_store(store)
+            config = dict(timeframes=['4h'], assets=[dict(id='EURUSD', provider='twelvedata', symbol='EUR/USD')])
+            bars = fixture()
+            with patch('scanner.fetch_twelve_data', return_value=bars[:100]):
+                scan_once(store, config, load_rules(), bars[99].end)
+            bars[110] = replace(bars[110], close=bars[110].low - .01)
+            with patch('scanner.fetch_twelve_data', return_value=bars):
+                result = scan_once(store, config, load_rules(), bars[-1].end)
+            self.assertEqual(result[0]['status'], 'unavailable')
+            self.assertIn('Polling gap', result[0]['reason'])
+            self.assertEqual(store.rows(), [])
+
+    def test_recovered_feed_baselines_with_visible_warning_and_no_alerts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(Path(folder) / 'db.sqlite3'); prepare_store(store)
+            config = dict(timeframes=['4h'], assets=[dict(id='EURUSD', provider='twelvedata', symbol='EUR/USD')])
+            bars = fixture()
+            bars[80] = replace(bars[80], low=200)
+            with patch('scanner.fetch_twelve_data', return_value=bars):
+                result = scan_once(store, config, load_rules(), bars[-1].end)
+            self.assertEqual(result[0]['status'], 'baseline set')
+            self.assertEqual(result[0]['candles'], 179)
+            self.assertTrue(result[0]['limited_history'])
+            self.assertIn('Invalid provider OHLC', result[0]['data_notes'])
+            self.assertEqual(store.rows(), [])
+
     def test_provider_revisions_and_short_native_interval_boundaries(self):
         bars = [Candle(1000, 5000, 10, 12, 9, 11), Candle(1000, 5000, 10, 12, 9, 12),
                 Candle(4000, 8000, 12, 13, 11, 12)]

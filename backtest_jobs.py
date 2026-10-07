@@ -20,19 +20,29 @@ def options(store, job_id=None):
     assets = {r['asset'] for r in report['results']} if report else set()
     catalog=ROOT/'data/historical-2020/backtest-config.json'
     if catalog.exists(): assets.update(a['id'] for a in json.loads(catalog.read_text())['assets'])
-    assets=sorted(assets)
-    return dict(assets=assets, strategies=STRATEGIES, timeframes=['monthly','weekly','daily','4h'], year=2020,
+    from alpaca_feed import supported
+    from managed_assets import effective
+    from scanner import load_config
+    live, _ = effective(store, load_config())
+    alpaca_assets = sorted(a['id'] for a in live['assets'] if supported(a))
+    tiingo_assets = sorted(a['id'] for a in live['assets'] if a.get('market')=='forex' and a.get('feed_confirmed') is True)
+    csv_assets = sorted(assets)
+    assets=sorted(assets | set(alpaca_assets) | set(tiingo_assets))
+    return dict(assets=assets, strategies=STRATEGIES, timeframes=['monthly','weekly','daily','4h','1h'], year=2020,
+                sources=['csv','alpaca','tiingo'], csv_assets=csv_assets, alpaca_assets=alpaca_assets, tiingo_assets=tiingo_assets,
                 job=dict(id=job[0],status=job[1],**json.loads(job[2]),updated=job[3]) if job else None)
 
 def validate(body, available):
     assets=body.get('assets');frames=body.get('timeframes');strategy=body.get('strategy')
     if (not isinstance(assets,list) or not assets or len(assets)>100 or not set(assets)<=set(available)
-        or not isinstance(frames,list) or not frames or not set(frames)<= {'monthly','weekly','daily','4h'} or strategy not in STRATEGIES):
+        or not isinstance(frames,list) or not frames or not set(frames)<= {'monthly','weekly','daily','4h','1h'} or strategy not in STRATEGIES):
         raise ValueError('Select available historical assets, a strategy and timeframes')
     return assets,frames,strategy
 
 def start(store, body):
     available=options(store)['assets'];assets,frames,strategy=validate(body,available)
+    if body.get('source', 'csv') not in ('csv', 'alpaca', 'tiingo'):
+        raise ValueError('Select stored CSV history, Alpaca or Tiingo')
     if not _lock.acquire(blocking=False): raise LookupError('A backtest is already running')
     job=str(time.time_ns())
     try:
@@ -45,11 +55,29 @@ def start(store, body):
         try:
             from backtest import run_backtest
             cfg=json.loads((ROOT/'data/historical-2020/backtest-config.json').read_text())
-            cfg['assets']=[a for a in cfg['assets'] if a['id'] in assets];cfg['timeframes']=frames
+            catalog = {a['id']: a for a in cfg['assets']}
+            cfg['assets']=[catalog.get(a, dict(id=a, provider='unsupported')) for a in assets];cfg['timeframes']=frames
+            if body.get('source') == 'alpaca':
+                from alpaca_feed import supported, fallback_asset
+                from managed_assets import effective
+                from scanner import load_config
+                live, _ = effective(store, load_config())
+                feeds = {a['id']: a for a in live['assets']}
+                cfg['assets'] = [fallback_asset(feeds[a]) if a in feeds and supported(feeds[a])
+                                 else dict(id=a, provider='unsupported') for a in assets]
+            if body.get('source') == 'tiingo':
+                from managed_assets import effective
+                from scanner import load_config
+                live, _ = effective(store, load_config())
+                feeds = {a['id']: a for a in live['assets']}
+                eligible = set(options(store)['tiingo_assets'])
+                cfg['assets'] = [feeds[a] | dict(provider='tiingo', exchange='Tiingo', timeframe_providers={})
+                                 if a in feeds and a in eligible
+                                 else dict(id=a, provider='unsupported') for a in assets]
             run_backtest(store,cfg,load_rules(),provisional=strategy=='warmup')
             status='completed';result=body
         except Exception:
-            status='failed';result=body|dict(error='Historical replay failed; check available CSV history')
+            status='failed';result=body|dict(error='Historical replay failed; check selected data source and credentials')
             store.log('Backtest failed',result['error'])
         finally:
             with store.connect() as db:db.execute('UPDATE backtest_jobs SET status=?,payload=?,updated=? WHERE id=?',(status,json.dumps(result),time.time(),job))

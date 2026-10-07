@@ -5,7 +5,9 @@ import re
 import time
 
 DEFAULTS = ['monthly', 'weekly', 'daily', '4h']
+SUPPORTED_TIMEFRAMES = DEFAULTS + ['1h']
 LIMIT = 100
+PROVIDERS = ('csv', 'twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca')
 TOKEN = re.compile(r'[A-Za-z0-9_^=:.!/\-]{1,100}')
 
 
@@ -45,12 +47,12 @@ def get(store):
 def validate_asset(asset):
     if not isinstance(asset, dict) or not isinstance(asset.get('id'),str) or not TOKEN.fullmatch(asset['id']):
         raise ValueError('Invalid ticker')
-    if asset.get('provider') not in ('csv','twelvedata'):
-        raise ValueError('Select CSV or Twelve Data')
+    if asset.get('provider') not in PROVIDERS:
+        raise ValueError('Select CSV, Twelve Data, Kraken, OANDA, Tiingo or Alpaca')
     if type(asset.get('enabled')) is not bool:
         raise ValueError('Invalid enabled state')
     frames=asset.get('timeframes')
-    if not isinstance(frames,list) or not frames or any(f not in DEFAULTS for f in frames) or len(frames)!=len(set(frames)):
+    if not isinstance(frames,list) or not frames or any(f not in SUPPORTED_TIMEFRAMES for f in frames) or len(frames)!=len(set(frames)):
         raise ValueError('Choose at least one supported candle timeframe')
     for key in ('symbol','exchange','tradingview_symbol'):
         value=asset.get(key,'')
@@ -58,8 +60,64 @@ def validate_asset(asset):
             raise ValueError(f'Invalid {key}')
     if asset.get('tradingview_symbol') and ':' not in asset['tradingview_symbol']:
         raise ValueError('TradingView symbol must include its exchange, e.g. NASDAQ:NVDA')
-    if asset['provider']=='twelvedata' and asset['enabled'] and (not asset.get('symbol') or asset.get('feed_confirmed') is not True):
+    overrides = asset.get('timeframe_providers', {})
+    if not isinstance(overrides, dict) or any(f not in SUPPORTED_TIMEFRAMES or p not in ('twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca') for f, p in overrides.items()):
+        raise ValueError('Invalid timeframe providers')
+    if overrides and asset['provider'] == 'csv':
+        raise ValueError('Timeframe provider overrides require an API feed')
+    if asset['provider'] in ('kraken', 'oanda', 'tiingo') and 'twelvedata' in overrides.values():
+        raise ValueError('Use Twelve Data as the primary feed and Kraken timeframe overrides for mixed venues')
+    if asset['enabled'] and any(for_timeframe(asset, f)['provider'] != 'csv' for f in frames) and (not asset.get('symbol') or asset.get('feed_confirmed') is not True):
         raise ValueError('Confirm the exact provider symbol before enabling')
+    from kraken_feed import validate_feed
+    for frame in frames:
+        if asset.get('timeframe_providers', {}).get(frame, asset['provider']) == 'alpaca' and asset['enabled']:
+            from alpaca_feed import supported
+            if not supported(asset):
+                raise ValueError('Alpaca requires a confirmed US equity or ETF feed')
+        feed = for_timeframe(asset, frame)
+        if feed['provider'] == 'kraken' and asset['enabled']:
+            if asset['provider'] == 'kraken' and asset.get('exchange') != 'Kraken':
+                raise ValueError('Select Kraken as the provider exchange')
+            validate_feed(feed, frame)
+        if feed['provider'] == 'oanda' and asset['enabled']:
+            from oanda_feed import validate_feed as validate_oanda
+            if asset['provider'] == 'oanda' and asset.get('exchange') != 'OANDA':
+                raise ValueError('Select OANDA as the provider exchange')
+            validate_oanda(feed, frame)
+
+        if feed['provider'] == 'tiingo' and asset['enabled']:
+            from tiingo_feed import validate_feed as validate_tiingo
+            if asset['provider'] == 'tiingo' and asset.get('exchange') != 'Tiingo':
+                raise ValueError('Select Tiingo as the provider exchange')
+            validate_tiingo(feed, frame)
+
+
+def for_timeframe(asset, timeframe):
+    """Resolve an explicitly selected provider while retaining feed identity."""
+    feed = dict(asset)
+    feed['provider'] = asset.get('timeframe_providers', {}).get(timeframe, asset['provider'])
+    if feed['provider'] == 'alpaca':
+        from alpaca_feed import fallback_asset, supported
+        if supported(asset):
+            feed = fallback_asset(asset)
+        if asset['provider'] == 'alpaca':
+            feed['tradingview_symbol'] = asset.get('tradingview_symbol', '')
+    if feed['provider'] == 'kraken':
+        feed['exchange'] = 'Kraken'
+        # A mapping for the primary venue is not a verified Kraken chart mapping.
+        if asset['provider'] != 'kraken':
+            feed['tradingview_symbol'] = ''
+    if feed['provider'] == 'oanda':
+        import os
+        feed['exchange'] = 'OANDA-' + os.environ.get('OANDA_ENVIRONMENT', 'practice')
+        if asset['provider'] != 'oanda':
+            feed['tradingview_symbol'] = ''
+    if feed['provider'] == 'tiingo':
+        feed['exchange'] = 'Tiingo-UTC'
+        if asset['provider'] != 'tiingo':
+            feed['tradingview_symbol'] = ''
+    return feed
 
 
 def change(store, body):
@@ -102,8 +160,9 @@ def change(store, body):
             index=next((i for i,a in enumerate(assets) if a['id']==incoming['id']),None)
             if index is None:raise ValueError('Add the ticker before editing it')
             current=assets[index]
+            validate_asset(current | incoming)
             # Do not accept arbitrary file paths, credentials or unknown scanner fields.
-            for key in ('provider','enabled','timeframes','symbol','exchange','tradingview_symbol','feed_confirmed'):
+            for key in ('provider','enabled','timeframes','symbol','exchange','tradingview_symbol','feed_confirmed','timeframe_providers'):
                 if key in incoming:current[key]=incoming[key]
             current.setdefault('path','data/candles/{asset}-{timeframe}.csv')
             results=[dict(ticker=current['id'],status='saved')]

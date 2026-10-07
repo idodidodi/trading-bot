@@ -15,10 +15,17 @@ POLICY = dict(enabled=True, timezone='Asia/Jerusalem', hour=8, count=5,
               source='Kraken 24-hour USD turnover; Twelve Data candle feeds')
 
 
-def asset(symbol, market, frames):
-    return dict(id=symbol.replace('/', ''), symbol=symbol, provider='twelvedata',
+def asset(symbol, market, frames, crypto_native_provider='twelvedata', forex_provider='twelvedata'):
+    result = dict(id=symbol.replace('/', ''), symbol=symbol, provider='twelvedata',
                 exchange='Binance' if market == 'crypto' else '', feed_confirmed=True,
                 enabled=True, timeframes=list(frames), tradingview_symbol='', market=market)
+    if market == 'crypto' and crypto_native_provider == 'kraken':
+        result['timeframe_providers'] = {f: 'kraken' for f in frames if f in ('1h', '4h', 'daily', 'weekly')}
+    if market == 'forex' and forex_provider == 'oanda':
+        result.update(provider='oanda', exchange='OANDA')
+    if market == 'forex' and forex_provider == 'tiingo':
+        result.update(provider='tiingo', exchange='Tiingo')
+    return result
 
 
 def configure(config):
@@ -62,13 +69,16 @@ def read_json(url):
     return result
 
 
-def ranking_inputs():
+def ranking_inputs(forex_provider='twelvedata'):
     pairs = read_json('https://api.kraken.com/0/public/AssetPairs')['result']
     tickers = read_json('https://api.kraken.com/0/public/Ticker')['result']
     forex = read_json('https://api.twelvedata.com/forex_pairs')['data']
     crypto = read_json('https://api.twelvedata.com/cryptocurrencies')['data']
     supported = {'forex': {r['symbol'] for r in forex},
                  'crypto': {r['symbol'] for r in crypto if 'Binance' in r.get('available_exchanges', [])}}
+    if forex_provider == 'oanda':
+        from oanda_feed import available_forex
+        supported['forex'] &= available_forex()
     return pairs, tickers, supported
 
 
@@ -135,7 +145,8 @@ def resolve(store, config, now):
         selection = dict(session=day, starts_at=boundary, checked_at=now, source=policy['source'],
                          selected={'forex': [], 'crypto': []})
         try:
-            ranked = rank(*ranking_inputs(), {a['id'] for a in config['assets']}, policy['count'])
+            inputs = ranking_inputs('oanda') if policy.get('forex_provider') == 'oanda' else ranking_inputs()
+            ranked = rank(*inputs, {a['id'] for a in config['assets']}, policy['count'])
             # Never silently claim a full top-five result from inadequate data.
             if any(len(rows) != policy['count'] for rows in ranked.values()):
                 raise ValueError('Fewer than five eligible pairs with valid volume in a market')
@@ -149,7 +160,11 @@ def resolve(store, config, now):
     known = {a['id'] for a in result['assets']}
     for market, rows in selection['selected'].items():
         for row in rows:
-            new = asset(row['symbol'], market, config['timeframes'])
+            forex_provider = policy.get('forex_provider', 'twelvedata')
+            # A frozen selection predating activation may contain unsupported pairs.
+            if forex_provider in ('oanda','tiingo') and row['symbol'] not in policy.get(forex_provider + '_verified_pairs', []):
+                forex_provider = 'twelvedata'
+            new = asset(row['symbol'], market, config['timeframes'], policy.get('crypto_native_provider', 'twelvedata'), forex_provider)
             if new['id'] not in known:
                 new['daily_selected'] = True
                 result['assets'].append(new)
