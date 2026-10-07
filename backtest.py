@@ -13,9 +13,12 @@ def replay(candles, rules, symbol, timeframe, *, provisional=False):
     # Exclude future candles before calculating indicators and confirming pivots.
     bars = check_candles(candles, END)
     signals = [s for s in detect(bars, rules, symbol, timeframe, provisional=provisional) if START <= s['confirmed_at'] < END]
+    from finding_followup import both
+    from finding_feedback import finding_id
+    followups = {finding_id('backtest', s): both(s, bars) for s in signals}
     warmup = sum(c.end <= START for c in bars)
     complete = bool(bars and warmup >= minimum_history(rules) and bars[-1].end >= END - {'1h': 3600000, '4h': 14400000, 'daily': 86400000, 'weekly': 604800000, 'monthly': 2678400000}[timeframe])
-    return dict(status='replayed' if complete else 'partial history', candles=len(bars), warmup_candles=warmup, signals=signals,
+    return dict(status='replayed' if complete else 'partial history', candles=len(bars), warmup_candles=warmup, signals=signals, followups=followups,
                 note='Calendar range checked; trading-session gaps are not verified.')
 
 

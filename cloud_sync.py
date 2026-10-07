@@ -30,13 +30,14 @@ def meta(db,key,default='0'):
 
 
 def snapshot(store):
+    from finding_followup import stored
     with store.connect() as db:
         initialize(db)
         config=db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
         if config:
             enqueue(db,'config','current',dict(revision=config[0],applied_revision=config[1],config=json.loads(config[2])))
         for raw,status,attempts,error in db.execute('SELECT payload,status,attempts,error FROM signals'):
-            signal=json.loads(raw);enqueue(db,'live',finding_id('live',signal),dict(id=finding_id('live',signal),signal=signal,status=status,attempts=attempts,error=error))
+            signal=json.loads(raw);followups=stored(db,finding_id('live',signal));enqueue(db,'live',finding_id('live',signal),dict(id=finding_id('live',signal),signal=signal,followups=followups,status=status,attempts=attempts,error=error))
         exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='activity_log'").fetchone()
         if exists:
             cutoff=int(meta(db,'log_snapshot'))
@@ -59,10 +60,10 @@ def snapshot(store):
         if report:
             enqueue(db,'summary','backtest',[dict(asset=r['asset'],timeframe=r['timeframe'],status=r['status'],signals=len(r['signals']),note=r.get('reason',r.get('note',''))) for r in report['results']])
             report_key=hashlib.sha256(canonical(report).encode()).hexdigest()
-            enqueue(db,'backtest_run',report_key,dict(year=report.get('year'),rules=report.get('rules'),sources=report.get('sources'),results=[{k:v for k,v in r.items() if k!='signals'} for r in report['results']]))
+            enqueue(db,'backtest_run',report_key,dict(year=report.get('year'),rules=report.get('rules'),sources=report.get('sources'),results=[{k:v for k,v in r.items() if k not in ('signals','followups')} for r in report['results']]))
             for r in report['results']:
                 for signal in r['signals']:
-                    key=finding_id('backtest',signal);enqueue(db,'backtest',key,dict(id=key,signal=signal))
+                    key=finding_id('backtest',signal);enqueue(db,'backtest',key,dict(id=key,signal=signal,followups=r.get('followups',{}).get(key) or stored(db,key)))
         enqueue(db,'heartbeat','current',dict(observed_at=time.time()))
     # Stream historical CSVs into the durable queue; import only changed files.
     from scanner import timestamp

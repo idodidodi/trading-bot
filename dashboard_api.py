@@ -20,6 +20,9 @@ def read(store, path):
     if url.path=='/api/assets':
         from daily_universe import status
         return ensure(store) | dict(daily_selection=status(store))
+    if url.path=='/api/followup':
+        from finding_followup import run
+        return run(store,ROOT,param('source'),param('finding'),param('mode','recovery'))
     if url.path=='/api/candles':
         from candle_views import detail
         return detail(store,ROOT,param('source'),param('finding'),param('target','pivot2'))
@@ -55,10 +58,19 @@ def read(store, path):
             all_signals=sorted([s for r in report['results'] for s in r['signals']],key=lambda s:s['confirmed_at'],reverse=True) if report else []
             signals=all_signals[page*50:page*50+51]
             summary=[dict(asset=r['asset'],timeframe=r['timeframe'],status=r['status'],signals=len(r['signals']),note=r.get('reason',r.get('note',''))) for r in report['results']] if report else []
+        from finding_followup import stored
+        precomputed = {k: v for r in report['results'] for k,v in r.get('followups',{}).items()} if source=='backtest' and report else {}
         result=[]
         for s in signals[:50]:
             key=finding_id(source,s)
             fb=db.execute('SELECT rating,comment,revision FROM finding_feedback WHERE finding_id=?',(key,)).fetchone()
             status,revision=states.get(key,('active',0)) if source=='live' else ('active',0)
-            result.append(dict(id=key,signal=s,archived=status=='archived',state_revision=revision,feedback=dict(zip(('rating','comment','revision'),fb)) if fb else None))
+            followup = precomputed.get(key) or stored(db,key)
+            result.append(dict(id=key,signal=s,followup=followup.get('recovery') if followup else None,archived=status=='archived',state_revision=revision,feedback=dict(zip(('rating','comment','revision'),fb)) if fb else None))
+    # Existing reports get outcomes on review; live findings remain click-only.
+    if source == 'backtest':
+        from finding_followup import run
+        for item in result:
+            if item['followup'] is None:
+                item['followup'] = run(store, ROOT, source, item['id'])['followup']
     return dict(findings=result,has_more=len(signals)>50,summary=summary,scan=json.loads(current[0]) if source=='live' and current else None)

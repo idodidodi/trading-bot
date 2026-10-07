@@ -1,3 +1,4 @@
+export {followupWindows} from './followup.mjs';
 // Mirrors scanner.detect: closed OHLC, Wilder RSI, population bands, strict consecutive pivots.
 export function detect(candles,rules,symbol,timeframe,provisional=false){
  const n=rules.rsi_period,b=rules.bb_period,left=rules.pivot_left,right=rules.pivot_right;
