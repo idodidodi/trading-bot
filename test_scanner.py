@@ -218,7 +218,7 @@ class EngineTests(unittest.TestCase):
         found = detect(check_candles(bars,timestamp('2026-10-06T11:00:00+03:00')),rules,'test:NEAR/USD','4h')
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0]['confirmed_at'], timestamp('2026-10-06T11:00:00+03:00'))
-        self.assertIn('11:00:00+03:00', message(found[0]))
+        self.assertIn('06 Oct 2026 at 11:00 (Israel time)', message(found[0]))
         self.assertNotIn('provisional', message(found[0]))
         # A higher high on the following candle rejects this pivot pair.
         bars[257] = replace(bars[257], high=bars[256].high+1)

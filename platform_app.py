@@ -151,15 +151,9 @@ class Store:
 
 
 def message(payload):
-    from datetime import datetime, timezone
-    stamp = datetime.fromtimestamp(payload['confirmed_at'] / 1000, timezone.utc).isoformat()
     provisional = payload.get('signal_status') == 'provisional'
-    if provisional:
-        from zoneinfo import ZoneInfo
-        stamp = datetime.fromtimestamp(payload['pivot_closed_at'] / 1000, ZoneInfo('Asia/Jerusalem')).isoformat()
-    if not provisional:
-        from zoneinfo import ZoneInfo
-        stamp = datetime.fromtimestamp(payload['confirmed_at'] / 1000, ZoneInfo('Asia/Jerusalem')).isoformat()
+    timestamp = payload['pivot_closed_at'] if provisional else payload['confirmed_at']
+    stamp = datetime.fromtimestamp(timestamp / 1000, ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y at %H:%M (Israel time)')
     timing = f"Second pivot closed: {stamp}" if provisional else f"Confirmed: {stamp} ({payload['rules']['pivot_right']} following candle(s))"
     footer = 'Signal only · provisional pivot · closed candle' if provisional else 'Signal only · closed-candle divergence'
     return (f"{payload['direction'].upper()} RSI divergence{' (provisional)' if provisional else ''}\n"
@@ -205,6 +199,12 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             stop.wait(1)
             continue
         key, raw, attempts = row
+        if json.loads(raw).get('review_slot'):
+            # Retire queued clock reviews from older versions without resending
+            # cached setups after the move to candle-driven alerts.
+            with store.connect() as db:
+                db.execute("UPDATE signals SET status='cancelled',error=NULL WHERE id=?", (key,))
+            continue
         store.log('Delivery attempt', f'{key} · attempt {attempts + 1}')
         try:
             if not dry_run:
@@ -431,8 +431,6 @@ def main():
         prepare_store(store)
         scanner_thread = threading.Thread(target=scanner_worker, args=(store, config, rules, stop), daemon=True)
         scanner_thread.start()
-        from alert_reviews import worker as review_worker
-        threading.Thread(target=review_worker, args=(store, stop), daemon=True).start()
     server = LocalHTTPServer((host, int(os.environ.get('PORT', '8080'))), handler_factory(store, rules, secret, dry_run, dashboard=True))
     webhook_server = None
     if legacy_webhook:
