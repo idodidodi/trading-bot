@@ -109,7 +109,7 @@ def apply(store,response):
         if cfg and not pending:
             for asset in cfg['config']['assets']:validate_asset(asset)
             local=db.execute('SELECT revision,payload FROM managed_config WHERE id=1').fetchone()
-            if local and json.loads(local[1])!=cfg['config']:
+            if local and (local[0] != cfg['revision'] or json.loads(local[1])!=cfg['config']):
                 db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1',(cfg['revision'],json.dumps(cfg['config'])))
             db.execute('INSERT OR REPLACE INTO cloud_meta VALUES(?,?)',('config_base',str(cfg['revision'])))
             # Mark imported config as seen; application acknowledgement is a later change.
