@@ -23,6 +23,8 @@ def latest_report(db, root):
 
 
 def initialize(db):
+    from finding_state import initialize as initialize_state
+    initialize_state(db)
     db.execute('''CREATE TABLE IF NOT EXISTS finding_feedback (
         finding_id TEXT PRIMARY KEY, source TEXT NOT NULL,
         evidence TEXT NOT NULL, rating INTEGER CHECK(rating BETWEEN 1 AND 5),

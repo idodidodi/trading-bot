@@ -43,7 +43,13 @@ def read(store, path):
             exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='scanner_status'").fetchone()
             current=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone() if exists else None
             summary=json.loads(current[0]).get('coverage',[]) if current else []
-            signals=[json.loads(r[0]) for r in db.execute('SELECT payload FROM signals ORDER BY received DESC LIMIT 51 OFFSET ?',(page*50,))]
+            states={key: (status, revision) for key,status,revision in db.execute('SELECT finding_id,status,revision FROM finding_state')}
+            visible=[]
+            for row in db.execute('SELECT payload FROM signals ORDER BY received DESC,id'):
+                signal=json.loads(row[0]);status=states.get(finding_id(source,signal),('active',0))[0]
+                if status!='deleted' and (status!='archived' or param('archived')=='true'):visible.append(signal)
+                if len(visible)>=page*50+51:break
+            signals=visible[page*50:page*50+51]
         else:
             report=latest_report(db,ROOT)
             all_signals=sorted([s for r in report['results'] for s in r['signals']],key=lambda s:s['confirmed_at'],reverse=True) if report else []
@@ -53,5 +59,6 @@ def read(store, path):
         for s in signals[:50]:
             key=finding_id(source,s)
             fb=db.execute('SELECT rating,comment,revision FROM finding_feedback WHERE finding_id=?',(key,)).fetchone()
-            result.append(dict(id=key,signal=s,feedback=dict(zip(('rating','comment','revision'),fb)) if fb else None))
+            status,revision=states.get(key,('active',0)) if source=='live' else ('active',0)
+            result.append(dict(id=key,signal=s,archived=status=='archived',state_revision=revision,feedback=dict(zip(('rating','comment','revision'),fb)) if fb else None))
     return dict(findings=result,has_more=len(signals)>50,summary=summary,scan=json.loads(current[0]) if source=='live' and current else None)

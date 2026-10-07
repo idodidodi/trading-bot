@@ -319,7 +319,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 self.respond(404, {'error': 'Not found'})
 
         def do_POST(self):
-            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests'):
+            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state'):
                 from finding_feedback import save
                 host = self.headers.get('Host')
                 allowed = (f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}')
@@ -335,7 +335,10 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     body = json.loads(self.rfile.read(size))
                     if not isinstance(body, dict):
                         raise ValueError('Expected JSON object')
-                    if self.path == '/api/backtests':
+                    if self.path == '/api/finding-state':
+                        from finding_state import change
+                        self.respond(200, change(store, ROOT, body))
+                    elif self.path == '/api/backtests':
                         from backtest_jobs import start
                         self.respond(202, start(store, body))
                     elif self.path == '/api/assets':

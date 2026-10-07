@@ -46,6 +46,8 @@ def snapshot(store):
             db.execute('INSERT OR REPLACE INTO cloud_meta VALUES(?,?)',('log_snapshot',str(last)))
         for feed,asset,tf,start,end,op,high,low,close in db.execute('SELECT * FROM candle_cache'):
             enqueue(db,'candle',f'live:{feed}:{tf}:{start}',dict(source='live',symbol=feed,asset=asset,timeframe=tf,start=start,end=end,open=op,high=high,low=low,close=close))
+        for key,status,revision,updated in db.execute('SELECT * FROM finding_state'):
+            enqueue(db,'finding_state',key,dict(finding_id=key,status=status,revision=revision,updated_at=updated))
         for key,source,evidence,rating,comment,revision,updated in db.execute('SELECT * FROM finding_feedback'):
             enqueue(db,'feedback',key,dict(finding_id=key,source=source,evidence=json.loads(evidence),rating=rating,comment=comment,revision=revision,updated_at=updated))
         for seq,key,source,evidence,rating,comment,revision,updated in db.execute('SELECT * FROM feedback_history'):
@@ -86,7 +88,7 @@ def batch(store):
     with store.connect() as db:
         initialize(db)
         rows=db.execute("SELECT kind,key,event_id,payload FROM cloud_pending ORDER BY CASE kind WHEN 'config' THEN 0 WHEN 'live' THEN 1 WHEN 'backtest' THEN 2 WHEN 'feedback' THEN 3 ELSE 4 END,key LIMIT 100").fetchall()
-        base=int(meta(db,'config_base'));cursor=int(meta(db,'feedback_cursor'))
+        base=int(meta(db,'config_base'));cursor=int(meta(db,'feedback_cursor'));state_cursor=int(meta(db,'state_cursor'))
     out=[];size=128
     for kind,key,event,raw in rows:
         record=dict(kind=kind,key=key,event_id=event,payload=json.loads(raw));length=len(canonical(record).encode())
@@ -94,7 +96,7 @@ def batch(store):
             if not out:raise ValueError('A sync record exceeds batch size; split the report before syncing')
             break
         out.append(record);size+=length
-    return dict(records=out,config_base=base,cursor=cursor)
+    return dict(records=out,config_base=base,cursor=cursor,state_cursor=state_cursor)
 
 
 def apply(store,response):
@@ -116,6 +118,16 @@ def apply(store,response):
             value=dict(revision=cfg['revision'],applied_revision=cfg.get('applied_revision',0),config=cfg['config'])
             raw=canonical(value);event=hashlib.sha256(('config\0current\0'+raw).encode()).hexdigest()
             db.execute('INSERT OR REPLACE INTO cloud_seen VALUES(?,?,?)',('config','current',event))
+        for record in response.get('finding_states',[]):
+            value=record['payload'];key=value['finding_id']
+            pending_state=db.execute("SELECT 1 FROM cloud_pending WHERE kind='finding_state' AND key=?",(key,)).fetchone()
+            if pending_state:
+                # Do not consume this change until the local edit is acknowledged/resolved.
+                break
+            db.execute('INSERT OR REPLACE INTO finding_state VALUES(?,?,?,?)',(key,value['status'],value['revision'],value['updated_at']))
+            raw=canonical(value);event=hashlib.sha256(('finding_state\0'+key+'\0'+raw).encode()).hexdigest()
+            db.execute('INSERT OR REPLACE INTO cloud_seen VALUES(?,?,?)',('finding_state',key,event))
+            db.execute('INSERT OR REPLACE INTO cloud_meta VALUES(?,?)',('state_cursor',str(record['change_sequence'])))
         for record in response.get('feedback',[]):
             fb=record['payload'];key=fb['finding_id'];current=db.execute('SELECT rating,comment,revision FROM finding_feedback WHERE finding_id=?',(key,)).fetchone()
             pending_fb=db.execute("SELECT 1 FROM cloud_pending WHERE kind='feedback' AND key=?",(key,)).fetchone()

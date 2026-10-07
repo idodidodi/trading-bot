@@ -11,5 +11,6 @@ const request=body=>new Request('https://example.invalid',{method:'POST',headers
 assert.equal((await handler(request({records:[],cursor:-1}))).status,400);
 assert.equal((await handler(request({records:Array(101).fill({}),cursor:0}))).status,400);
 const response=await handler(request({records:[],cursor:0,config_base:0}));assert.equal(response.status,200);
-assert.deepEqual((await response.json()).ack,['event']);
+const result=await response.json();assert.deepEqual(result.ack,['event']);assert.deepEqual(result.finding_states,[]);
+assert.equal((await handler(request({records:[],cursor:0,state_cursor:-1}))).status,400);
 console.log('Edge function checks passed: machine auth, batch validation, successful acknowledgement.');
