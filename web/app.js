@@ -3,6 +3,19 @@ const $=id=>document.getElementById(id),content=$('content'),status=$('status');
 const frames=['monthly','weekly','daily','4h','1h'];let state,token=sessionStorage.getItem('dashboard_token'),chart=null;
 const node=(tag,text)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;return n;};
 function message(text,error=false){status.textContent=text;status.className=error?'error':'';}
+let inviteSession=null;
+if(online&&location.hash){
+ const auth=new URLSearchParams(location.hash.slice(1));
+ const code=auth.get('error_code'),description=auth.get('error_description');
+ if(code){
+  message(code==='otp_expired'?'This invitation link has expired or was already used. Ask the dashboard owner to send a fresh invitation.':(description||'The invitation link could not be verified.'),true);
+  history.replaceState(null,'',location.pathname+location.search);
+ }else if(auth.get('type')==='invite'&&auth.get('access_token')&&auth.get('refresh_token')){
+  inviteSession={access_token:auth.get('access_token'),refresh_token:auth.get('refresh_token'),expires_in:Number(auth.get('expires_in'))||3600};
+  $('invite-setup').hidden=false;
+  history.replaceState(null,'',location.pathname+location.search);
+ }
+}
 async function request(path,body){
  if(online)await refreshSession();
  let url=path,headers={},method=body?'POST':'GET';
@@ -15,6 +28,7 @@ let refreshPending=null;
 function saveSession(data){token=data.access_token;sessionStorage.setItem('dashboard_token',token);sessionStorage.setItem('dashboard_refresh',data.refresh_token);sessionStorage.setItem('dashboard_expires',String(data.expires_at||Math.floor(Date.now()/1000)+data.expires_in));}
 async function refreshSession(){const refresh=sessionStorage.getItem('dashboard_refresh'),expires=Number(sessionStorage.getItem('dashboard_expires'));if(!refresh||expires>Date.now()/1000+60)return;if(refreshPending)return refreshPending;refreshPending=(async()=>{const r=await fetch(config.supabaseUrl+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{apikey:config.publishableKey,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:refresh})});const data=await r.json();if(!r.ok){for(const key of ['dashboard_token','dashboard_refresh','dashboard_expires'])sessionStorage.removeItem(key);token=null;throw Error('Session expired. Please sign in again.');}saveSession(data);})();try{await refreshPending;}finally{refreshPending=null;}}
 $('signin').onclick=async()=>{try{const r=await fetch(config.supabaseUrl+'/auth/v1/token?grant_type=password',{method:'POST',headers:{apikey:config.publishableKey,'Content-Type':'application/json'},body:JSON.stringify({email:$('email').value,password:$('password').value})});const data=await r.json();if(!r.ok)throw Error(data.msg||'Sign in failed');token=data.access_token;saveSession(data);$('password').value='';$('login').hidden=true;await load();}catch(e){message(e.message,true);}};
+$('accept-invite').onclick=async()=>{try{if(!inviteSession)throw Error('This invitation link is no longer active. Ask for a fresh invitation.');const password=$('invite-password').value,confirm=$('invite-password-confirm').value;if(password.length<8)throw Error('Choose a password with at least 8 characters.');if(password!==confirm)throw Error('The passwords do not match.');const r=await fetch(config.supabaseUrl+'/auth/v1/user',{method:'PUT',headers:{apikey:config.publishableKey,Authorization:'Bearer '+inviteSession.access_token,'Content-Type':'application/json'},body:JSON.stringify({password})});const data=await r.json();if(!r.ok)throw Error(data.msg||data.message||'Could not set the password. Request a fresh invitation and try again.');saveSession(inviteSession);inviteSession=null;$('invite-password').value='';$('invite-password-confirm').value='';$('invite-setup').hidden=true;await load();}catch(e){message(e.message,true);}};
 function button(text,fn){const b=node('button',text);b.type='button';b.onclick=fn;return b;}
 async function loadAssets(){state=await request('/api/assets');content.replaceChildren();
  content.append(node('h2','Live assets'),node('p',`Configuration ${state.revision}; scanner applied ${state.applied_revision}. New tickers are disabled drafts until you configure their data feed.`));
@@ -80,7 +94,7 @@ async function openCandle(source,id,target='pivot2'){try{const data=await reques
 $('close-backtest').onclick=()=>$('backtest-dialog').close();
 $('close-chart').onclick=()=>$('candle-dialog').close();
 $('candle-dialog').addEventListener('close',()=>{if(chart){chart.remove();chart=null;}if(location.pathname==='/candle'){const source=new URLSearchParams(location.search).get('source');location.assign(source==='backtest'?'/backtest':'/signals');}});
-async function load(){if(online&&!token){$('login').hidden=false;return;}try{const path=location.pathname;$('connection').textContent=online?'Online database':'Local SQLite';if(path==='/assets')await loadAssets();else if(path==='/candle'){const p=new URLSearchParams(location.search);await openCandle(p.get('source'),p.get('finding'));}else if(path==='/backtest')await findings('backtest');else if(path==='/logs')await loadLogs();else if(path==='/signals'||path==='/dashboard')await findings('live');else await loadOverview();}catch(e){message(e.message,true);}}
+async function load(){if(online&&inviteSession)return;if(online&&!token){$('login').hidden=false;return;}try{const path=location.pathname;$('connection').textContent=online?'Online database':'Local SQLite';if(path==='/assets')await loadAssets();else if(path==='/candle'){const p=new URLSearchParams(location.search);await openCandle(p.get('source'),p.get('finding'));}else if(path==='/backtest')await findings('backtest');else if(path==='/logs')await loadLogs();else if(path==='/signals'||path==='/dashboard')await findings('live');else await loadOverview();}catch(e){message(e.message,true);}}
 load();
 
 for(const a of document.querySelectorAll?.('nav a')||[])if(a.getAttribute('href')===location.pathname)a.setAttribute('aria-current','page');
