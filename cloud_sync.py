@@ -58,12 +58,14 @@ def snapshot(store):
         if scan: enqueue(db,'summary','live',json.loads(scan[0]).get('coverage',[]))
         report=latest_report(db,ROOT)
         if report:
-            enqueue(db,'summary','backtest',[dict(asset=r['asset'],timeframe=r['timeframe'],status=r['status'],signals=len(r['signals']),note=r.get('reason',r.get('note',''))) for r in report['results']])
+            summary=[dict(asset=r['asset'],timeframe=r['timeframe'],status=r['status'],signals=len(r['signals']),note=r.get('reason',r.get('note',''))) for r in report['results']]
+            findings=[signal for row in report['results'] for signal in row['signals']]
+            enqueue(db,'summary','backtest',summary)
             report_key=hashlib.sha256(canonical(report).encode()).hexdigest()
-            enqueue(db,'backtest_run',report_key,dict(year=report.get('year'),start_at=report.get('start_at'),end_at=report.get('end_at'),rules=report.get('rules'),sources=report.get('sources'),results=[{k:v for k,v in r.items() if k not in ('signals','followups')} for r in report['results']]))
             for r in report['results']:
                 for signal in r['signals']:
                     key=finding_id('backtest',signal);enqueue(db,'backtest',key,dict(id=key,signal=signal,followups=r.get('followups',{}).get(key) or stored(db,key)))
+            enqueue(db,'backtest_run',report_key,dict(year=report.get('year'),start_at=report.get('start_at'),end_at=report.get('end_at'),generated_at=report.get('generated_at'),rules=report.get('rules'),sources=report.get('sources'),results=[{k:v for k,v in r.items() if k not in ('signals','followups')} for r in report['results']],summary=summary,finding_ids=[finding_id('backtest',signal) for signal in findings]))
         enqueue(db,'heartbeat','current',dict(observed_at=time.time()))
     # Stream historical CSVs into the durable queue; import only changed files.
     from scanner import timestamp

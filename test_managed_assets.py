@@ -56,6 +56,21 @@ class AssetsTests(unittest.TestCase):
         self.assertEqual(get(self.store)['config']['assets'][0]['timeframes'],['weekly'])
         with patch('cloud_sync.ROOT',self.root):snapshot(self.store)
         self.assertFalse(any(r['kind']=='config' for r in batch(self.store)['records']))
+    def test_synced_backtest_report_identifies_its_findings(self):
+        signal={'symbol':'BTCUSD','timeframe':'4h','direction':'bearish','pivot1':1000,'pivot2':2000,
+                'confirmed_at':3000,'price1':10,'price2':11,'rsi1':80,'rsi2':70,'band1':10,'band2':11,
+                'band_slope_pct':0.1,'rules':{'price_source':'close'}}
+        report={'year':2026,'start_at':1,'end_at':5000,'rules':{'price_source':'close'},'sources':['alpaca'],
+                'results':[{'asset':'BTCUSD','timeframe':'4h','status':'replayed','signals':[signal]}]}
+        with self.store.connect() as db:
+            db.execute('CREATE TABLE backtest_runs(id INTEGER PRIMARY KEY,report TEXT)')
+            db.execute('INSERT INTO backtest_runs(report) VALUES(?)',(json.dumps(report),))
+        with patch('cloud_sync.ROOT',self.root):snapshot(self.store)
+        records=batch(self.store)['records']
+        run=next(row['payload'] for row in records if row['kind']=='backtest_run')
+        self.assertEqual(run['year'],2026)
+        self.assertEqual(run['summary'][0]['signals'],1)
+        self.assertEqual(run['finding_ids'],[finding_id('backtest',signal)])
     def test_remote_configuration_cannot_replace_pending_local_edit(self):
         with patch('cloud_sync.ROOT',self.root):snapshot(self.store)
         cloud=copy.deepcopy(get(self.store));cloud['revision']=2;cloud['config']['assets'][0]['timeframes']=['weekly']
