@@ -52,13 +52,15 @@ def load_rules():
         'pivot_right': r'candles to the left and (\d+) to the right',
         'min_spacing': r'- Pivot spacing: (\d+)–\d+ candles',
         'max_spacing': r'- Pivot spacing: \d+–(\d+) candles',
+        'band_slope_period': r'- Band-slope filter: measure the relevant outer band .* with a (\d+)-candle',
+        'max_band_slope_pct': r'exceeds ([\d.]+)% per candle\.',
     }
     rules = {}
     for key, pattern in patterns.items():
         match = re.search(pattern, text)
         if not match:
             raise ValueError(f'Cannot read {key} from {SKILL}; update the parser explicitly.')
-        rules[key] = float(match[1]) if key == 'bb_multiplier' else int(match[1])
+        rules[key] = float(match[1]) if key in ('bb_multiplier', 'max_band_slope_pct') else int(match[1])
     if any(v <= 0 for v in rules.values()) or rules['min_spacing'] > rules['max_spacing']:
         raise ValueError('Invalid indicator or pivot settings in skill.')
     source = re.search(r'- Divergence price source: (close)\.', text)
@@ -94,6 +96,10 @@ def validate_signal(body, rules):
         raise ValueError('RSI outside 0–100')
     if not rules['min_spacing'] <= body['spacing'] <= rules['max_spacing']:
         raise ValueError('Pivot spacing outside range')
+    slope = body.get('band_slope_pct')
+    if (isinstance(slope, bool) or not isinstance(slope, (int, float)) or not math.isfinite(slope)
+            or abs(slope) > rules['max_band_slope_pct']):
+        raise ValueError('Bollinger Band slope exceeds the configured limit')
     touch = body.get('band_touch_price', body['price2'])
     if isinstance(touch, bool) or not isinstance(touch, (int, float)) or not math.isfinite(touch):
         raise ValueError('Invalid band touch price')
@@ -106,7 +112,7 @@ def validate_signal(body, rules):
     if not valid:
         raise ValueError('Divergence or band-touch rule failed')
     # Store only known fields; never persist the webhook authentication secret.
-    clean = {k: body[k] for k in ('symbol', 'timeframe', 'direction', *keys, 'pivot1', 'pivot2', 'confirmed_at', 'spacing', 'rules')}
+    clean = {k: body[k] for k in ('symbol', 'timeframe', 'direction', *keys, 'pivot1', 'pivot2', 'confirmed_at', 'spacing', 'rules', 'band_slope_pct')}
     if 'band_touch_price' in body:
         clean['band_touch_price'] = touch
     if any(k in body for k in ('signal_status', 'alert_timing', 'pivot_closed_at')):
@@ -171,7 +177,7 @@ def message(payload):
             f"{payload['symbol']} · {payload['timeframe']}\n"
             f"Price: {payload['price1']:g} → {payload['price2']:g}\n"
             f"RSI({payload['rules']['rsi_period']}): {payload['rsi1']:.2f} → {payload['rsi2']:.2f}\n"
-            f"{'Lower' if payload['direction'] == 'bullish' else 'Upper'} BB touch: {payload['band2']:g}\n"
+            f"{'Lower' if payload['direction'] == 'bullish' else 'Upper'} BB touch: {payload['band2']:g} · slope {payload['band_slope_pct']:+.2f}%/candle\n"
             f"{timing}\n{payload.get('stage_description', 'Warm-up / potential divergence; awaiting pivot confirmation.' if provisional else 'Confirmed divergence / structural pivot confirmation after the next candle.')}\n{footer}")
 
 

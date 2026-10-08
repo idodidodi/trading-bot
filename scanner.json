@@ -194,23 +194,6 @@
       }
     },
     {
-      "id": "DAX-ETF",
-      "provider": "alpaca",
-      "symbol": "DAX",
-      "exchange": "NASDAQ",
-      "market": "etf",
-      "feed_confirmed": true,
-      "enabled": true,
-      "timeframes": [
-        "monthly",
-        "weekly",
-        "daily",
-        "4h",
-        "1h"
-      ],
-      "tradingview_symbol": "NASDAQ:DAX"
-    },
-    {
       "id": "SPX",
       "provider": "csv",
       "path": "data/candles/{asset}-{timeframe}.csv",
@@ -233,6 +216,15 @@
     "count": 5,
     "source": "Kraken 24-hour USD turnover; Kraken crypto 4h/daily/weekly; Twelve Data forex and crypto monthly",
     "crypto_native_provider": "kraken"
+  },
+  "weekly_stock_screen": {
+    "enabled": true,
+    "timezone": "Asia/Jerusalem",
+    "hour": 8,
+    "count": 10,
+    "lookback_weeks": 5,
+    "signal_lookback_weeks": 0,
+    "source": "S&P 400 and S&P 500 constituents; Alpaca split-adjusted weekly candles"
   },
   "kraken_request_spacing_seconds": 1
 }

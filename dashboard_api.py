@@ -19,7 +19,8 @@ def read(store, path):
         return options(store,param('job') or None)
     if url.path=='/api/assets':
         from daily_universe import status
-        return ensure(store) | dict(daily_selection=status(store))
+        from weekly_stock_screen import status as stock_status
+        return ensure(store) | dict(daily_selection=status(store),weekly_stock_selection=stock_status(store))
     if url.path=='/api/followup':
         from finding_followup import run
         return run(store,ROOT,param('source'),param('finding'),param('mode','recovery'))

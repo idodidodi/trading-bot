@@ -123,7 +123,7 @@ class TiingoTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             store=Store(Path(folder)/'db');prepare_store(store)
             with patch('tiingo_feed.fetch_tiingo',return_value=bars):
-                report=run_backtest(store,dict(assets=[self.asset],timeframes=['4h']),load_rules())
+                report=run_backtest(store,dict(assets=[self.asset],timeframes=['4h']),load_rules()|{'max_band_slope_pct':1.5})
             row=report['results'][0];signal=row['signals'][0]
             self.assertEqual(row['source']['provider'],'Tiingo')
             self.assertEqual(signal['symbol'],'tiingo:Tiingo-UTC:EUR/USD')

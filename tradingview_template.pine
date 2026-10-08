@@ -9,6 +9,8 @@ int leftBars = __PIVOT_LEFT__
 int rightBars = __PIVOT_RIGHT__
 int minSpacing = __MIN_SPACING__
 int maxSpacing = __MAX_SPACING__
+int bandSlopePeriod = __BAND_SLOPE_PERIOD__
+float maxBandSlopePct = __MAX_BAND_SLOPE_PCT__
 
 float change = ta.change(close)
 float avgGain = ta.rma(math.max(change, 0), rsiPeriod)
@@ -18,6 +20,8 @@ float basis = ta.sma(close, bbPeriod)
 float deviation = bbMultiplier * ta.stdev(close, bbPeriod, true)
 float lower = basis - deviation
 float upper = basis + deviation
+float lowerSlopePct = (ta.linreg(lower, bandSlopePeriod, 0) - ta.linreg(lower, bandSlopePeriod, 1)) / ta.sma(lower, bandSlopePeriod) * 100
+float upperSlopePct = (ta.linreg(upper, bandSlopePeriod, 0) - ta.linreg(upper, bandSlopePeriod, 1)) / ta.sma(upper, bandSlopePeriod) * 100
 plot(basis, "BB basis", color=color.gray)
 plot(lower, "BB lower", color=color.teal)
 plot(upper, "BB upper", color=color.orange)
@@ -34,8 +38,8 @@ strictPivot(bool isLow) =>
 number(float value) =>
     str.tostring(value, "#.################")
 
-payload(string direction, float price1, float price2, float rsi1, float rsi2, float band1, float band2, float touchPrice, int pivot1, int pivot2, int spacing) =>
-    '{"secret":"' + webhookSecret + '","symbol":"' + syminfo.tickerid + '","timeframe":"' + timeframe.period + '","direction":"' + direction + '","price1":' + number(price1) + ',"price2":' + number(price2) + ',"rsi1":' + number(rsi1) + ',"rsi2":' + number(rsi2) + ',"band1":' + number(band1) + ',"band2":' + number(band2) + ',"band_touch_price":' + number(touchPrice) + ',"pivot1":' + str.tostring(pivot1) + ',"pivot2":' + str.tostring(pivot2) + ',"confirmed_at":' + str.tostring(time_close) + ',"spacing":' + str.tostring(spacing) + ',"rules":__RULES_JSON__}'
+payload(string direction, float price1, float price2, float rsi1, float rsi2, float band1, float band2, float touchPrice, float slopePct, int pivot1, int pivot2, int spacing) =>
+    '{"secret":"' + webhookSecret + '","symbol":"' + syminfo.tickerid + '","timeframe":"' + timeframe.period + '","direction":"' + direction + '","price1":' + number(price1) + ',"price2":' + number(price2) + ',"rsi1":' + number(rsi1) + ',"rsi2":' + number(rsi2) + ',"band1":' + number(band1) + ',"band2":' + number(band2) + ',"band_touch_price":' + number(touchPrice) + ',"band_slope_pct":' + number(slopePct) + ',"pivot1":' + str.tostring(pivot1) + ',"pivot2":' + str.tostring(pivot2) + ',"confirmed_at":' + str.tostring(time_close) + ',"spacing":' + str.tostring(spacing) + ',"rules":__RULES_JSON__}'
 
 var float lastLow = na
 var float lastLowRsi = na
@@ -59,28 +63,31 @@ if barstate.isconfirmed and supportedChart
     float pivotRsi = rsi[rightBars]
     if lowPivot
         int spacing = pivotIndex - lastLowIndex
-        bullish := bar_index >= 249 and not na(lastLowRsi) and not na(lastLower) and not na(pivotRsi) and not na(lower[rightBars]) and spacing >= minSpacing and spacing <= maxSpacing and close[rightBars] < lastLow and pivotRsi > lastLowRsi and low[rightBars] <= lower[rightBars]
+        bool bandTouch = not na(lower[rightBars]) and low[rightBars] <= lower[rightBars]
+        bullish := bar_index >= 249 and bandTouch and not na(lastLowRsi) and not na(lastLower) and not na(pivotRsi) and not na(lowerSlopePct[rightBars]) and spacing >= minSpacing and spacing <= maxSpacing and close[rightBars] < lastLow and pivotRsi > lastLowRsi and math.abs(lowerSlopePct[rightBars]) <= maxBandSlopePct
         if bullish and str.length(webhookSecret) >= 32
-            alert(payload("bullish", lastLow, close[rightBars], lastLowRsi, pivotRsi, lastLower, lower[rightBars], low[rightBars], lastLowTime, pivotTime, spacing), alert.freq_all)
-        // Always remember the consecutive pivot, even when it did not form a signal.
-        lastLow := close[rightBars]
-        lastLowRsi := pivotRsi
-        lastLower := lower[rightBars]
-        lastLowIndex := pivotIndex
-        lastLowTime := pivotTime
+            alert(payload("bullish", lastLow, close[rightBars], lastLowRsi, pivotRsi, lastLower, lower[rightBars], low[rightBars], lowerSlopePct[rightBars], lastLowTime, pivotTime, spacing), alert.freq_all)
+        // Only a band-touch pivot becomes the next divergence reference.
+        if bandTouch
+            lastLow := close[rightBars]
+            lastLowRsi := pivotRsi
+            lastLower := lower[rightBars]
+            lastLowIndex := pivotIndex
+            lastLowTime := pivotTime
     if highPivot
         int spacing = pivotIndex - lastHighIndex
-        bearish := bar_index >= 249 and not na(lastHighRsi) and not na(lastUpper) and not na(pivotRsi) and not na(upper[rightBars]) and spacing >= minSpacing and spacing <= maxSpacing and close[rightBars] > lastHigh and pivotRsi < lastHighRsi and high[rightBars] >= upper[rightBars]
+        bool bandTouch = not na(upper[rightBars]) and high[rightBars] >= upper[rightBars]
+        bearish := bar_index >= 249 and bandTouch and not na(lastHighRsi) and not na(lastUpper) and not na(pivotRsi) and not na(upperSlopePct[rightBars]) and spacing >= minSpacing and spacing <= maxSpacing and close[rightBars] > lastHigh and pivotRsi < lastHighRsi and math.abs(upperSlopePct[rightBars]) <= maxBandSlopePct
         if bearish and str.length(webhookSecret) >= 32
-            alert(payload("bearish", lastHigh, close[rightBars], lastHighRsi, pivotRsi, lastUpper, upper[rightBars], high[rightBars], lastHighTime, pivotTime, spacing), alert.freq_all)
-        lastHigh := close[rightBars]
-        lastHighRsi := pivotRsi
-        lastUpper := upper[rightBars]
-        lastHighIndex := pivotIndex
-        lastHighTime := pivotTime
+            alert(payload("bearish", lastHigh, close[rightBars], lastHighRsi, pivotRsi, lastUpper, upper[rightBars], high[rightBars], upperSlopePct[rightBars], lastHighTime, pivotTime, spacing), alert.freq_all)
+        if bandTouch
+            lastHigh := close[rightBars]
+            lastHighRsi := pivotRsi
+            lastUpper := upper[rightBars]
+            lastHighIndex := pivotIndex
+            lastHighTime := pivotTime
 
 // Mark confirmation candles, not the earlier pivot candles.
 plotshape(bullish, title="Bullish confirmed", style=shape.triangleup, location=location.belowbar, color=color.lime, text="BULL")
 plotshape(bearish, title="Bearish confirmed", style=shape.triangledown, location=location.abovebar, color=color.red, text="BEAR")
 bgcolor(not supportedChart ? color.new(color.red, 85) : na, title="Unsupported chart/timeframe")
-

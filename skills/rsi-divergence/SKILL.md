@@ -15,9 +15,10 @@ Report signals only, following the user's preference. Do not include entry, stop
 - Timeframes: required; accept monthly/1mo, weekly/1w, daily/1d, and 4h/4 hours. `1mo` is a calendar month, not 30 days. Never interpret monthly as one minute.
 - RSI: 3 periods, Wilder smoothing, close prices.
 - Bollinger Bands: 20-period simple moving average of closes, plus/minus 2 population standard deviations (`ddof=0`).
+- Band-slope filter: measure the relevant outer band (lower for bullish, upper for bearish) with a 3-candle linear-regression slope, normalized by the mean band value. Reject a divergence when the absolute slope exceeds 0.50% per candle.
 - Divergence price source: close.
 - Pivot confirmation: 2 candles to the left and 1 to the right.
-- Pivot spacing: 5–60 candles inclusive; compare consecutive confirmed pivots of the same type. Do not search older pivots to cherry-pick a match.
+- Pivot spacing: 5–60 candles inclusive; compare consecutive confirmed pivots of the same type that wick-touch their relevant Bollinger Band. A non-touch pivot does not reset the reference. Do not skip an intervening band-touch pivot to cherry-pick a match.
 - History: aim for at least 250 closed candles per combination. Report limited history and exclude indicator warm-up candles from signal comparisons.
 - Recent signals: confirmation within the last 10 closed candles. Allow user overrides for these parameters and disclose the actual values.
 
@@ -46,18 +47,20 @@ For consecutive confirmed pivot lows `P1` and `P2`, a **bullish divergence / lon
 1. Pivot spacing satisfies the configured range.
 2. `close[P2] < close[P1]` (price makes a lower closing low).
 3. `RSI[P2] > RSI[P1]` (RSI at those same price pivots makes a higher low).
-4. `low[P2] <= lower_band[P2]` (the second pivot candle touches or crosses its own lower Bollinger Band).
+4. `low[P1] <= lower_band[P1]` and `low[P2] <= lower_band[P2]` (both pivot candles touch or cross their own lower Bollinger Band).
 5. Both pivots have valid RSI and band values.
+6. The lower Bollinger Band's absolute slope over the last 3 candles at P2 is at most 0.50% per candle.
 
 For consecutive confirmed pivot highs `P1` and `P2`, a **bearish divergence / short bias** requires all of:
 
 1. Pivot spacing satisfies the configured range.
 2. `close[P2] > close[P1]` (price makes a higher closing high).
 3. `RSI[P2] < RSI[P1]` (RSI at those same price pivots makes a lower high).
-4. `high[P2] >= upper_band[P2]` (the second pivot candle touches or crosses its own upper Bollinger Band).
+4. `high[P1] >= upper_band[P1]` and `high[P2] >= upper_band[P2]` (both pivot candles touch or cross their own upper Bollinger Band).
 5. Both pivots have valid RSI and band values.
+6. The upper Bollinger Band's absolute slope over the last 3 candles at P2 is at most 0.50% per candle.
 
-The band touch is required at the second pivot; the first pivot need not touch a band. Wicks count as touches. RSI need not exceed 70 or fall below 30 unless the user adds that filter. Hidden divergence is excluded by default. Do not compare unrelated RSI extrema or use a band from a different candle.
+Both band touches are required for the pivot pair. Wicks count as touches. RSI need not exceed 70 or fall below 30 unless the user adds that filter. Hidden divergence is excluded by default. Do not compare unrelated RSI extrema or use a band from a different candle.
 
 Label not-yet-confirmed patterns as provisional only if the user requests them, separate from confirmed results. A recent confirmed pattern is historical evidence, not a guarantee it remains actionable. Report whether any subsequent closed candle breached the second pivot's low (bullish) or high (bearish); call this a structural breach, not a tested trading invalidation rule.
 

@@ -102,3 +102,56 @@ def fetch_alpaca(asset, timeframe, *, start=None, end=None):
     bars.sort(key=lambda c:c.start)
     closed = check_candles(bars, end)
     return ProviderCandles(closed, [f'Alpaca {feed}; split-adjusted; 16-minute delay; conservative calendar closes'])
+
+
+def fetch_alpaca_multi(symbols, timeframe, *, end=None):
+    """Fetch a short native-bar window for a broad weekly screen in bounded batches."""
+    from scanner import Candle, ProviderCandles, check_candles, interval_end, timestamp
+    if timeframe not in FRAMES or not isinstance(symbols,(list,tuple)) or not symbols:
+        raise ValueError('Unsupported Alpaca multi-symbol request')
+    if any(not isinstance(symbol,str) or not re.fullmatch(r'[A-Z][A-Z0-9.\-]{0,14}',symbol) for symbol in symbols):
+        raise ValueError('Invalid Alpaca stock symbol')
+    feed=os.environ.get('ALPACA_DATA_FEED','sip')
+    if feed not in ('sip','iex'):
+        raise ValueError('ALPACA_DATA_FEED must be sip or iex')
+    cutoff=datetime.now(timezone.utc)-timedelta(minutes=16)
+    end_value=end if isinstance(end,int) and not isinstance(end,bool) else timestamp(end) if end else int(cutoff.timestamp()*1000)
+    end_ms=min(end_value,int(cutoff.timestamp()*1000))
+    end_iso=datetime.fromtimestamp(end_ms/1000,timezone.utc).isoformat()
+    start_iso=(datetime.fromtimestamp(end_ms/1000,timezone.utc)-timedelta(weeks=28)).isoformat()
+    output={symbol:[] for symbol in symbols}
+    for offset in range(0,len(symbols),100):
+        batch=symbols[offset:offset+100];wanted=set(batch);tokens=set()
+        params=dict(symbols=','.join(batch),timeframe=FRAMES[timeframe],feed=feed,
+                    adjustment='split',asof='-',sort='asc',limit=10000,start=start_iso,end=end_iso)
+        for _ in range(100):
+            data=request_page(params)
+            values=data.get('bars') if isinstance(data,dict) else None
+            if not isinstance(values,dict) or set(values)-wanted:
+                raise ValueError('Alpaca returned an invalid or different symbol')
+            try:
+                for symbol,rows in values.items():
+                    if not isinstance(rows,list): raise ValueError()
+                    for row in rows:
+                        dt=datetime.fromisoformat(row['t'].replace('Z','+00:00'))
+                        if dt.tzinfo is None: raise ValueError()
+                        local=dt.astimezone(ZoneInfo('America/New_York'))
+                        close=interval_end(local,timeframe) if timeframe in ('daily','weekly','monthly') else interval_end(dt,timeframe)
+                        output[symbol].append(Candle(int(dt.timestamp()*1000),int(close.timestamp()*1000),
+                            *(float(row[key]) for key in ('o','h','l','c'))))
+            except (KeyError,TypeError,ValueError,OverflowError):
+                raise ValueError('Invalid Alpaca multi-symbol OHLC or timestamp') from None
+            token=data.get('next_page_token')
+            if not token: break
+            if not isinstance(token,str) or token in tokens:
+                raise ValueError('Alpaca pagination did not advance')
+            tokens.add(token);params['page_token']=token
+        else:
+            raise ValueError('Alpaca multi-symbol history exceeded page limit')
+    result={}
+    for symbol,bars in output.items():
+        bars.sort(key=lambda candle:candle.start)
+        if bars:
+            result[symbol]=ProviderCandles(check_candles(bars,end_ms),[
+                f'Alpaca {feed}; split-adjusted; native {timeframe} candles'])
+    return result

@@ -136,6 +136,18 @@ def indicators(candles, rules):
     return rsi, lower, upper
 
 
+def band_slope_pct(values, index, period):
+    """Linear-regression slope of a band, expressed as percent of its mean per candle."""
+    window = values[index - period + 1:index + 1]
+    if len(window) != period or any(value is None for value in window):
+        return None
+    mean_y = sum(window) / period
+    mean_x = (period - 1) / 2
+    denominator = sum((x - mean_x) ** 2 for x in range(period))
+    slope = sum((x - mean_x) * (value - mean_y) for x, value in enumerate(window)) / denominator
+    return slope / abs(mean_y) * 100 if mean_y else None
+
+
 def detect(candles, rules, symbol, timeframe, *, provisional=False):
     rsi, lower, upper = indicators(candles, rules)
     left, right = rules['pivot_left'], rules['pivot_right']
@@ -152,29 +164,33 @@ def detect(candles, rules, symbol, timeframe, *, provisional=False):
                 if j >= left:
                     neighbours = prices[j - left:j] + prices[j + 1:i + 1]
                     confirmed = all(prices[j] < v for v in neighbours) if direction == 'bullish' else all(prices[j] > v for v in neighbours)
-                    if confirmed:
+                    wick = candles[j].low if direction == 'bullish' else candles[j].high
+                    band_touch = bands[j] is not None and ((wick <= bands[j]) if direction == 'bullish' else (wick >= bands[j]))
+                    if confirmed and band_touch:
                         previous = j
             neighbours = prices[i - left:i] + ([] if provisional else prices[i + 1:i + right + 1])
             pivot = all(prices[i] < v for v in neighbours) if direction == 'bullish' else all(prices[i] > v for v in neighbours)
             if not pivot:
                 continue
             first = previous
-            if not provisional:
+            touch = candles[i].low if direction == 'bullish' else candles[i].high
+            band_touch = bands[i] is not None and ((touch <= bands[i]) if direction == 'bullish' else (touch >= bands[i]))
+            if not provisional and band_touch:
                 previous = i
-            # Remember every pivot, including those in indicator warm-up.
             if first is None or any(v is None for v in (rsi[first], rsi[i], bands[first], bands[i])):
                 continue
             spacing = i - first
             if not rules['min_spacing'] <= spacing <= rules['max_spacing']:
                 continue
-            touch = candles[i].low if direction == 'bullish' else candles[i].high
-            valid = (prices[i] < prices[first] and rsi[i] > rsi[first] and touch <= bands[i]) if direction == 'bullish' else (prices[i] > prices[first] and rsi[i] < rsi[first] and touch >= bands[i])
+            slope = band_slope_pct(bands, i, rules['band_slope_period'])
+            valid = (prices[i] < prices[first] and rsi[i] > rsi[first] and band_touch) if direction == 'bullish' else (prices[i] > prices[first] and rsi[i] < rsi[first] and band_touch)
+            valid = valid and slope is not None and abs(slope) <= rules['max_band_slope_pct']
             event_index = i if provisional else i + right
             if not valid or event_index < minimum_history(rules) - 1:
                 continue
             signals.append(dict(symbol=symbol, timeframe=timeframe, direction=direction,
                                 price1=prices[first], price2=prices[i], rsi1=rsi[first], rsi2=rsi[i],
-                                band1=bands[first], band2=bands[i], band_touch_price=touch, pivot1=candles[first].start,
+                                band1=bands[first], band2=bands[i], band_touch_price=touch, band_slope_pct=slope, pivot1=candles[first].start,
                                 pivot2=candles[i].start, confirmed_at=candles[event_index].end,
                                 spacing=spacing, rules=rules))
             if provisional:
@@ -259,12 +275,17 @@ def scan_once(store, config, rules, now=None, stop=None):
     from alpaca_feed import fetch_alpaca
     config, config_revision = effective(store, config)
     now = int(time.time() * 1000) if now is None else now
+    from weekly_stock_screen import resolve as resolve_weekly_stocks
+    config, stock_selection = resolve_weekly_stocks(store, config, rules, now)
     from daily_universe import resolve
     config, selection = resolve(store, config, now)
     store.log('Scan cycle started', f'{len(config["assets"])} assets')
     coverage = []
     if selection and selection['status'] == 'unavailable':
         coverage.append(dict(asset='DAILY_SELECTION', timeframe='daily', provider='Kraken', status='unavailable', reason=selection['reason']))
+    if stock_selection and stock_selection['status'] in ('unavailable','partial'):
+        coverage.append(dict(asset='WEEKLY_STOCK_SCREEN', timeframe='weekly', provider='Alpaca',
+                             status=stock_selection['status'],reason=stock_selection.get('reason','')))
     last_requests = {}
     for configured_asset in config['assets']:
         if not configured_asset.get('enabled', True):
@@ -331,6 +352,8 @@ def scan_once(store, config, rules, now=None, stop=None):
                     cutoff = state[0] if state else candles[-1].end
                     if asset.get('daily_selected') and selection:
                         cutoff = max(cutoff, selection['starts_at'])
+                    if asset.get('weekly_screen_selected'):
+                        cutoff = max(cutoff, asset.get('weekly_screen_since',asset['weekly_screen_week_start']))
                     if state and cutoff < candles[0].start:
                         raise ValueError('Polling gap exceeds available history; supply candle backfill before resuming')
                     age_seconds = max(0, (now - candles[-1].end) // 1000)
@@ -411,6 +434,14 @@ def scanner_worker(store, config, rules, stop):
             selected = status(store)
             if selected and selected['session'] != session(policy, clock_now * 1000)[0]:
                 delay = 1  # A long scan crossed the morning boundary.
+        stock_policy=current.get('weekly_stock_screen',{})
+        if stock_policy.get('enabled'):
+            from weekly_stock_screen import seconds_to_refresh as stocks_seconds_to_refresh, status as stock_status, local_day as stock_day
+            clock_now=time.time()
+            delay=min(delay,stocks_seconds_to_refresh(stock_policy,clock_now))
+            selected=stock_status(store)
+            if selected and selected['day']!=stock_day(stock_policy,clock_now*1000)[0]:
+                delay=1
         with store.connect() as db:
             saved = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
             schedule = json.loads(saved[0]) if saved else dict(scanned_at=int(time.time() * 1000), coverage=coverage or [])

@@ -13,17 +13,21 @@ from test_scanner import fixture
 
 
 class TabsTests(unittest.TestCase):
+    def permissive_rules(self):
+        return load_rules() | {'max_band_slope_pct': 1.5}
+
     def test_replay_year_boundaries_and_future_independence(self):
         bars = fixture()
         delta = START + 14400000 - bars[258].end
         bars = [replace(c, start=c.start+delta, end=c.end+delta) for c in bars]
-        found = replay(bars, load_rules(), 'TEST', '4h')['signals']
+        rules=self.permissive_rules()
+        found = replay(bars, rules, 'TEST', '4h')['signals']
         self.assertEqual(len(found), 1)
         self.assertTrue(START <= found[0]['confirmed_at'] < END)
         future = replace(bars[-1], start=END+1, end=END+14400001)
-        self.assertEqual(replay(bars+[future], load_rules(), 'TEST', '4h')['signals'], found)
+        self.assertEqual(replay(bars+[future], rules, 'TEST', '4h')['signals'], found)
         before = [replace(c, start=c.start-28800000, end=c.end-28800000) for c in bars]
-        self.assertEqual(replay(before, load_rules(), 'TEST', '4h')['signals'], [])
+        self.assertEqual(replay(before, rules, 'TEST', '4h')['signals'], [])
 
     def test_replay_2026_excludes_future_candles(self):
         from scanner import timestamp
@@ -32,12 +36,13 @@ class TabsTests(unittest.TestCase):
         bars = fixture()
         delta = start + 14400000 - bars[258].end
         bars = [replace(c, start=c.start+delta, end=c.end+delta) for c in bars]
-        found = replay(bars, load_rules(), 'TEST', '4h', start=start, end=end)['signals']
+        rules=self.permissive_rules()
+        found = replay(bars, rules, 'TEST', '4h', start=start, end=end)['signals']
         self.assertEqual(len(found), 1)
         self.assertTrue(start <= found[0]['confirmed_at'] < end)
         future = replace(bars[-1], start=end, end=end+14400000)
-        self.assertEqual(replay(bars+[future], load_rules(), 'TEST', '4h', start=start, end=end)['signals'], found)
-        self.assertEqual(replay(bars, load_rules(), 'TEST', '4h')['signals'], [])
+        self.assertEqual(replay(bars+[future], rules, 'TEST', '4h', start=start, end=end)['signals'], found)
+        self.assertEqual(replay(bars, rules, 'TEST', '4h')['signals'], [])
 
     def test_tabs_http_logs_and_backtest_queue_isolation(self):
         with tempfile.TemporaryDirectory() as folder:

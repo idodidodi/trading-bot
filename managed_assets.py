@@ -155,6 +155,13 @@ def change(store, body):
                 # New entries remain drafts until their actual data feed is configured.
                 assets.append(dict(id=token,provider='csv',path='data/candles/{asset}-{timeframe}.csv',enabled=False,timeframes=DEFAULTS.copy(),tradingview_symbol=''))
                 known.add(token);results.append(dict(ticker=token,status='added as disabled draft'))
+        elif body.get('action')=='remove':
+            ticker=body.get('ticker')
+            if not isinstance(ticker,str) or not TOKEN.fullmatch(ticker):raise ValueError('Select a valid asset')
+            index=next((i for i,a in enumerate(assets) if a['id']==ticker),None)
+            if index is None:raise ValueError('Asset was already removed')
+            assets.pop(index)
+            results=[dict(ticker=ticker,status='removed from assets; stored history was retained')]
         elif body.get('action')=='save':
             incoming=body.get('asset');validate_asset(incoming)
             index=next((i for i,a in enumerate(assets) if a['id']==incoming['id']),None)

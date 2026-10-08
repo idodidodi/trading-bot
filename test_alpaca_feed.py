@@ -34,6 +34,21 @@ class AlpacaTests(unittest.TestCase):
             with patch('alpaca_feed.request_page',return_value=payload), self.assertRaises(ValueError):
                 fetch_alpaca(fallback_asset(self.asset),'daily',start='2019-01-01T00:00:00Z')
 
+    def test_multi_symbol_weekly_screen_batches_and_closes_native_bars(self):
+        from datetime import datetime,timezone
+        from alpaca_feed import fetch_alpaca_multi
+        symbols=[f'T{i:03d}' for i in range(101)]
+        def response(params):
+            values={symbol:[dict(t='2020-01-06T05:00:00Z',o=2,h=3,l=1,c=2)]
+                    for symbol in params['symbols'].split(',')}
+            return dict(bars=values)
+        end=int(datetime(2020,1,15,tzinfo=timezone.utc).timestamp()*1000)
+        with patch.dict(os.environ,{'ALPACA_DATA_FEED':'sip'}),patch('alpaca_feed.request_page',side_effect=response) as request:
+            bars=fetch_alpaca_multi(symbols,'weekly',end=end)
+        self.assertEqual(set(bars),set(symbols))
+        self.assertTrue(all(len(values)==1 and values[0].end<=end for values in bars.values()))
+        self.assertEqual(request.call_count,2)
+
     def test_dst_and_invalid_ohlc(self):
         with patch('alpaca_feed.request_page',return_value=self.payload('2020-03-08T05:00:00Z')):
             bars=fetch_alpaca(fallback_asset(self.asset),'daily',end='2020-03-10T00:00:00Z')
@@ -130,7 +145,7 @@ class AlpacaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             store=Store(Path(folder)/'db');prepare_store(store)
             with patch('alpaca_feed.fetch_alpaca',return_value=bars):
-                report=run_backtest(store,dict(assets=[fallback_asset(self.asset)],timeframes=['4h']),load_rules())
+                report=run_backtest(store,dict(assets=[fallback_asset(self.asset)],timeframes=['4h']),load_rules()|{'max_band_slope_pct':1.5})
             signal=report['results'][0]['signals'][0]
             self.assertTrue(signal['symbol'].startswith('alpaca:Alpaca-sip-split:'))
             chart=detail(store,Path(folder),'backtest',finding_id('backtest',signal))

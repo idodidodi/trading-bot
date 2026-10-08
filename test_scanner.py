@@ -151,7 +151,7 @@ class EngineTests(unittest.TestCase):
 
     def test_provisional_at_pivot_close_without_future_candles(self):
         from platform_app import validate_signal, message
-        rules = load_rules()
+        rules = load_rules() | {'max_band_slope_pct': 1.5}
         for bearish in (False, True):
             bars = fixture()
             if bearish:
@@ -173,7 +173,7 @@ class EngineTests(unittest.TestCase):
             self.assertFalse(any(s['pivot2'] == bars[256].start for s in detect(bars, rules, 'test:EURUSD', '4h')))
 
     def test_provisional_requires_strict_left_and_band_touch(self):
-        bars = fixture(); rules = load_rules()
+        bars = fixture(); rules = load_rules() | {'max_band_slope_pct': 1.5}
         self.assertEqual(detect(bars, rules | {'bb_multiplier': 20}, 'test:EURUSD', '4h', provisional=True), [])
         bars[255] = replace(bars[255], low=79, close=89)
         found = detect(bars, rules, 'test:EURUSD', '4h', provisional=True)
@@ -190,8 +190,9 @@ class EngineTests(unittest.TestCase):
 
     def test_real_candle_divergence_confirmation_and_touch(self):
         bars = fixture()
-        self.assertEqual(detect(bars[:257], load_rules(), 'test:EURUSD', '4h'), [])
-        found = detect(bars[:258], load_rules(), 'test:EURUSD', '4h')
+        rules = load_rules() | {'max_band_slope_pct': 1.5}
+        self.assertEqual(detect(bars[:257], rules, 'test:EURUSD', '4h'), [])
+        found = detect(bars[:258], rules, 'test:EURUSD', '4h')
         self.assertEqual(len(found), 1)
         signal = found[0]
         self.assertEqual(signal['direction'], 'bullish')
@@ -199,12 +200,12 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(signal['confirmed_at'], bars[257].end)
         self.assertGreater(signal['rsi2'], signal['rsi1'])
         # Widen the bands without changing the underlying divergence: no touch remains.
-        self.assertEqual(detect(bars, load_rules() | {'bb_multiplier': 20}, 'test:EURUSD', '4h'), [])
+        self.assertEqual(detect(bars, rules | {'bb_multiplier': 20}, 'test:EURUSD', '4h'), [])
 
     def test_one_right_confirmation_at_11_israel_time(self):
         from platform_app import message
         from scanner import timestamp
-        rules = load_rules()
+        rules = load_rules() | {'max_band_slope_pct': 1.5}
         self.assertEqual(rules['pivot_right'], 1)
         bars = fixture()
         pivot_start = timestamp('2026-10-06T03:00:00+03:00')
@@ -227,15 +228,16 @@ class EngineTests(unittest.TestCase):
     def test_bearish_symmetry_and_equal_pivots(self):
         bars = fixture()
         mirrored = [replace(c, open=200-c.open, close=200-c.close, high=200-c.low, low=200-c.high) for c in bars]
-        signals = detect(mirrored, load_rules(), 'test:EURUSD', '4h')
+        rules = load_rules() | {'max_band_slope_pct': 1.5}
+        signals = detect(mirrored, rules, 'test:EURUSD', '4h')
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0]['direction'], 'bearish')
         bars[257] = replace(bars[257], low=79, close=89)
-        self.assertEqual(detect(bars, load_rules(), 'test:EURUSD', '4h'), [])
+        self.assertEqual(detect(bars, rules, 'test:EURUSD', '4h'), [])
 
     def test_close_divergence_ignores_wick_extrema(self):
         from platform_app import validate_signal
-        rules = load_rules() | {'bb_multiplier': 3}
+        rules = load_rules() | {'bb_multiplier': 3, 'max_band_slope_pct': 1.5}
         for bearish in (False, True):
             bars = fixture()
             # P2 has a higher wick low, but a lower close; P3 has a lower wick.
@@ -278,19 +280,37 @@ class EngineTests(unittest.TestCase):
             prepare_store(store)
             config = {'timeframes': ['4h'], 'assets': [{'id': 'EURUSD', 'provider': 'csv', 'path': str(path)}]}
             bars = fixture()
+            rules=load_rules() | {'max_band_slope_pct': 1.5}
             write(bars[:256])
-            self.assertEqual(scan_once(store, config, load_rules(), bars[-1].end)[0]['status'], 'baseline set')
+            self.assertEqual(scan_once(store, config, rules, bars[-1].end)[0]['status'], 'baseline set')
             self.assertEqual(store.rows(), [])
             write(bars[:257])
-            self.assertEqual(scan_once(store, config, load_rules(), bars[-1].end)[0]['new_signals'], 1)
+            self.assertEqual(scan_once(store, config, rules, bars[-1].end)[0]['new_signals'], 1)
             self.assertEqual(json.loads(store.rows()[0][0])['signal_status'], 'provisional')
             write(bars[:258])
-            result = scan_once(store, config, load_rules(), bars[-1].end)
+            result = scan_once(store, config, rules, bars[-1].end)
             self.assertEqual(result[0]['new_signals'], 1)
             self.assertEqual(len(store.rows()), 2)
             write(bars)  # A second following candle must not send a duplicate alert.
             restored = Store(Path(folder) / 'db.sqlite3')
-            self.assertEqual(scan_once(restored, config, load_rules(), bars[-1].end)[0]['new_signals'], 0)
+            self.assertEqual(scan_once(restored, config, rules, bars[-1].end)[0]['new_signals'], 0)
+
+    def test_high_outer_band_slope_rejects_divergence(self):
+        bars=fixture()
+        self.assertEqual(detect(bars,load_rules(),'test:EURUSD','4h'),[])
+
+    def test_non_touch_pivot_does_not_reset_band_touch_reference(self):
+        bars=fixture();closes=[100.]*len(bars)
+        for index,value in {250:110,251:100,252:98,253:105,254:99,255:100,256:111,257:100,258:98}.items():closes[index]=value
+        bars=[replace(c,open=closes[i],close=closes[i],high=closes[i]+(0 if i==253 else 1),
+                      low=closes[i]-(0 if i in (250,256) else 1)) for i,c in enumerate(bars)]
+        rules=load_rules()|{'max_band_slope_pct':1.2}
+        signals=detect(bars,rules,'TEST','4h')
+        self.assertEqual(len(signals),1)
+        self.assertEqual((signals[0]['pivot1'],signals[0]['pivot2']),(bars[250].start,bars[256].start))
+        # An intervening pivot that itself touches the upper band must reset the reference.
+        bars[253]=replace(bars[253],high=120)
+        self.assertEqual(detect(bars,rules,'TEST','4h'),[])
 
 
 if __name__ == '__main__':
