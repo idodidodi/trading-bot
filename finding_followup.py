@@ -97,7 +97,7 @@ def run(store, root, source, key, mode='recovery'):
         path = Path(root)/'data'/'historical-2020'/f"{symbol}-{signal['timeframe']}.csv"
         if path.is_file():
             bars = read_csv(dict(id=symbol, path=str(path)), signal['timeframe'])
-    cutoff = timestamp('2021-01-01T00:00:00Z') if source == 'backtest' else int(time.time()*1000)
+    cutoff = report.get('end_at', timestamp(f"{report.get('year', 2020)+1}-01-01T00:00:00Z")) if source == 'backtest' else int(time.time()*1000)
     results = both(signal, check_candles(bars, cutoff))
     with store.connect() as db:
         initialize(db)

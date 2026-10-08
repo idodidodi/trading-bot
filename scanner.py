@@ -142,7 +142,7 @@ def detect(candles, rules, symbol, timeframe, *, provisional=False):
     signals = []
     for direction in ('bullish', 'bearish'):
         previous = None
-        prices = [c.low if direction == 'bullish' else c.high for c in candles]
+        prices = [c.close if rules.get('price_source') == 'close' else (c.low if direction == 'bullish' else c.high) for c in candles]
         bands = lower if direction == 'bullish' else upper
         for i in range(left, len(candles) if provisional else len(candles) - right):
             if provisional:
@@ -167,13 +167,14 @@ def detect(candles, rules, symbol, timeframe, *, provisional=False):
             spacing = i - first
             if not rules['min_spacing'] <= spacing <= rules['max_spacing']:
                 continue
-            valid = (prices[i] < prices[first] and rsi[i] > rsi[first] and prices[i] <= bands[i]) if direction == 'bullish' else (prices[i] > prices[first] and rsi[i] < rsi[first] and prices[i] >= bands[i])
+            touch = candles[i].low if direction == 'bullish' else candles[i].high
+            valid = (prices[i] < prices[first] and rsi[i] > rsi[first] and touch <= bands[i]) if direction == 'bullish' else (prices[i] > prices[first] and rsi[i] < rsi[first] and touch >= bands[i])
             event_index = i if provisional else i + right
             if not valid or event_index < minimum_history(rules) - 1:
                 continue
             signals.append(dict(symbol=symbol, timeframe=timeframe, direction=direction,
                                 price1=prices[first], price2=prices[i], rsi1=rsi[first], rsi2=rsi[i],
-                                band1=bands[first], band2=bands[i], pivot1=candles[first].start,
+                                band1=bands[first], band2=bands[i], band_touch_price=touch, pivot1=candles[first].start,
                                 pivot2=candles[i].start, confirmed_at=candles[event_index].end,
                                 spacing=spacing, rules=rules))
             if provisional:

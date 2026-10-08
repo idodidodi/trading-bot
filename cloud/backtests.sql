@@ -31,7 +31,7 @@ begin
  return jsonb_build_object('id',job.id,'status',job.status);
  end if;
  select * into job from dashboard_backtest_jobs j where j.installation=installation and (operation not like '%job=%' or j.id::text=substring(operation from 'job=([a-f0-9-]+)')) order by j.updated_at desc limit 1;
- return jsonb_build_object('assets',assets,'timeframes',jsonb_build_array('monthly','weekly','daily','4h'),'year',2020,'strategies',jsonb_build_object('confirmed','RSI(3), Wilder; Bollinger Bands(20, 2 population deviations). Consecutive strict pivots: 2 left / 1 right; spacing 5–60. Opposing price and RSI with a band touch at P2; confirmed at the following candle close.','warmup','Same indicators and spacing, evaluated at potential P2 close using preceding candles only. Warm-up warning; structural confirmation is pending.'),'job',case when job.id is null then null else to_jsonb(job) end);
+ return jsonb_build_object('assets',assets,'timeframes',jsonb_build_array('monthly','weekly','daily','4h'),'year',2020,'strategies',jsonb_build_object('confirmed','RSI(3), Wilder; Bollinger Bands(20, 2 population deviations). Consecutive strict close-price pivots: 2 left / 1 right; spacing 5–60. Opposing closing price and RSI with a wick band touch at P2; confirmed at the following candle close.','warmup','Same indicators and spacing, evaluated at potential P2 close using preceding candles only. Warm-up warning; structural confirmation is pending.'),'job',case when job.id is null then null else to_jsonb(job) end);
  elsif path='/api/findings' and operation like '%source=backtest%' then
  select * into job from dashboard_backtest_jobs j where j.installation=installation and j.status='completed' order by j.updated_at desc limit 1;
  if job.id is not null then

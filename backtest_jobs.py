@@ -6,7 +6,7 @@ from platform_app import ROOT, load_rules
 
 _lock = threading.Lock()
 STRATEGIES = {
-    'confirmed': 'RSI(3), Wilder; Bollinger Bands(20, 2 population deviations). Consecutive strict pivots, 2 left / 1 right, spacing 5–60. Price lower low / higher high with opposing RSI and a band touch at P2. Alert after the following candle closes.',
+    'confirmed': 'RSI(3), Wilder; Bollinger Bands(20, 2 population deviations). Consecutive strict close-price pivots, 2 left / 1 right, spacing 5–60. Lower close / higher close with opposing RSI and a wick band touch at P2. Alert after the following candle closes.',
     'warmup': 'Same RSI, bands and spacing. Potential second pivot evaluated at its own close using only preceding candles. Early warning; the following candle can invalidate the candidate.'
 }
 
@@ -28,7 +28,7 @@ def options(store, job_id=None):
     tiingo_assets = sorted(a['id'] for a in live['assets'] if a.get('market')=='forex' and a.get('feed_confirmed') is True)
     csv_assets = sorted(assets)
     assets=sorted(assets | set(alpaca_assets) | set(tiingo_assets))
-    return dict(assets=assets, strategies=STRATEGIES, timeframes=['monthly','weekly','daily','4h','1h'], year=2020,
+    return dict(assets=assets, strategies=STRATEGIES, timeframes=['monthly','weekly','daily','4h','1h'], year=report.get('year', 2020) if report else 2020,
                 sources=['csv','alpaca','tiingo'], csv_assets=csv_assets, alpaca_assets=alpaca_assets, tiingo_assets=tiingo_assets,
                 job=dict(id=job[0],status=job[1],**json.loads(job[2]),updated=job[3]) if job else None)
 
@@ -54,7 +54,9 @@ def start(store, body):
     def work():
         try:
             from backtest import run_backtest
-            cfg=json.loads((ROOT/'data/historical-2020/backtest-config.json').read_text())
+            year=options(store)['year']
+            cfg=json.loads((ROOT/f'data/historical-{year}/backtest-config.json').read_text())
+            cfg['year']=year
             catalog = {a['id']: a for a in cfg['assets']}
             cfg['assets']=[catalog.get(a, dict(id=a, provider='unsupported')) for a in assets];cfg['timeframes']=frames
             if body.get('source') == 'alpaca':

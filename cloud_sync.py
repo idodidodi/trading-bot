@@ -60,7 +60,7 @@ def snapshot(store):
         if report:
             enqueue(db,'summary','backtest',[dict(asset=r['asset'],timeframe=r['timeframe'],status=r['status'],signals=len(r['signals']),note=r.get('reason',r.get('note',''))) for r in report['results']])
             report_key=hashlib.sha256(canonical(report).encode()).hexdigest()
-            enqueue(db,'backtest_run',report_key,dict(year=report.get('year'),rules=report.get('rules'),sources=report.get('sources'),results=[{k:v for k,v in r.items() if k not in ('signals','followups')} for r in report['results']]))
+            enqueue(db,'backtest_run',report_key,dict(year=report.get('year'),start_at=report.get('start_at'),end_at=report.get('end_at'),rules=report.get('rules'),sources=report.get('sources'),results=[{k:v for k,v in r.items() if k not in ('signals','followups')} for r in report['results']]))
             for r in report['results']:
                 for signal in r['signals']:
                     key=finding_id('backtest',signal);enqueue(db,'backtest',key,dict(id=key,signal=signal,followups=r.get('followups',{}).get(key) or stored(db,key)))

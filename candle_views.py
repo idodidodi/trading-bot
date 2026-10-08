@@ -29,7 +29,10 @@ def detail(store, root, source, key, target='pivot2'):
     if target not in ('pivot1','pivot2','confirmation'):raise ValueError('Invalid candle target')
     asset_id=signal['symbol'];tf=signal['timeframe'];center=signal['confirmed_at'] if target=='confirmation' else signal[target]
     rows=[];mapping='';note=''
-    if source=='backtest' and not asset_id.startswith(('alpaca:', 'tiingo:')):
+    with store.connect() as db:
+        cached = db.execute("SELECT 1 FROM sqlite_master WHERE name='backtest_candle_cache'").fetchone()
+        cached = cached and db.execute('SELECT 1 FROM backtest_candle_cache WHERE feed=? AND timeframe=? LIMIT 1', (asset_id, tf)).fetchone()
+    if source=='backtest' and not cached:
         path=Path(root)/'data'/'historical-2020'/f'{asset_id}-{tf}.csv'
         # Asset comes from stored evidence; reject path separators to keep file access bounded.
         if '/' not in asset_id and '\\' not in asset_id and path.is_file():

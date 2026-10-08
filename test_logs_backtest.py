@@ -25,6 +25,20 @@ class TabsTests(unittest.TestCase):
         before = [replace(c, start=c.start-28800000, end=c.end-28800000) for c in bars]
         self.assertEqual(replay(before, load_rules(), 'TEST', '4h')['signals'], [])
 
+    def test_replay_2026_excludes_future_candles(self):
+        from scanner import timestamp
+        start = timestamp('2026-01-01T00:00:00Z')
+        end = timestamp('2026-10-08T00:00:00Z')
+        bars = fixture()
+        delta = start + 14400000 - bars[258].end
+        bars = [replace(c, start=c.start+delta, end=c.end+delta) for c in bars]
+        found = replay(bars, load_rules(), 'TEST', '4h', start=start, end=end)['signals']
+        self.assertEqual(len(found), 1)
+        self.assertTrue(start <= found[0]['confirmed_at'] < end)
+        future = replace(bars[-1], start=end, end=end+14400000)
+        self.assertEqual(replay(bars+[future], load_rules(), 'TEST', '4h', start=start, end=end)['signals'], found)
+        self.assertEqual(replay(bars, load_rules(), 'TEST', '4h')['signals'], [])
+
     def test_tabs_http_logs_and_backtest_queue_isolation(self):
         with tempfile.TemporaryDirectory() as folder:
             store = Store(Path(folder)/'test.sqlite3')

@@ -73,3 +73,7 @@ Redeploy `functions/backtests` including `followup.mjs`, preserving the function
 Cloud replay stores both outcome windows alongside each finding without modifying evidence or its ID. A replay that matches an existing finding refreshes only its outcomes, preserving feedback. Older backtest rows calculate outcomes on review; live rows calculate on click. Hosted live results persist in `dashboard_followups`; the automatic rating appears next to the user's independent rating.
 
 Validation: `python3 -m unittest test_finding_followup`, `node cloud/test_followups.mjs`, the existing replay/function suites, and (in disposable PostgreSQL) `test_followups.sql` after all migrations. SQL tests cover a series beyond the candle chart's 101-bar limit, saved rating display, unchanged user feedback, denied browser writes, missing findings, and owner isolation.
+
+## Close-based divergence deployment (8 October 2026)
+
+`backtests` version 3 is deployed and ACTIVE. Its downloaded source matches `cloud/functions/backtests` exactly; unauthenticated invocation returns 401. New replay uses close-price pivots and retains wick Bollinger touches. `close-divergence.sql` was applied to update the strategy description without replacing sharing, signal-action, or follow-up dispatchers. Use this targeted migration for existing installations instead of rerunning `backtests.sql`. The local scanner was restarted and its health endpoint confirms close-based rules. Saved historical findings retain their original evidence until a new replay is requested.

@@ -14,7 +14,7 @@ from scanner import Candle, check_candles, detect, indicators, prepare_store, sc
 
 def fixture():
     closes = [100.] * 260
-    closes[250:259] = [90, 92, 94, 96, 98, 100, 94, 96, 98]
+    closes[250:259] = [90, 92, 94, 96, 98, 100, 89, 96, 98]
     start = 1700000000000
     bars = [Candle(start + i * 14400000, start + (i + 1) * 14400000, p, p + 1, p - 1, p) for i, p in enumerate(closes)]
     bars[250] = replace(bars[250], low=80)
@@ -167,7 +167,7 @@ class EngineTests(unittest.TestCase):
             self.assertNotIn('Confirmed:', message(signal))
             self.assertEqual(detect(check_candles(bars, bars[256].end-1), rules, 'test:EURUSD', '4h', provisional=True), [])
             # Later invalidation must not erase an alert already knowable at P2.
-            bars[257] = replace(bars[257], **({'high': bars[256].high+1} if bearish else {'low': bars[256].low-1}))
+            bars[257] = replace(bars[257], **({'high': bars[256].high+1, 'close': bars[256].close+1} if bearish else {'low': bars[256].low-1, 'close': bars[256].close-1}))
             replay = detect(bars, rules, 'test:EURUSD', '4h', provisional=True)
             self.assertIn(signal, replay)
             self.assertFalse(any(s['pivot2'] == bars[256].start for s in detect(bars, rules, 'test:EURUSD', '4h')))
@@ -175,7 +175,7 @@ class EngineTests(unittest.TestCase):
     def test_provisional_requires_strict_left_and_band_touch(self):
         bars = fixture(); rules = load_rules()
         self.assertEqual(detect(bars, rules | {'bb_multiplier': 20}, 'test:EURUSD', '4h', provisional=True), [])
-        bars[255] = replace(bars[255], low=79)
+        bars[255] = replace(bars[255], low=79, close=89)
         found = detect(bars, rules, 'test:EURUSD', '4h', provisional=True)
         self.assertFalse(any(s['pivot2'] == bars[256].start for s in found))
 
@@ -220,8 +220,8 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(found[0]['confirmed_at'], timestamp('2026-10-06T11:00:00+03:00'))
         self.assertIn('06 Oct 2026 at 11:00 (Israel time)', message(found[0]))
         self.assertNotIn('provisional', message(found[0]))
-        # A higher high on the following candle rejects this pivot pair.
-        bars[257] = replace(bars[257], high=bars[256].high+1)
+        # A higher close on the following candle rejects this pivot pair.
+        bars[257] = replace(bars[257], high=bars[256].high+1, close=bars[256].close+1)
         self.assertEqual(detect(bars[:258],rules,'test:NEAR/USD','4h'), [])
 
     def test_bearish_symmetry_and_equal_pivots(self):
@@ -230,8 +230,32 @@ class EngineTests(unittest.TestCase):
         signals = detect(mirrored, load_rules(), 'test:EURUSD', '4h')
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0]['direction'], 'bearish')
-        bars[257] = replace(bars[257], low=79)
+        bars[257] = replace(bars[257], low=79, close=89)
         self.assertEqual(detect(bars, load_rules(), 'test:EURUSD', '4h'), [])
+
+    def test_close_divergence_ignores_wick_extrema(self):
+        from platform_app import validate_signal
+        rules = load_rules() | {'bb_multiplier': 3}
+        for bearish in (False, True):
+            bars = fixture()
+            # P2 has a higher wick low, but a lower close; P3 has a lower wick.
+            bars[250] = replace(bars[250], low=70)
+            bars[257] = replace(bars[257], low=60)
+            if bearish:
+                bars = [replace(c, open=200-c.open, close=200-c.close,
+                                high=200-c.low, low=200-c.high) for c in bars]
+            for provisional in (False, True):
+                signals = detect(bars, rules, 'TEST', '4h', provisional=provisional)
+                self.assertEqual(len(signals), 1)
+                signal = validate_signal(signals[0], rules)
+                self.assertEqual(signal['price1'], bars[250].close)
+                self.assertEqual(signal['price2'], bars[256].close)
+                # Closing inside the band still permits a wick band touch.
+                self.assertTrue(signal['price2'] > signal['band2'] if not bearish
+                                else signal['price2'] < signal['band2'])
+            # A wick-only divergence cannot replace the required closing divergence.
+            bars[256] = replace(bars[256], close=106 if bearish else 94)
+            self.assertEqual(detect(bars, rules, 'TEST', '4h'), [])
 
     def test_data_quality_and_open_candles(self):
         bars = fixture()

@@ -61,6 +61,10 @@ def load_rules():
         rules[key] = float(match[1]) if key == 'bb_multiplier' else int(match[1])
     if any(v <= 0 for v in rules.values()) or rules['min_spacing'] > rules['max_spacing']:
         raise ValueError('Invalid indicator or pivot settings in skill.')
+    source = re.search(r'- Divergence price source: (close)\.', text)
+    if not source:
+        raise ValueError('Missing close-based divergence price source in skill.')
+    rules['price_source'] = source[1]
     rules['skill_hash'] = hashlib.sha256(text.encode()).hexdigest()[:16]
     return rules
 
@@ -90,14 +94,21 @@ def validate_signal(body, rules):
         raise ValueError('RSI outside 0–100')
     if not rules['min_spacing'] <= body['spacing'] <= rules['max_spacing']:
         raise ValueError('Pivot spacing outside range')
+    touch = body.get('band_touch_price', body['price2'])
+    if isinstance(touch, bool) or not isinstance(touch, (int, float)) or not math.isfinite(touch):
+        raise ValueError('Invalid band touch price')
+    if (body['direction'] == 'bullish' and touch > body['price2']) or (body['direction'] == 'bearish' and touch < body['price2']):
+        raise ValueError('Band touch inconsistent with pivot price')
     if body['direction'] == 'bullish':
-        valid = body['price2'] < body['price1'] and body['rsi2'] > body['rsi1'] and body['price2'] <= body['band2']
+        valid = body['price2'] < body['price1'] and body['rsi2'] > body['rsi1'] and touch <= body['band2']
     else:
-        valid = body['price2'] > body['price1'] and body['rsi2'] < body['rsi1'] and body['price2'] >= body['band2']
+        valid = body['price2'] > body['price1'] and body['rsi2'] < body['rsi1'] and touch >= body['band2']
     if not valid:
         raise ValueError('Divergence or band-touch rule failed')
     # Store only known fields; never persist the webhook authentication secret.
     clean = {k: body[k] for k in ('symbol', 'timeframe', 'direction', *keys, 'pivot1', 'pivot2', 'confirmed_at', 'spacing', 'rules')}
+    if 'band_touch_price' in body:
+        clean['band_touch_price'] = touch
     if any(k in body for k in ('signal_status', 'alert_timing', 'pivot_closed_at')):
         if (body.get('signal_status') != 'provisional' or body.get('alert_timing') != 'pivot_close'
                 or type(body.get('pivot_closed_at')) is not int or body['pivot_closed_at'] != body['confirmed_at']):
