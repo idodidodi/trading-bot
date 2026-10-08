@@ -21,6 +21,6 @@ const response=await handler(request({records:[],cursor:0,config_base:0}));asser
 const result=await response.json();assert.deepEqual(result.ack,['event']);assert.deepEqual(result.finding_states,[]);
 const findingId='b'.repeat(64),reportKey='a'.repeat(64);
 const reportResponse=await handler(request({records:[{kind:'backtest',key:findingId,payload:{}},{kind:'backtest_run',key:reportKey,payload:{year:2026,generated_at:Date.now()/1000,results:[{asset:'BTCUSD',timeframe:'4h'}],summary:[{signals:1}],finding_ids:[findingId]}}],cursor:0,config_base:0}));
-assert.equal(reportResponse.status,200);assert.equal(published.length,1);assert.equal(published[0].status,'completed');assert.deepEqual(published[0].finding_ids,[findingId]);
+assert.equal(reportResponse.status,200);assert.equal((await reportResponse.json()).backtest_publication,'published');assert.equal(published.length,1);assert.equal(published[0].status,'completed');assert.deepEqual(published[0].finding_ids,[findingId]);
 assert.equal((await handler(request({records:[],cursor:0,state_cursor:-1}))).status,400);
 console.log('Edge function checks passed: machine auth, batch validation, acknowledgement, and publishing a fully synced report.');
