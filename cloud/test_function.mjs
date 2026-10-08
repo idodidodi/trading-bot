@@ -20,7 +20,8 @@ assert.equal((await handler(request({records:Array(101).fill({}),cursor:0}))).st
 const response=await handler(request({records:[],cursor:0,config_base:0}));assert.equal(response.status,200);
 const result=await response.json();assert.deepEqual(result.ack,['event']);assert.deepEqual(result.finding_states,[]);
 const findingId='b'.repeat(64),reportKey='a'.repeat(64);
-const reportResponse=await handler(request({records:[{kind:'backtest',key:findingId,payload:{}},{kind:'backtest_run',key:reportKey,payload:{year:2026,generated_at:Date.now()/1000,results:[{asset:'BTCUSD',timeframe:'4h'}],summary:[{signals:1}],finding_ids:[findingId]}}],cursor:0,config_base:0}));
-assert.equal(reportResponse.status,200);assert.equal((await reportResponse.json()).backtest_publication,'published');assert.equal(published.length,1);assert.equal(published[0].status,'completed');assert.deepEqual(published[0].finding_ids,[findingId]);
+const secondFindingId='c'.repeat(64),secondReportKey='d'.repeat(64);
+const reportResponse=await handler(request({records:[{kind:'backtest',key:findingId,payload:{}},{kind:'backtest',key:secondFindingId,payload:{}},{kind:'backtest_run',key:reportKey,payload:{year:2026,generated_at:Date.now()/1000,results:[{asset:'BTCUSD',timeframe:'4h'}],summary:[{signals:1}],finding_ids:[findingId]}},{kind:'backtest_run',key:secondReportKey,payload:{year:2025,generated_at:Date.now()/1000-1000,results:[{asset:'NVDA',timeframe:'daily'}],summary:[{signals:1}],finding_ids:[secondFindingId]}}],cursor:0,config_base:0}));
+assert.equal(reportResponse.status,200);const publication=await reportResponse.json();assert.deepEqual(publication.backtest_publications.map(x=>x.status),['published','published']);assert.equal(published.length,2);assert.equal(published[0].status,'completed');assert.deepEqual(published[0].finding_ids,[findingId]);assert.deepEqual(published[1].finding_ids,[secondFindingId]);
 assert.equal((await handler(request({records:[],cursor:0,state_cursor:-1}))).status,400);
-console.log('Edge function checks passed: machine auth, batch validation, acknowledgement, and publishing a fully synced report.');
+console.log('Edge function checks passed: machine auth, batch validation, acknowledgement, and publishing every fully synced local report.');

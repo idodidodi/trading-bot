@@ -65,12 +65,18 @@ class AssetsTests(unittest.TestCase):
         with self.store.connect() as db:
             db.execute('CREATE TABLE backtest_runs(id INTEGER PRIMARY KEY,report TEXT)')
             db.execute('INSERT INTO backtest_runs(report) VALUES(?)',(json.dumps(report),))
+            second_signal=signal|{'pivot1':4000,'pivot2':5000,'confirmed_at':6000}
+            second_report=report|{'generated_at':2,'results':[{'asset':'BTCUSD','timeframe':'4h','status':'replayed','signals':[second_signal]}]}
+            db.execute('INSERT INTO backtest_runs(report) VALUES(?)',(json.dumps(second_report),))
         with patch('cloud_sync.ROOT',self.root):snapshot(self.store)
         records=batch(self.store)['records']
-        run=next(row['payload'] for row in records if row['kind']=='backtest_run')
-        self.assertEqual(run['year'],2026)
-        self.assertEqual(run['summary'][0]['signals'],1)
-        self.assertEqual(run['finding_ids'],[finding_id('backtest',signal)])
+        runs=[row['payload'] for row in records if row['kind']=='backtest_run']
+        self.assertEqual(len(runs),2)
+        by_generation={run['generated_at']:run for run in runs}
+        self.assertEqual(by_generation[5]['year'],2026)
+        self.assertEqual(by_generation[5]['summary'][0]['signals'],1)
+        self.assertEqual(by_generation[5]['finding_ids'],[finding_id('backtest',signal)])
+        self.assertEqual(by_generation[2]['finding_ids'],[finding_id('backtest',second_signal)])
     def test_remote_configuration_cannot_replace_pending_local_edit(self):
         with patch('cloud_sync.ROOT',self.root):snapshot(self.store)
         cloud=copy.deepcopy(get(self.store));cloud['revision']=2;cloud['config']['assets'][0]['timeframes']=['weekly']

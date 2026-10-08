@@ -56,16 +56,24 @@ def snapshot(store):
         status_exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='scanner_status'").fetchone()
         scan=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone() if status_exists else None
         if scan: enqueue(db,'summary','live',json.loads(scan[0]).get('coverage',[]))
-        report=latest_report(db,ROOT)
-        if report:
+        has_runs=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='backtest_runs'").fetchone()
+        if has_runs:
+            reports=[json.loads(row[0]) for row in db.execute('SELECT report FROM backtest_runs ORDER BY id')]
+        else:
+            report=latest_report(db,ROOT)
+            reports=[report] if report else []
+        latest_summary=None
+        for report in reports:
             summary=[dict(asset=r['asset'],timeframe=r['timeframe'],status=r['status'],signals=len(r['signals']),note=r.get('reason',r.get('note',''))) for r in report['results']]
             findings=[signal for row in report['results'] for signal in row['signals']]
-            enqueue(db,'summary','backtest',summary)
             report_key=hashlib.sha256(canonical(report).encode()).hexdigest()
             for r in report['results']:
                 for signal in r['signals']:
                     key=finding_id('backtest',signal);enqueue(db,'backtest',key,dict(id=key,signal=signal,followups=r.get('followups',{}).get(key) or stored(db,key)))
-            enqueue(db,'backtest_run',report_key,dict(year=report.get('year'),start_at=report.get('start_at'),end_at=report.get('end_at'),generated_at=report.get('generated_at'),rules=report.get('rules'),sources=report.get('sources'),results=[{k:v for k,v in r.items() if k not in ('signals','followups')} for r in report['results']],summary=summary,finding_ids=[finding_id('backtest',signal) for signal in findings]))
+            enqueue(db,'backtest_run',report_key,dict(year=report.get('year'),start_at=report.get('start_at'),end_at=report.get('end_at'),generated_at=report.get('generated_at') or report.get('end_at',0)/1000,rules=report.get('rules'),sources=report.get('sources'),results=[{k:v for k,v in r.items() if k not in ('signals','followups')} for r in report['results']],summary=summary,finding_ids=[finding_id('backtest',signal) for signal in findings]))
+            latest_summary=summary
+        if latest_summary is not None:
+            enqueue(db,'summary','backtest',latest_summary)
         enqueue(db,'heartbeat','current',dict(observed_at=time.time()))
     # Stream historical CSVs into the durable queue; import only changed files.
     from scanner import timestamp
