@@ -55,7 +55,21 @@ def read(store, path):
             signals=visible[page*50:page*50+51]
         else:
             report=latest_report(db,ROOT)
-            all_signals=sorted([s for r in report['results'] for s in r['signals']],key=lambda s:s['confirmed_at'],reverse=True) if report else []
+            sort = param('sort', 'confirmed_at'); order = param('order', 'asc')
+            if sort not in ('asset', 'timeframe', 'evidence', 'confirmed_at', 'rating') or order not in ('asc', 'desc'):
+                raise ValueError('Invalid finding sort')
+            ratings = dict(db.execute('SELECT finding_id,rating FROM finding_feedback'))
+            def sort_value(s):
+                return {'asset': s['symbol'],
+                        'timeframe': {'1h': 60, '60': 60, '4h': 240, '240': 240, 'daily': 1440, 'D': 1440, 'weekly': 10080, 'W': 10080, 'monthly': 43200, 'M': 43200}.get(s['timeframe'], 0),
+                        'evidence': (s['direction'], s.get('signal_status', 'confirmed')),
+                        'confirmed_at': s['confirmed_at'],
+                        'rating': ratings.get(finding_id(source, s))}[sort]
+            all_signals = [s for r in report['results'] for s in r['signals']] if report else []
+            all_signals.sort(key=lambda s: (s['confirmed_at'], finding_id(source, s)))
+            rated = [s for s in all_signals if sort_value(s) is not None]
+            missing = [s for s in all_signals if sort_value(s) is None]
+            all_signals = sorted(rated, key=sort_value, reverse=order == 'desc') + missing
             signals=all_signals[page*50:page*50+51]
             summary=[dict(asset=r['asset'],timeframe=r['timeframe'],status=r['status'],signals=len(r['signals']),note=r.get('reason',r.get('note',''))) for r in report['results']] if report else []
         from finding_followup import stored
@@ -73,4 +87,6 @@ def read(store, path):
         for item in result:
             if item['followup'] is None:
                 item['followup'] = run(store, ROOT, source, item['id'])['followup']
-    return dict(findings=result,has_more=len(signals)>50,summary=summary,scan=json.loads(current[0]) if source=='live' and current else None)
+    page_count = (len(all_signals) + 49) // 50 if source == 'backtest' else None
+    return dict(findings=result,has_more=len(signals)>50,total_count=len(all_signals) if source == 'backtest' else None,
+                page_count=page_count,summary=summary,scan=json.loads(current[0]) if source=='live' and current else None)

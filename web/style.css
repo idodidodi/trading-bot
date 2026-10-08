@@ -7,3 +7,6 @@
 #followup-dialog{max-width:1000px;width:90vw}#followup-content small{display:block;line-height:1.5;opacity:.75}
 
 .feedback{width:320px}.review-ratings{display:flex;align-items:center;gap:8px}.user-stars{display:flex;flex-shrink:0}.user-stars .star{margin:2px;padding:3px 5px}.automatic-rating{font-size:12px;margin:0;max-width:140px}
+
+.sort-header{font:inherit;letter-spacing:inherit;text-transform:inherit;color:inherit;background:transparent;border:0;margin:0;padding:0;text-align:left}.sort-header:focus-visible{outline:2px solid #67e8f9;outline-offset:5px}
+.pagination{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;padding:20px 12px}.pagination button{margin:0;padding:7px 11px}.pagination button[aria-current=page]{background:#1c4e54;border-color:#69c6b0;color:#fff}.pagination small{margin:0 0 0 10px}
