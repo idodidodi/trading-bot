@@ -49,10 +49,16 @@ class AlpacaTests(unittest.TestCase):
         self.assertTrue(all(len(values)==1 and values[0].end<=end for values in bars.values()))
         self.assertEqual(request.call_count,2)
 
+    def test_live_feed_follows_short_pages_instead_of_reporting_missing_history(self):
+        with patch('alpaca_feed.request_page',side_effect=[self.payload('2020-01-03T05:00:00Z',token='next'),self.payload()]) as request:
+            bars=fetch_alpaca(fallback_asset(self.asset),'4h')
+        self.assertEqual(request.call_count,2)
+        self.assertEqual(len(bars),2)
+
     def test_dst_and_invalid_ohlc(self):
-        with patch('alpaca_feed.request_page',return_value=self.payload('2020-03-08T05:00:00Z')):
+        with patch('alpaca_feed.request_page',return_value=self.payload('2020-03-09T04:00:00Z')):
             bars=fetch_alpaca(fallback_asset(self.asset),'daily',end='2020-03-10T00:00:00Z')
-        self.assertEqual(bars[0].end-bars[0].start,23*3600000)
+        self.assertEqual(bars[0].end-bars[0].start,16*3600000)
         payload=self.payload();payload['bars']['NVDA'][0]['h']=0
         with patch('alpaca_feed.request_page',return_value=payload), self.assertRaisesRegex(ValueError,'OHLC'):
             fetch_alpaca(fallback_asset(self.asset),'daily',end='2020-01-05T00:00:00Z')
@@ -73,6 +79,7 @@ class AlpacaTests(unittest.TestCase):
             cfg=dict(assets=[self.asset],timeframes=['daily'])
             with patch('scanner.fetch_twelve_data',return_value=fixture()):
                 scan_once(store,cfg,load_rules(),fixture()[-1].end)
+            with store.connect() as db:db.execute('DELETE FROM scan_schedule')
             with patch('scanner.fetch_twelve_data',side_effect=TwelveDataRateLimit('quota')), patch('alpaca_feed.fetch_alpaca',return_value=fixture()) as fallback:
                 coverage=scan_once(store,cfg,load_rules(),fixture()[-1].end)
             self.assertEqual(coverage[0]['provider'],'alpaca')
@@ -82,8 +89,10 @@ class AlpacaTests(unittest.TestCase):
                 self.assertEqual(db.execute('select count(distinct feed) from candle_cache').fetchone()[0],2)
             for asset,err in ((self.asset,ValueError('bad key')),(self.asset|dict(symbol='EUR/USD',exchange='',market='forex'),TwelveDataRateLimit('quota'))):
                 with patch('scanner.fetch_twelve_data',side_effect=err),patch('alpaca_feed.fetch_alpaca') as fallback:
+                    with store.connect() as db:db.execute('DELETE FROM scan_schedule')
                     scan_once(store,dict(assets=[asset],timeframes=['daily']),load_rules(),fixture()[-1].end)
                     fallback.assert_not_called()
+            with store.connect() as db:db.execute('DELETE FROM scan_schedule')
             with patch('scanner.fetch_twelve_data',side_effect=TwelveDataRateLimit('quota')),patch('alpaca_feed.fetch_alpaca') as fallback:
                 scan_once(store,cfg|dict(alpaca_rate_limit_fallback=False),load_rules(),fixture()[-1].end)
                 fallback.assert_not_called()

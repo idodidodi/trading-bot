@@ -16,8 +16,9 @@ def local_day(policy, now):
     boundary = local.replace(hour=policy['hour'], minute=0, second=0, microsecond=0)
     if local < boundary:
         boundary -= timedelta(days=1)
-    if boundary.weekday() >= 5:
-        boundary -= timedelta(days=boundary.weekday()-4)
+    from market_calendar import stock_trading_day
+    while not stock_trading_day(boundary.date()):
+        boundary-=timedelta(days=1)
     return boundary.date().isoformat(), int(boundary.timestamp() * 1000)
 
 
@@ -59,7 +60,9 @@ def resolve(store, config, rules, now):
         row=db.execute('SELECT payload FROM weekly_stock_screen WHERE day=?',(day,)).fetchone()
         prior=db.execute('SELECT payload FROM weekly_stock_screen WHERE week=? AND day<? ORDER BY day',(week,day)).fetchall()
     selection=json.loads(row[0]) if row else None
+    permanent={a.get('symbol',a['id']).upper() for a in config['assets'] if a.get('market') not in ('forex','crypto','futures')}
     policy_stamp={key:policy.get(key) for key in ('count','lookback_weeks','source')}
+    policy_stamp['excluded_portfolio']=sorted(permanent)
     if selection and selection.get('policy')!=policy_stamp:
         selection=None
     if selection:
@@ -72,7 +75,7 @@ def resolve(store, config, rules, now):
         from scanner import indicators
         sp400,sp500=universe()
         pool=sorted(set(sp400)|set(sp500))
-        seen=set()
+        seen=set(permanent)
         for saved, in prior:
             old=json.loads(saved)
             seen.update(old.get('symbols', []))
@@ -82,7 +85,7 @@ def resolve(store, config, rules, now):
                        candidates={'upper':[],'lower':[]},selected={'upper':[],'lower':[]},
                        counts={'upper':0,'lower':0})
         try:
-            histories=_market_snapshot(pool,now)
+            histories=cached_snapshot(store,pool,now)
             upper=[];lower=[]
             for symbol,candles in histories.items():
                 if symbol in seen or len(candles)<rules['bb_period']:
@@ -137,7 +140,7 @@ def resolve(store, config, rules, now):
                 exchange='Alpaca-sip-split',market='stock',feed_confirmed=True,enabled=True,
                 timeframes=['weekly'],tradingview_symbol='',weekly_screen_selected=True,
                 weekly_screen_week_start=week_start_at,
-                weekly_screen_since=selection.get('signal_lookback_start',week_start_at),weekly_screen_side=side))
+                weekly_screen_since=0,weekly_screen_side=side))
     return result,selection
 
 
@@ -145,7 +148,8 @@ def seconds_to_refresh(policy, now):
     local=datetime.fromtimestamp(now,ZoneInfo(policy['timezone']))
     boundary=local.replace(hour=policy['hour'],minute=0,second=0,microsecond=0)
     if local>=boundary: boundary+=timedelta(days=1)
-    while boundary.weekday()>=5: boundary+=timedelta(days=1)
+    from market_calendar import stock_trading_day
+    while not stock_trading_day(boundary.date()): boundary+=timedelta(days=1)
     return max(1,boundary.timestamp()-now)
 
 
@@ -171,3 +175,26 @@ def install(store):
             db.execute('INSERT INTO config_history VALUES(?,?,?)',(revision,payload,time.time()))
             enqueue(db,'config','current',dict(revision=revision,applied_revision=applied,config=config))
     return dict(revision=revision,changed=changed,removed=before-len(config['assets']))
+
+
+def cached_snapshot(store,symbols,now):
+    """Daily ranking reuses the same completed weekly OHLC across restarts."""
+    from datetime import timezone
+    from dataclasses import asdict
+    import os
+    from scanner import Candle
+    from market_calendar import NY,previous_session,stock_close
+    local=datetime.fromtimestamp(now/1000,NY)
+    friday=local.date()-timedelta(days=(local.weekday()-4)%7)
+    end=stock_close(previous_session(friday))+timedelta(minutes=16)
+    if end.timestamp()*1000>now:friday-=timedelta(days=7)
+    key=friday.isoformat()+':'+os.environ.get('ALPACA_DATA_FEED','sip')
+    with store.connect() as db:
+        db.execute('CREATE TABLE IF NOT EXISTS stock_screen_history(key TEXT PRIMARY KEY,payload TEXT NOT NULL)')
+        row=db.execute('SELECT payload FROM stock_screen_history WHERE key=?',(key,)).fetchone()
+    if row:
+        return {symbol:[Candle(**c) for c in candles] for symbol,candles in json.loads(row[0]).items()}
+    histories=_market_snapshot(symbols,now)
+    with store.connect() as db:
+        db.execute('INSERT OR REPLACE INTO stock_screen_history VALUES(?,?)',(key,json.dumps({symbol:[asdict(c) for c in bars] for symbol,bars in histories.items()})))
+    return histories

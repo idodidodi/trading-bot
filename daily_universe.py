@@ -112,7 +112,7 @@ def rank(pairs, tickers, supported, excluded, count):
         market = 'forex' if base in FIAT and quote in FIAT else 'crypto'
         if market == 'crypto' and (quote != 'USD' or base in FIAT | STABLE):
             continue
-        if symbol not in supported[market] or symbol.replace('/', '') in excluded or quote not in rates:
+        if symbol=='USD/CNY' or symbol not in supported[market] or symbol.replace('/', '') in excluded or quote not in rates:
             continue
         usd = turnover * rates[quote]
         if math.isfinite(usd):
@@ -165,7 +165,7 @@ def resolve(store, config, now):
             if forex_provider in ('oanda','tiingo') and row['symbol'] not in policy.get(forex_provider + '_verified_pairs', []):
                 forex_provider = 'twelvedata'
             new = asset(row['symbol'], market, config['timeframes'], policy.get('crypto_native_provider', 'twelvedata'), forex_provider)
-            if new['id'] not in known:
+            if new['id'] not in known and new['id']!='USDCNY':
                 new['daily_selected'] = True
                 result['assets'].append(new)
                 known.add(new['id'])

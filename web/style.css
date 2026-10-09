@@ -10,3 +10,5 @@
 
 .sort-header{font:inherit;letter-spacing:inherit;text-transform:inherit;color:inherit;background:transparent;border:0;margin:0;padding:0;text-align:left}.sort-header:focus-visible{outline:2px solid #67e8f9;outline-offset:5px}
 .pagination{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;padding:20px 12px}.pagination button{margin:0;padding:7px 11px}.pagination button[aria-current=page]{background:#1c4e54;border-color:#69c6b0;color:#fff}.pagination small{margin:0 0 0 10px}
+
+.selected-row td,.asset-row.selected-row{background:#234657!important;box-shadow:inset 3px 0 #67e8f9}.finding-row.selected-row td{border-color:#42738a}.asset-row{border:1px solid #2a3d55;border-radius:9px;margin:8px 0;background:#111e30}.asset-row summary{padding:14px;cursor:pointer}.asset-row fieldset{margin:0;border:0;background:transparent}.asset-unavailable summary{color:#fca5a5}.asset-group h4{color:#b6f7e6}td strong.success,td strong.error{display:block;margin-bottom:6px}

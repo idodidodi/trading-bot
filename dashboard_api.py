@@ -14,13 +14,22 @@ def ensure(store):
 def read(store, path):
     url=urlsplit(path);query=parse_qs(url.query)
     param=lambda key,default='':query.get(key,[default])[0]
+    if url.path=='/api/catchup':
+        from scanner_control import status
+        return status(store)
+    if url.path=='/api/updates':
+        import windows_update
+        return windows_update.status()
     if url.path=='/api/backtests':
         from backtest_jobs import options
         return options(store,param('job') or None)
     if url.path=='/api/assets':
         from daily_universe import status
         from weekly_stock_screen import status as stock_status
-        return ensure(store) | dict(daily_selection=status(store),weekly_stock_selection=stock_status(store))
+        with store.connect() as db:
+            exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='scanner_status'").fetchone()
+            row=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone() if exists else None
+        return ensure(store) | dict(daily_selection=status(store),weekly_stock_selection=stock_status(store),coverage=json.loads(row[0]).get('coverage',[]) if row else [])
     if url.path=='/api/followup':
         from finding_followup import run
         return run(store,ROOT,param('source'),param('finding'),param('mode','recovery'))

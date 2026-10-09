@@ -46,6 +46,9 @@ Deno.serve(async request=>{
   result.feedback=await feedback.json();
   const stateQuery=new URLSearchParams({installation:`eq.${installation}`,kind:'eq.finding_state',change_sequence:`gt.${stateCursor}`,order:'change_sequence.asc',limit:'100',select:'payload,change_sequence'});
   const states=await fetch(url+'/rest/v1/dashboard_records?'+stateQuery,{headers});if(!states.ok)return new Response('Storage read failed',{status:503});
-  result.finding_states=await states.json();return Response.json(result);
+  result.finding_states=await states.json();
+  const commands=await fetch(url+'/rest/v1/rpc/dashboard_worker_commands',{method:'POST',headers,body:JSON.stringify({installation})});
+  if(!commands.ok)return new Response('Scanner command read failed',{status:503});
+  result.commands=await commands.json();return Response.json(result);
  }catch{return new Response('Invalid sync request',{status:400});}
 });

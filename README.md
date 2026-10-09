@@ -259,3 +259,19 @@ Every completed local backtest run is mirrored to the hosted database by the bac
 The local scanner also rotates ten upper-band and ten lower-band stocks from the S&P 400/500 universe on each U.S. market weekday. Candidates must have wick-touched the relevant band in one of the last five completed weekly candles; each ticker is selected at most once per week and can return the next week. Weekly RSI divergences are checked with the same close-pivot, band-touch, and slope rules. The current constituent snapshot is in `stock_universe.json` and should be refreshed when index membership changes.
 
 Backtest findings support server-side sorting by asset, timeframe, direction/stage, confirmation time and user rating. The default order is oldest confirmation first. The hosted query migration is `cloud/backtest-sorting-pagination.sql`; page controls include numbered pages at the bottom of the findings table.
+
+## Family upgrade — 9 October 2026
+
+The scanner keeps per-feed/timeframe deadlines in SQLite. Weekly and monthly histories are read after another completed candle, including across restarts. Insufficient history waits for another candle too; failed reads retry. Unchanged delayed provider data retries hourly. US stock bars use scheduled NYSE sessions, holidays and early closes; forex respects the New York Friday/Sunday boundary and DST. Unscheduled exchange closures require a calendar update. Crypto scans continuously. USD/CNY is excluded globally, including the rotating selection.
+
+At startup, a one-time portfolio migration adds MRVL, NASA, QCOM, META, AMD, CRCL and EROC with verified Alpaca equity/ETF identities and preserves existing feeds. It adds unavailable futures placeholders for CL, GC and ES until an exact provider and continuous-contract roll convention are configured. A consistent SQLite backup is retained in data/backups/before-family-2026-10-09.sqlite3. Later user edits are preserved across restarts. Hourly remains off by default.
+
+Daily upper/lower stock picks exclude permanent portfolio tickers and reuse completed weekly OHLC across the week. Each new pick immediately reviews divergence confirmations on its latest completed weekly candle, then waits for another close. Hosted Assets now receives selection snapshots and coverage.
+
+Overview includes Catch up and the strategy white paper. Catch-up requests survive outages; the local scanner saves recoverable missed findings without an individual Telegram message for each, then queues one durable summary. Summaries are silent from 23:30 inclusive to 06:30 exclusive in Asia/Jerusalem. Provider history windows still limit catch-up; gaps beyond them remain unavailable and require backfill. A worker restart after a prolonged gap also requests catch-up automatically.
+
+Assets are grouped, compact and expandable, with red unavailable-data reasons. Signal/backtest row selection survives closing the chart. Divergence status and observed maximum gain/drawdown appear separately. Follow-up times use hours:minutes. Candle titles show direction and the touching band's recorded regression slope. The normalized angle is atan(slope_pct / 100) in degrees: one horizontal unit is one candle, one vertical unit is a 100% price change. This is independent of zoom and is not a screen-pixel angle.
+
+Apply cloud/family-upgrade.sql after the existing sharing/followups/provider migrations, then deploy the updated sync Edge Function and publish the shared browser bundle. The migration preserves existing API wrappers and family read/edit roles.
+
+See [Windows instructions](WINDOWS.md) for the standalone executable, hourly updates, and state migration.

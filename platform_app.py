@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get('TRADING_BOT_ROOT',str(Path(__file__).resolve().parent)))
 SKILL = ROOT / 'skills/rsi-divergence/SKILL.md'
 
 
@@ -147,14 +147,17 @@ class Store:
         finally:
             connection.close()
 
-    def insert(self, payload):
+    def insert(self, payload, delivery_status='pending',catchup_id=None):
         identity = [payload[k] for k in ('symbol', 'timeframe', 'direction', 'pivot1', 'pivot2')]
         if payload.get('signal_status') == 'provisional': identity.append('warmup')
         if payload.get('review_slot'): identity.append(payload['review_slot'])
         key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
         with self.connect() as db:
-            result = db.execute('INSERT OR IGNORE INTO signals(id,payload,received) VALUES(?,?,?)',
-                                (key, json.dumps(payload), time.time()))
+            result = db.execute('INSERT OR IGNORE INTO signals(id,payload,received,status) VALUES(?,?,?,?)',
+                                (key, json.dumps(payload), time.time(),delivery_status))
+            if result.rowcount==1 and catchup_id:
+                db.execute('CREATE TABLE IF NOT EXISTS catchup_findings(command_id TEXT,signal_id TEXT,PRIMARY KEY(command_id,signal_id))')
+                db.execute('INSERT OR IGNORE INTO catchup_findings VALUES(?,?)',(catchup_id,key))
             return result.rowcount == 1
 
     def log(self, event, details):
@@ -192,8 +195,14 @@ def telegram_connection_error(exc):
     return 'Telegram connection failed. Check Internet/proxy access.'
 
 
-def send_telegram(token, chat_id, text):
-    data = json.dumps({'chat_id': chat_id, 'text': text}).encode()
+def quiet_hours(now=None):
+    local=datetime.fromtimestamp(time.time() if now is None else now,ZoneInfo('Asia/Jerusalem'))
+    minute=local.hour*60+local.minute
+    return minute>=23*60+30 or minute<6*60+30
+
+
+def send_telegram(token, chat_id, text, silent=False):
+    data = json.dumps({'chat_id': chat_id, 'text': text, 'disable_notification': silent}).encode()
     req = urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage', data=data,
                                  headers={'Content-Type': 'application/json'})
     try:
@@ -209,7 +218,20 @@ def send_telegram(token, chat_id, text):
 
 
 def delivery_worker(store, token, chat_id, dry_run, stop):
+    from scanner_control import initialize as control_initialize
+    with store.connect() as db:control_initialize(db)
     while not stop.is_set():
+        with store.connect() as db:
+            note=db.execute("SELECT id,text,attempts FROM notification_queue WHERE status='pending' AND next_attempt<=? ORDER BY rowid LIMIT 1",(time.time(),)).fetchone()
+        if note:
+            key,text,attempts=note
+            try:
+                if not dry_run:send_telegram(token,chat_id,text,silent=quiet_hours())
+                with store.connect() as db:db.execute('UPDATE notification_queue SET status=? WHERE id=?',('dry-run' if dry_run else 'sent',key))
+                store.log('Catch-up summary delivered','dry-run' if dry_run else 'sent')
+            except Exception:
+                with store.connect() as db:db.execute('UPDATE notification_queue SET attempts=?,next_attempt=? WHERE id=?',(attempts+1,time.time()+min(300,2**min(attempts+1,9)),key))
+            continue
         with store.connect() as db:
             row = db.execute("SELECT id,payload,attempts FROM signals WHERE status='pending' AND next_attempt<=? ORDER BY received LIMIT 1", (time.time(),)).fetchone()
         if not row:
@@ -276,7 +298,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 else:
                     self.respond(404, {'error':'Not found'})
                 return
-            if route in ('/api/assets', '/api/findings', '/api/candles', '/api/followup', '/api/logs', '/api/backtests'):
+            if route in ('/api/assets', '/api/findings', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates'):
                 from dashboard_api import read
                 try:
                     self.respond(200, read(store, self.path))
@@ -336,7 +358,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 self.respond(404, {'error': 'Not found'})
 
         def do_POST(self):
-            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state'):
+            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state','/api/catchup','/api/updates'):
                 from finding_feedback import save
                 host = self.headers.get('Host')
                 allowed = (f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}')
@@ -352,7 +374,14 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     body = json.loads(self.rfile.read(size))
                     if not isinstance(body, dict):
                         raise ValueError('Expected JSON object')
-                    if self.path == '/api/finding-state':
+                    if self.path=='/api/catchup':
+                        from scanner_control import request
+                        if body.get('action')!='request':raise ValueError('Invalid scanner action')
+                        self.respond(202,request(store))
+                    elif self.path=='/api/updates':
+                        import windows_update
+                        self.respond(202,windows_update.request_check())
+                    elif self.path == '/api/finding-state':
                         from finding_state import change
                         self.respond(200, change(store, ROOT, body))
                     elif self.path == '/api/backtests':
@@ -436,6 +465,12 @@ def main():
     data = Path(os.environ.get('DATA_DIR', str(ROOT / 'data')))
     data.mkdir(parents=True, exist_ok=True)
     store = Store(data / 'signals.sqlite3')
+    if not legacy_webhook:
+        from scanner import load_config
+        from managed_assets import ensure
+        from portfolio_upgrade import install
+        ensure(store,load_config())
+        install(store)
     store.log('Platform started', 'dry-run' if dry_run else 'Telegram')
     stop = threading.Event()
     worker = threading.Thread(target=delivery_worker, args=(store, token, chat_id, dry_run, stop), daemon=True)
@@ -452,6 +487,12 @@ def main():
         scanner_thread = threading.Thread(target=scanner_worker, args=(store, config, rules, stop), daemon=True)
         scanner_thread.start()
     server = LocalHTTPServer((host, int(os.environ.get('PORT', '8080'))), handler_factory(store, rules, secret, dry_run, dashboard=True))
+    from windows_update import worker as update_worker
+    def update_shutdown():
+        stop.set()
+        server.shutdown()
+    update_thread=threading.Thread(target=update_worker,args=(stop,update_shutdown),daemon=True)
+    update_thread.start()
     webhook_server = None
     if legacy_webhook:
         webhook_server = ThreadingHTTPServer((host, int(os.environ.get('WEBHOOK_PORT', '8081'))), handler_factory(store, rules, secret, dry_run))

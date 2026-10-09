@@ -107,7 +107,8 @@ class OandaTests(unittest.TestCase):
             with patch.dict('os.environ', {'OANDA_ENVIRONMENT': 'practice'}), patch('oanda_feed.fetch_oanda', return_value=bars):
                 result = scan_once(store, dict(assets=[self.asset], timeframes=['1h']), load_rules(), bars[-1].end)
             self.assertEqual(result[0]['status'], 'baseline set')
-            self.assertEqual(result[0]['next_close_at'], bars[-1].end + 3600000)
+            from market_calendar import next_market_time
+            self.assertEqual(result[0]['next_close_at'], next_market_time(self.asset,bars[-1].end + 3600000))
             with store.connect() as db:
                 self.assertEqual(db.execute('SELECT distinct feed FROM candle_cache').fetchone()[0], 'oanda:OANDA-practice:EUR/USD')
             self.assertEqual(store.rows(), [])
@@ -119,9 +120,9 @@ class OandaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             store = Store(Path(folder) / 'db.sqlite3')
             stop = Mock();stop.is_set.side_effect = [False, False, True]
-            with patch('scanner.scan_once', return_value=[dict(status='scanned', next_close_at=2000000)]), patch('scanner.time.time', return_value=1900):
+            with patch('scanner.wait_for_command',return_value=None) as waiting, patch('scanner.scan_once', return_value=[dict(status='scanned', next_close_at=2000000)]), patch('scanner.time.time', return_value=1900):
                 scanner_worker(store, dict(assets=[], timeframes=['1h'], poll_seconds=14400), load_rules(), stop)
-            stop.wait.assert_called_once_with(115)
+            waiting.assert_called_once_with(store,stop,115)
         from managed_assets import DEFAULTS
         self.assertNotIn('1h', DEFAULTS)
         start = datetime(2026, 10, 6, 10, tzinfo=timezone.utc)

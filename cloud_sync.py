@@ -55,7 +55,19 @@ def snapshot(store):
             enqueue(db,'feedback_history',f'{key}:{revision}',dict(finding_id=key,source=source,evidence=json.loads(evidence),rating=rating,comment=comment,revision=revision,updated_at=updated))
         status_exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='scanner_status'").fetchone()
         scan=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone() if status_exists else None
-        if scan: enqueue(db,'summary','live',json.loads(scan[0]).get('coverage',[]))
+        if scan:
+            enqueue(db,'summary','live',json.loads(scan[0]).get('coverage',[]))
+            enqueue(db,'summary','scanner',json.loads(scan[0]))
+        selections={}
+        for table,field,order in [('daily_universe','daily_selection','session'),('weekly_stock_screen','weekly_stock_selection','day')]:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name=?",(table,)).fetchone():
+                selected=db.execute(f'SELECT payload FROM {table} ORDER BY {order} DESC LIMIT 1').fetchone()
+                if selected:selections[field]=json.loads(selected[0])
+        enqueue(db,'summary','selections',selections)
+        from scanner_control import initialize as control_initialize
+        control_initialize(db)
+        for key,status,payload,created in db.execute('SELECT * FROM scanner_commands'):
+            enqueue(db,'summary','catchup:'+key,dict(id=key,status=status,created=created,**json.loads(payload)))
         has_runs=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='backtest_runs'").fetchone()
         if has_runs:
             reports=[json.loads(row[0]) for row in db.execute('SELECT report FROM backtest_runs ORDER BY id')]
@@ -98,7 +110,7 @@ def snapshot(store):
 def batch(store):
     with store.connect() as db:
         initialize(db)
-        rows=db.execute("SELECT kind,key,event_id,payload FROM cloud_pending ORDER BY CASE kind WHEN 'config' THEN 0 WHEN 'live' THEN 1 WHEN 'backtest' THEN 2 WHEN 'feedback' THEN 3 ELSE 4 END,key LIMIT 100").fetchall()
+        rows=db.execute("SELECT kind,key,event_id,payload FROM cloud_pending ORDER BY CASE WHEN kind='summary' AND (key IN ('scanner','selections') OR key LIKE 'catchup:%') THEN -1 ELSE CASE kind WHEN 'config' THEN 0 WHEN 'live' THEN 1 WHEN 'backtest' THEN 2 WHEN 'feedback' THEN 3 ELSE 4 END END,key LIMIT 100").fetchall()
         base=int(meta(db,'config_base'));cursor=int(meta(db,'feedback_cursor'));state_cursor=int(meta(db,'state_cursor'))
     out=[];size=128
     for kind,key,event,raw in rows:
@@ -111,6 +123,9 @@ def batch(store):
 
 
 def apply(store,response):
+    from scanner_control import request as catchup_request
+    for command in response.get('commands',[]):
+        catchup_request(store,command['id'])
     from managed_assets import validate_asset
     with store.connect() as db:
         initialize(db);db.execute('BEGIN IMMEDIATE')

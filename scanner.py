@@ -267,7 +267,7 @@ def provider_error(code):
     }.get(code, 'Provider rejected request; check symbol, entitlement, quota, and API key')
 
 
-def scan_once(store, config, rules, now=None, stop=None):
+def scan_once(store, config, rules, now=None, stop=None, catchup=False):
     from managed_assets import effective, cache_candles, for_timeframe
     from kraken_feed import fetch_kraken
     from oanda_feed import fetch_oanda
@@ -279,7 +279,27 @@ def scan_once(store, config, rules, now=None, stop=None):
     config, stock_selection = resolve_weekly_stocks(store, config, rules, now)
     from daily_universe import resolve
     config, selection = resolve(store, config, now)
-    store.log('Scan cycle started', f'{len(config["assets"])} assets')
+    if catchup:
+        # Recover the last monitored rotating feeds as well as today's picks.
+        # Offline days have no recorded selection; never invent those picks.
+        with store.connect() as db:
+            prior=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
+        known={a['id'] for a in config['assets']}
+        for old in json.loads(prior[0]).get('coverage',[]) if prior else []:
+            if old['asset'] in known or old['asset'] in ('USDCNY','DAILY_SELECTION','WEEKLY_STOCK_SCREEN'):continue
+            if old.get('provider') not in ('twelvedata','kraken','oanda','tiingo','alpaca'):continue
+            config['assets'].append(dict(id=old['asset'],provider=old['provider'],symbol=old.get('symbol',old['asset']),
+                exchange=old.get('exchange',''),enabled=True,feed_confirmed=True,timeframes=[old['timeframe']],
+                catchup_only=True,tradingview_symbol='',market='stock' if old['asset'].startswith('STOCK-') else None))
+            # Another timeframe from the same old feed must be appended too.
+        merged={}
+        for a in config['assets']:
+            if a['id'] in merged and a.get('catchup_only'):
+                merged[a['id']]['timeframes']=list(dict.fromkeys(merged[a['id']]['timeframes']+a['timeframes']))
+            else:merged[a['id']]=a
+        config['assets']=list(merged.values())
+    enabled=[a for a in config['assets'] if a.get('enabled',True) and a['id'].replace('/','').upper()!='USDCNY']; configured=len(config['assets']); permanent=sum(not a.get('daily_selected') and not a.get('weekly_screen_selected') for a in enabled); rotating_stocks=sum(bool(a.get('weekly_screen_selected')) for a in enabled); rotating_pairs=sum(bool(a.get('daily_selected')) for a in enabled)
+    store.log('Scan cycle started', f'{len(enabled)} enabled assets ({permanent} permanent, {rotating_stocks} rotating stocks, {rotating_pairs} rotating forex/crypto); {configured-len(enabled)} disabled/excluded entries')
     coverage = []
     if selection and selection['status'] == 'unavailable':
         coverage.append(dict(asset='DAILY_SELECTION', timeframe='daily', provider='Kraken', status='unavailable', reason=selection['reason']))
@@ -288,13 +308,20 @@ def scan_once(store, config, rules, now=None, stop=None):
                              status=stock_selection['status'],reason=stock_selection.get('reason','')))
     last_requests = {}
     for configured_asset in config['assets']:
-        if not configured_asset.get('enabled', True):
+        if not configured_asset.get('enabled', True) or configured_asset['id'].replace('/','').upper()=='USDCNY':
             continue
         for timeframe in configured_asset.get('timeframes', config['timeframes']):
             asset = for_timeframe(configured_asset, timeframe)
             provider = asset['provider']
             row = dict(asset=asset['id'], timeframe=timeframe, provider=provider,
                        exchange=asset.get('exchange', ''), symbol=asset.get('symbol', asset['id']))
+            from scan_schedule import identity, saved, save, next_due, provider_lag
+            schedule_key=identity(asset,timeframe,rules)
+            previous=saved(store,schedule_key,now)
+            if previous:
+                coverage.append(previous)
+                continue
+            raw=[];candles=[]
             try:
                 if provider in ('twelvedata', 'kraken', 'oanda', 'tiingo'):
                     spacing = (max(8, float(config.get('request_spacing_seconds', 8))) if provider == 'twelvedata'
@@ -334,6 +361,7 @@ def scan_once(store, config, rules, now=None, stop=None):
                     period = (1 if timeframe == '1h' else 4) * 60 * 60 * 1000
                     row['next_close_at'] = candles[-1].end + ((now - candles[-1].end) // period + 1) * period
                 cache_candles(store, asset, timeframe, candles)
+                if candles:row['last_closed_at']=candles[-1].end
                 if len(candles) < minimum_history(rules):
                     row.update(status='insufficient history', candles=len(candles),
                                reason=f'Only {len(candles)} closed candles available; '
@@ -350,7 +378,9 @@ def scan_once(store, config, rules, now=None, stop=None):
                         state = db.execute('SELECT last_end FROM scan_state WHERE asset=? AND timeframe=?', (state_id, timeframe)).fetchone()
                     # First run establishes a baseline without flooding Telegram with history.
                     cutoff = state[0] if state else candles[-1].end
-                    if asset.get('daily_selected') and selection:
+                    if asset.get('weekly_screen_selected') and not state:
+                        cutoff = candles[-1].end-1
+                    if asset.get('daily_selected') and selection and not catchup:
                         cutoff = max(cutoff, selection['starts_at'])
                     if asset.get('weekly_screen_selected'):
                         cutoff = max(cutoff, asset.get('weekly_screen_since',asset['weekly_screen_week_start']))
@@ -360,7 +390,7 @@ def scan_once(store, config, rules, now=None, stop=None):
                     if asset.get('max_data_age_seconds') and age_seconds > asset['max_data_age_seconds']:
                         raise ValueError('Latest closed candle is older than the configured freshness limit')
                     pending = sorted((s for s in matches if s['confirmed_at'] > cutoff), key=lambda s:(s['confirmed_at'],s.get('signal_status')!='provisional'))
-                    new = sum(store.insert(validate_signal(s, rules)) for s in pending)
+                    new = sum(store.insert(validate_signal(s, rules), delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
                     with store.connect() as db:
                         db.execute('INSERT INTO scan_state(asset,timeframe,last_end) VALUES(?,?,?) ON CONFLICT(asset,timeframe) DO UPDATE SET last_end=MAX(last_end,excluded.last_end)',
                                    (state_id, timeframe, candles[-1].end))
@@ -373,6 +403,9 @@ def scan_once(store, config, rules, now=None, stop=None):
                 row.update(status='unavailable', reason=reason)
             except Exception:
                 row.update(status='unavailable', reason='Data request or parsing failed; check provider access and format')
+            row['checked_at']=now
+            row['next_close_at']=provider_lag(store,schedule_key,row,now,next_due(asset,timeframe,raw,candles,now,row),asset)
+            save(store,schedule_key,row['next_close_at'],row)
             coverage.append(row)
             store.log('Market check', json.dumps(row))
     with store.connect() as db:
@@ -380,7 +413,7 @@ def scan_once(store, config, rules, now=None, stop=None):
     if config_revision is not None:
         with store.connect() as db:
             db.execute('UPDATE managed_config SET applied_revision=? WHERE id=1', (config_revision,))
-    store.log('Scan cycle completed', f'{len(coverage)} market checks')
+    store.log('Scan cycle completed', f'{sum(not r.get("check_state") for r in coverage)} market checks; {sum(bool(r.get("check_state")) for r in coverage)} waiting for another closed candle')
     return coverage
 
 
@@ -409,6 +442,16 @@ def scanner_worker(store, config, rules, stop):
     prepare_store(store)
     from managed_assets import ensure
     ensure(store, config)
+    from scanner_control import initialize as control_initialize, claim, finish
+    with store.connect() as db:
+        control_initialize(db)
+        db.execute("UPDATE scanner_commands SET status='pending' WHERE status='running'")
+    command=None
+    with store.connect() as db:
+        old=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
+    if old and time.time()*1000-json.loads(old[0]).get('scanned_at',time.time()*1000)>config.get('poll_seconds',14400)*1000+300000:
+        from scanner_control import request
+        request(store)
     while not stop.is_set():
         with store.connect() as db:
             previous = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
@@ -416,14 +459,17 @@ def scanner_worker(store, config, rules, stop):
                 progress = json.loads(previous[0])
                 progress.update(phase='scanning', next_scan_at=None)
                 db.execute('UPDATE scanner_status SET payload=? WHERE id=1', (json.dumps(progress),))
-        coverage = scan_once(store, config, rules, stop=stop)
+        command=command or claim(store)
+        coverage = scan_once(store, config, rules, stop=stop,catchup=command or False)
+        if command and not stop.is_set():
+            finish(store,command,coverage,sum(r.get('new_signals',0) for r in coverage))
+            command=None
         if stop.is_set():
             break
         from managed_assets import effective
         current, _ = effective(store, config)
         delay = max(30, current.get('poll_seconds', 300))
-        closes = [r['next_close_at'] / 1000 for r in (coverage or [])
-                  if r.get('next_close_at') and r.get('status') in ('scanned', 'baseline set')]
+        closes = [r['next_close_at'] / 1000 for r in (coverage or []) if r.get('next_close_at')]
         if closes:
             delay = min(delay, max(30, min(closes) + 15 - time.time()))
         policy = current.get('daily_universe', {})
@@ -447,7 +493,17 @@ def scanner_worker(store, config, rules, stop):
             schedule = json.loads(saved[0]) if saved else dict(scanned_at=int(time.time() * 1000), coverage=coverage or [])
             schedule.update(phase='waiting', next_scan_at=int((time.time() + delay) * 1000))
             db.execute('INSERT OR REPLACE INTO scanner_status(id,payload) VALUES(1,?)', (json.dumps(schedule),))
-        stop.wait(delay)
+        command=wait_for_command(store,stop,delay)
+
+
+def wait_for_command(store,stop,delay):
+    from scanner_control import claim
+    deadline=time.monotonic()+delay
+    while not stop.is_set() and time.monotonic()<deadline:
+        command=claim(store)
+        if command:return command
+        stop.wait(min(1,max(0,deadline-time.monotonic())))
+    return None
 
 
 if __name__ == '__main__':

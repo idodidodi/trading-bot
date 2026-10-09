@@ -1,0 +1,55 @@
+name: Windows standalone release
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install Windows runtime and build dependencies
+        run: python -m pip install -r windows-build-requirements.txt
+      - name: Verify scanner
+        run: |
+          python -m unittest discover -q
+          if ($LASTEXITCODE -ne 0) { throw 'Scanner tests failed' }
+          $ExpectedTag = 'v' + (python -c "from app_version import VERSION; print(VERSION)")
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $ExpectedTag) { throw 'Release tag does not match application version' }
+      - name: Build executable and update manifest
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+      - name: Smoke-test standalone app
+        shell: pwsh
+        run: |
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'family-bot-smoke'
+          New-Item -ItemType Directory -Force $env:LOCALAPPDATA | Out-Null
+          Start-Process -FilePath (Resolve-Path 'dist/FamilyTradingBot.exe')
+          $Ready = $false
+          for ($Attempt = 0; $Attempt -lt 45; $Attempt++) {
+            Start-Sleep -Seconds 1
+            try {
+              $Health = Invoke-RestMethod 'http://127.0.0.1:8080/health'
+              $Updates = Invoke-RestMethod 'http://127.0.0.1:8080/api/updates'
+              if ($Health.ok -and $Health.dry_run -and $Updates.supported) { $Ready = $true; break }
+            } catch {}
+          }
+          Get-Process FamilyTradingBot -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $Ready) { throw 'Standalone Windows app did not start correctly' }
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $Version = python -c "from app_version import VERSION; print(VERSION)"
+          $Tag = "v$Version"
+          gh release view $Tag *> $null
+          if ($LASTEXITCODE -ne 0) { gh release create $Tag --target $env:GITHUB_SHA --title "Family Trading Bot $Version" --notes 'Standalone Windows scanner with hourly automatic updates. State and credentials remain in LocalAppData.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Release creation failed' }
+          gh release upload $Tag dist/FamilyTradingBot.exe dist/windows-update.json --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed' }

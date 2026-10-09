@@ -131,18 +131,18 @@ class EngineTests(unittest.TestCase):
             config = dict(assets=[], timeframes=['4h'], poll_seconds=3600)
             ensure(store, config)
             stop = Mock(); stop.is_set.side_effect = [False, False, True]
-            with patch('scanner.scan_once', return_value=[]):
+            with patch('scanner.wait_for_command',return_value=None) as waiting, patch('scanner.scan_once', return_value=[]):
                 scanner_worker(store, config | {'poll_seconds': 300}, load_rules(), stop)
-            stop.wait.assert_called_once_with(3600)
+            waiting.assert_called_once_with(store,stop,3600)
 
     def test_worker_wakes_after_next_candle_close(self):
         with tempfile.TemporaryDirectory() as folder:
             store = Store(Path(folder) / 'db.sqlite3')
             config = dict(assets=[], timeframes=['4h'], poll_seconds=14400)
             stop = Mock(); stop.is_set.side_effect = [False, False, True]
-            with patch('scanner.scan_once', return_value=[dict(status='scanned', next_close_at=2000000)]), patch('scanner.time.time', return_value=1900):
+            with patch('scanner.wait_for_command',return_value=None) as waiting, patch('scanner.scan_once', return_value=[dict(status='scanned', next_close_at=2000000)]), patch('scanner.time.time', return_value=1900):
                 scanner_worker(store, config, load_rules(), stop)
-            stop.wait.assert_called_once_with(115)
+            waiting.assert_called_once_with(store,stop,115)
             import json
             with store.connect() as db:
                 schedule = json.loads(db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()[0])

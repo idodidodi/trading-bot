@@ -43,12 +43,15 @@ test('closing a direct candle page returns to its findings; an in-page dialog st
   const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id);};
   get('candle-dialog').addEventListener=(event,fn)=>{get('candle-dialog')['close-event']=fn;};
   let navigated;
-  const data={signal:{symbol:'BTCUSD',timeframe:'4h',rules},candles:[],note:'Source candles'};
+  const data={signal:{symbol:'BTCUSD',timeframe:'4h',direction:'bearish',band_slope_pct:.25,rules},candles:[],note:'Source candles'};
   const context=vm.createContext({window:{},document:{getElementById:get,createElement:element},sessionStorage:{getItem:()=>null},location:{pathname:path,search:`?source=${source}&finding=test`,assign:url=>navigated=url},fetch:async()=>({ok:true,json:async()=>path==='/candle'?data:{findings:[],has_more:false}}),URLSearchParams,AbortController,setTimeout,clearTimeout,Intl,Node:class{}});
   vm.runInContext(fs.readFileSync(new URL('./app.js',import.meta.url),'utf8'),context);
   await new Promise(resolve=>setImmediate(resolve));
   if(path==='/candle'){
-   assert.equal(get('candle-title').textContent,'BTCUSD · 4 hours candles');
+   assert.equal(get('candle-title').textContent,'BTCUSD · 4 hours candles · BEARISH');
+   assert.match(get('candle-legend').textContent,/Upper touching BB slope: \+0.250%\/candle · normalized angle \+0.143°/);
+   assert.equal(vm.runInContext('elapsedMinutes(480*60000)',context),'8:00');
+   assert.equal(vm.runInContext('elapsedMinutes(61*60000)',context),'1:01');
    assert.match(get('candle-legend').textContent,/Bollinger Bands \(3, 2σ\).*RSI \(3, Wilder\)/);
   }
   get('close-chart').onclick();

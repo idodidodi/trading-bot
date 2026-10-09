@@ -16,7 +16,7 @@ _last_request = 0
 
 
 def supported(asset):
-    return (asset.get('market') not in ('forex', 'crypto', 'index', 'indices', 'commodity', 'commodities')
+    return (asset.get('market') not in ('forex', 'crypto', 'index', 'indices', 'commodity', 'commodities','futures')
             and asset.get('feed_confirmed') is True
             and re.fullmatch(r'[A-Z][A-Z0-9.\-]{0,14}', asset.get('symbol', '')) is not None
             and (asset.get('market') in ('stock', 'stocks', 'equity', 'equities', 'etf')
@@ -85,13 +85,14 @@ def fetch_alpaca(asset, timeframe, *, start=None, end=None):
                 if dt.tzinfo is None:
                     raise ValueError()
                 local = dt.astimezone(ZoneInfo('America/New_York'))
-                close = interval_end(local, timeframe) if timeframe in ('daily','weekly','monthly') else interval_end(dt, timeframe)
+                from market_calendar import stock_candle_end
+                close = stock_candle_end(dt,timeframe)
                 bars.append(Candle(int(dt.timestamp()*1000), int(close.timestamp()*1000),
                                    *(float(row[k]) for k in ('o','h','l','c'))))
         except (KeyError, TypeError, ValueError, OverflowError):
             raise ValueError('Invalid Alpaca OHLC or timestamp') from None
         token = data.get('next_page_token')
-        if live or not token:
+        if not token or live and len(bars)>=500:
             break
         if not isinstance(token, str) or token in seen_tokens:
             raise ValueError('Alpaca pagination did not advance')
@@ -101,7 +102,7 @@ def fetch_alpaca(asset, timeframe, *, start=None, end=None):
         raise ValueError('Alpaca historical download exceeded page limit')
     bars.sort(key=lambda c:c.start)
     closed = check_candles(bars, end)
-    return ProviderCandles(closed, [f'Alpaca {feed}; split-adjusted; 16-minute delay; conservative calendar closes'])
+    return ProviderCandles(closed, [f'Alpaca {feed}; split-adjusted; 16-minute delay; US regular-session closes and holidays'])
 
 
 def fetch_alpaca_multi(symbols, timeframe, *, end=None):
@@ -136,7 +137,8 @@ def fetch_alpaca_multi(symbols, timeframe, *, end=None):
                         dt=datetime.fromisoformat(row['t'].replace('Z','+00:00'))
                         if dt.tzinfo is None: raise ValueError()
                         local=dt.astimezone(ZoneInfo('America/New_York'))
-                        close=interval_end(local,timeframe) if timeframe in ('daily','weekly','monthly') else interval_end(dt,timeframe)
+                        from market_calendar import stock_candle_end
+                        close=stock_candle_end(dt,timeframe)
                         output[symbol].append(Candle(int(dt.timestamp()*1000),int(close.timestamp()*1000),
                             *(float(row[key]) for key in ('o','h','l','c'))))
             except (KeyError,TypeError,ValueError,OverflowError):
