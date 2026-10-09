@@ -2,6 +2,7 @@
 import json
 import time
 import uuid
+import sqlite3
 
 
 def initialize(db):
@@ -31,13 +32,18 @@ def status(store):
 
 
 def claim(store):
-    with store.connect() as db:
-        initialize(db)
-        db.execute('BEGIN IMMEDIATE')
-        row=db.execute("SELECT id FROM scanner_commands WHERE status='pending' ORDER BY created LIMIT 1").fetchone()
-        if row:
-            db.execute("UPDATE scanner_commands SET status='running' WHERE id=?",row)
-    return row[0] if row else None
+    try:
+        with store.connect() as db:
+            initialize(db)
+            # Idle polling needs no writer lock; cloud sync may be writing.
+            if not db.execute("SELECT 1 FROM scanner_commands WHERE status='pending' LIMIT 1").fetchone():return None
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute("SELECT id FROM scanner_commands WHERE status='pending' ORDER BY created LIMIT 1").fetchone()
+            if row:db.execute("UPDATE scanner_commands SET status='running' WHERE id=?",row)
+        return row[0] if row else None
+    except sqlite3.OperationalError as exc:
+        if 'locked' not in str(exc).lower():raise
+        return None  # The durable request remains pending for the next poll.
 
 
 def finish(store,key,coverage,new_findings):

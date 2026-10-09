@@ -127,6 +127,7 @@ class Store:
     def __init__(self, path):
         self.path = path
         with self.connect() as db:
+            db.execute('PRAGMA journal_mode=WAL')
             db.execute('''CREATE TABLE IF NOT EXISTS signals (
                 id TEXT PRIMARY KEY, payload TEXT NOT NULL, received REAL NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,

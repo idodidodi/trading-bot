@@ -65,6 +65,13 @@ class FamilyUpgradeTests(unittest.TestCase):
             send_telegram('test','123','Catch-up',silent=True)
             self.assertTrue(json.loads(post.call_args.args[0].data)['disable_notification'])
 
+    def test_catchup_request_survives_another_database_writer(self):
+        command=request(self.store)
+        with self.store.connect() as busy:
+            busy.execute('BEGIN IMMEDIATE')
+            self.assertIsNone(claim(self.store))
+        self.assertEqual(claim(self.store),command['id'])
+
     def test_stock_week_month_closes_holidays_early_close_and_dst(self):
         self.assertFalse(stock_trading_day(date(2026,12,25)))
         end=stock_candle_end(datetime.fromisoformat('2026-12-21T05:00:00+00:00'),'weekly')
