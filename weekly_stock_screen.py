@@ -29,7 +29,7 @@ def week_start(policy, day):
 
 
 def universe():
-    data=json.loads((ROOT/'stock_universe.json').read_text())
+    data=json.loads((ROOT/'stock_universe.json').read_text(encoding='utf-8'))
     return data['indexes']['sp400'], data['indexes']['sp500']
 
 

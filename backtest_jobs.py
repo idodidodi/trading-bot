@@ -19,7 +19,7 @@ def options(store, job_id=None):
         job = db.execute('SELECT id,status,payload,updated FROM backtest_jobs WHERE id=?',(job_id,)).fetchone() if job_id else db.execute('SELECT id,status,payload,updated FROM backtest_jobs ORDER BY updated DESC LIMIT 1').fetchone()
     assets = {r['asset'] for r in report['results']} if report else set()
     catalog=ROOT/'data/historical-2020/backtest-config.json'
-    if catalog.exists(): assets.update(a['id'] for a in json.loads(catalog.read_text())['assets'])
+    if catalog.exists(): assets.update(a['id'] for a in json.loads(catalog.read_text(encoding='utf-8'))['assets'])
     from alpaca_feed import supported
     from managed_assets import effective
     from scanner import load_config
@@ -55,7 +55,7 @@ def start(store, body):
         try:
             from backtest import run_backtest
             year=options(store)['year']
-            cfg=json.loads((ROOT/f'data/historical-{year}/backtest-config.json').read_text())
+            cfg=json.loads((ROOT/f'data/historical-{year}/backtest-config.json').read_text(encoding='utf-8'))
             cfg['year']=year
             catalog = {a['id']: a for a in cfg['assets']}
             cfg['assets']=[catalog.get(a, dict(id=a, provider='unsupported')) for a in assets];cfg['timeframes']=frames

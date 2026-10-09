@@ -26,7 +26,7 @@ SKILL = ROOT / 'skills/rsi-divergence/SKILL.md'
 def load_env():
     path = ROOT / '.env'
     if path.exists():
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding='utf-8').splitlines():
             if line.strip() and not line.lstrip().startswith('#'):
                 # Ignore notes/headings pasted alongside credentials. Never log
                 # arbitrary .env text: even a malformed line can contain a key.
@@ -43,7 +43,7 @@ def load_env():
 
 
 def load_rules():
-    text = SKILL.read_text()
+    text = SKILL.read_text(encoding='utf-8')
     patterns = {
         'rsi_period': r'- RSI: (\d+) periods, Wilder smoothing, close prices\.',
         'bb_period': r'- Bollinger Bands: (\d+)-period',
@@ -288,13 +288,13 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
             from urllib.parse import urlsplit
             route = urlsplit(self.path).path
             if route in ('/', '/signals', '/logs', '/backtest', '/assets', '/candle', '/dashboard'):
-                self.respond(200, (ROOT / 'web/index.html').read_text(), 'text/html; charset=utf-8')
+                self.respond(200, (ROOT / 'web/index.html').read_text(encoding='utf-8'), 'text/html; charset=utf-8')
                 return
             if route.startswith('/web/'):
                 allowed_files = {'style.css':'text/css', 'app.js':'text/javascript', 'config.js':'text/javascript', 'chart.js':'text/javascript', 'vendor/lightweight-charts.js':'text/javascript', 'favicon.svg':'image/svg+xml'}
                 name = route.removeprefix('/web/')
                 if name in allowed_files:
-                    self.respond(200, (ROOT / 'web' / name).read_text(), allowed_files[name])
+                    self.respond(200, (ROOT / 'web' / name).read_text(encoding='utf-8'), allowed_files[name])
                 else:
                     self.respond(404, {'error':'Not found'})
                 return

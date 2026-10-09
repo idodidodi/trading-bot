@@ -19,7 +19,7 @@ def latest_report(db, root):
     exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='backtest_runs'").fetchone()
     row = db.execute('SELECT report FROM backtest_runs ORDER BY id DESC LIMIT 1').fetchone() if exists else None
     saved = Path(root) / 'data/historical-2020/report.json'
-    return json.loads(row[0]) if row else json.loads(saved.read_text()) if saved.exists() else None
+    return json.loads(row[0]) if row else json.loads(saved.read_text(encoding='utf-8')) if saved.exists() else None
 
 
 def initialize(db):

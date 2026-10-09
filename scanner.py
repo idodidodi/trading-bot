@@ -425,7 +425,7 @@ def prepare_store(store):
 
 def load_config():
     path = Path(os.environ.get('SCANNER_CONFIG', str(ROOT / 'scanner.json')))
-    config = json.loads(path.read_text())
+    config = json.loads(path.read_text(encoding='utf-8'))
     if not config.get('assets') or not config.get('timeframes') or not set(config['timeframes']) <= TIMEFRAMES.keys():
         raise ValueError('Set assets and supported timeframes in scanner.json')
     ids = [a['id'] for a in config['assets']]

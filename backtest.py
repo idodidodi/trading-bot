@@ -63,7 +63,7 @@ def run_backtest(store, config, rules, *, provisional=False):
                     csv_path = ROOT / csv_path
                 manifest_path = csv_path.parent / 'manifest.json'
                 if manifest_path.exists():
-                    manifest = json.loads(manifest_path.read_text())
+                    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
                     provenance = next((f for f in manifest['files'] if f['file'] == csv_path.name), None)
                     if provenance:
                         row['source'] = provenance['source']

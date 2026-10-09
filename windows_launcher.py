@@ -24,7 +24,7 @@ def main():
         for name in ('scanner.json','stock_universe.json','tradingview_template.pine','.env.example'):
             shutil.copy2(bundle/name,root/name)
         if not (root/'.env').exists():
-            (root/'.env').write_text((root/'.env.example').read_text().replace('DRY_RUN=false','DRY_RUN=true'))
+            (root/'.env').write_text((root/'.env.example').read_text(encoding='utf-8').replace('DRY_RUN=false','DRY_RUN=true'),encoding='utf-8')
         os.environ['TRADING_BOT_ROOT']=str(root)
         os.environ['DATA_DIR']=str(root/'data')
         os.chdir(root)
