@@ -14,6 +14,11 @@ def ensure(store):
 def read(store, path):
     url=urlsplit(path);query=parse_qs(url.query)
     param=lambda key,default='':query.get(key,[default])[0]
+    if url.path=='/api/momentum':
+        from momentum import view
+        source=param('source','live')
+        if source not in ('live','backtest'):raise ValueError('Invalid source')
+        return view(store,source)
     if url.path=='/api/catchup':
         from scanner_control import status
         return status(store)

@@ -275,3 +275,7 @@ Assets are grouped, compact and expandable, with red unavailable-data reasons. S
 Apply cloud/family-upgrade.sql after the existing sharing/followups/provider migrations, then deploy the updated sync Edge Function and publish the shared browser bundle. The migration preserves existing API wrappers and family read/edit roles.
 
 See [Windows instructions](WINDOWS.md) for the standalone executable, hourly updates, and state migration.
+
+## Daily momentum strategy
+
+Signals and Backtests now each offer an independent **Daily momentum** strategy view, with RSI divergence still selected by default. The worker screens completed daily candles at 08:00 Israel time for US stocks and enabled/daily-selected crypto, publishing at most one qualifying buy/sell candidate per market with an entry range, stop and target. Momentum has separate persistence, forward outcomes and daily historical replays. See [MOMENTUM.md](MOMENTUM.md) for exact rules, entry timing, review policy and deployment. No qualifying setup produces no entry candidate.

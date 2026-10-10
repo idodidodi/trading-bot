@@ -299,7 +299,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 else:
                     self.respond(404, {'error':'Not found'})
                 return
-            if route in ('/api/assets', '/api/findings', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates'):
+            if route in ('/api/assets', '/api/findings', '/api/momentum', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates'):
                 from dashboard_api import read
                 try:
                     self.respond(200, read(store, self.path))

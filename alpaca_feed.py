@@ -105,7 +105,7 @@ def fetch_alpaca(asset, timeframe, *, start=None, end=None):
     return ProviderCandles(closed, [f'Alpaca {feed}; split-adjusted; 16-minute delay; US regular-session closes and holidays'])
 
 
-def fetch_alpaca_multi(symbols, timeframe, *, end=None):
+def fetch_alpaca_multi(symbols, timeframe, *, end=None, lookback_days=196):
     """Fetch a short native-bar window for a broad weekly screen in bounded batches."""
     from scanner import Candle, ProviderCandles, check_candles, interval_end, timestamp
     if timeframe not in FRAMES or not isinstance(symbols,(list,tuple)) or not symbols:
@@ -119,7 +119,9 @@ def fetch_alpaca_multi(symbols, timeframe, *, end=None):
     end_value=end if isinstance(end,int) and not isinstance(end,bool) else timestamp(end) if end else int(cutoff.timestamp()*1000)
     end_ms=min(end_value,int(cutoff.timestamp()*1000))
     end_iso=datetime.fromtimestamp(end_ms/1000,timezone.utc).isoformat()
-    start_iso=(datetime.fromtimestamp(end_ms/1000,timezone.utc)-timedelta(weeks=28)).isoformat()
+    if type(lookback_days) is not int or not 1<=lookback_days<=800:
+        raise ValueError('Invalid Alpaca lookback')
+    start_iso=(datetime.fromtimestamp(end_ms/1000,timezone.utc)-timedelta(days=lookback_days)).isoformat()
     output={symbol:[] for symbol in symbols}
     for offset in range(0,len(symbols),100):
         batch=symbols[offset:offset+100];wanted=set(batch);tokens=set()

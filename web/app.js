@@ -85,8 +85,12 @@ function table(headers,rows){const t=node('table'),head=node('tr');for(const h o
 function selectionTable(headers,rows,ids){const grid=table(headers,rows);for(const [index,tr] of [...grid.querySelectorAll('tr')].slice(1).entries()){const coverage=(state.coverage||[]).filter(r=>r.asset===ids[index]),warning=coverage.filter(r=>/unavailable|insufficient|partial/.test(r.status));if(warning.length)tr.classList.add('error');tr.classList.add('finding-row');tr.tabIndex=0;tr.setAttribute('aria-expanded','false');tr.title='Click for feed and candle coverage';let detail;const toggle=()=>{if(!detail){detail=node('tr');const td=node('td');td.colSpan=headers.length;td.textContent=coverage.length?coverage.map(r=>`${r.timeframe} · ${r.provider} · ${r.status}${r.last_closed_at?' · latest close '+displayTime(r.last_closed_at):''}${r.next_close_at?' · next check '+displayTime(r.next_close_at):''}${r.reason?' · '+r.reason:''}`).join(' | '):'Awaiting the scanner’s first coverage check for this selection.';detail.append(td);tr.after(detail);}else detail.hidden=!detail.hidden;tr.classList.toggle('selected-row',!detail.hidden);tr.setAttribute('aria-expanded',String(!detail.hidden));};tr.onclick=toggle;tr.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle();}};}return grid;}
 let page=0,showArchived=false;
 const backtestSort={key:'confirmed_at',order:'asc'};
+const strategyViews={live:'rsi',backtest:'rsi'};
+function strategySelector(source){const label=node('label','Strategy '),select=node('select');select.setAttribute('aria-label','Strategy view');for(const [key,name] of [['rsi','RSI divergence'],['momentum','Daily momentum']]){const option=node('option',name);option.value=key;select.append(option);}select.value=strategyViews[source];select.onchange=()=>{strategyViews[source]=select.value;page=0;findings(source).catch(e=>message(e.message,true));};label.append(select);return label;}
 async function findings(source){
- const result=await request(`/api/findings?source=${source}&page=${page}&archived=${showArchived}${source==='backtest'?`&sort=${backtestSort.key}&order=${backtestSort.order}`:''}`);content.replaceChildren(node('h2',source==='live'?'Signal workspace':'Historical research'));
+ if(strategyViews[source]==='momentum')return momentumFindings(source);
+ const result=await request(`/api/findings?source=${source}&page=${page}&archived=${showArchived}${source==='backtest'?`&sort=${backtestSort.key}&order=${backtestSort.order}`:''}`);if(strategyViews[source]!=='rsi')return;content.replaceChildren(node('h2',source==='live'?'Signal workspace':'Historical research'));
+ content.append(strategySelector(source));
  if(source==='live'){const label=node('label','Show archived'),check=node('input');check.type='checkbox';check.checked=showArchived;check.onchange=()=>{showArchived=check.checked;page=0;findings(source).catch(e=>message(e.message,true));};label.prepend(check);content.append(label);}
  const metrics=node('div');metrics.className='metrics';for(const [label,value] of [['Findings on this page',result.findings.length],['Markets covered',(result.summary||[]).length],['Needs attention',(result.summary||[]).filter(r=>/unavailable|insufficient|partial/.test(r.status)).length]]){const card=node('div');card.append(node('span',label),node('strong',value));metrics.append(card);}content.append(metrics);
  if(source==='backtest')content.append(button('Configure & re-run backtests',configureBacktest));
@@ -174,3 +178,33 @@ async function requestCatchup(){try{const result=await request('/api/catchup',{a
 async function loadUpdateControls(actions){try{const value=await request('/api/updates');if(!value.supported)return;const label=node('span',`Windows app ${value.version} · hourly updates enabled`);actions.append(label,button('Check for updates',async()=>{try{const result=await request('/api/updates',{action:'check'});message(result.message||'Checking for updates…');}catch(e){message(e.message,true);}}));}catch{}}
 
 async function watchCatchup(id,attempt=0){if(attempt>60)return;setTimeout(async()=>{try{const value=await request('/api/catchup');if(value.id!==id)return;if(value.status==='completed'||value.status==='failed')message(`Catch-up ${value.status}: ${value.findings||0} new findings, ${value.unavailable||0} unavailable histories. ${value.reason||''}`,value.status==='failed');else watchCatchup(id,attempt+1);}catch{}},10000);}
+
+async function momentumFindings(source){
+ content.replaceChildren(node('h2','Loading momentum…'),strategySelector(source));
+ const data=await request('/api/momentum?source='+source);if(strategyViews[source]!=='momentum')return;
+ content.replaceChildren(node('h2',source==='live'?'Daily momentum signals':'Momentum backtests'),strategySelector(source));
+ content.append(node('p',data.note||''));
+ const latest=data.latest;
+ if(source==='live'&&latest){
+  content.append(node('p',`Scan: ${displayTime(latest.scanned_at)} · ${latest.status} · ${latest.version}`));
+  content.append(table(['Market','Daily result','Qualified candidates'],(latest.results||[]).map(r=>[r.market,r.status,r.candidates])));
+  if(Date.now()-latest.scanned_at>36*3600000)content.append(node('p','Scan is stale. Check the local worker and cloud sync.'));
+ }
+ if(source==='backtest'){
+  const m=data.metrics||{};
+  content.append(node('p',`${m.candidates??0} candidates · ${m.closed_trades??0} closed trades · win rate ${m.win_rate_pct==null?'—':m.win_rate_pct.toFixed(1)+'%'} · average net return ${m.average_net_pct==null?'—':m.average_net_pct.toFixed(2)+'%'}`));
+  if(data.generated_at)content.append(node('p','Last replay: '+displayTime(data.generated_at)));
+  content.append(node('p','Momentum backtests refresh from daily scan history. The RSI replay controls apply to the RSI view.'));
+ }
+ const signals=data.signals||[],market=node('select');market.setAttribute('aria-label','Momentum market');
+ for(const [key,name] of [['all','Stocks and crypto'],['stock','US stocks'],['crypto','Crypto']]){const o=node('option',name);o.value=key;market.append(o);}
+ const panel=node('section');content.append(market,panel);
+ const price=v=>Number(v.toPrecision(7));
+ function render(){panel.replaceChildren(table(['Market / asset','Direction / confirmation','Entry range','Stop / target','Evidence','Outcome'],signals.filter(s=>market.value==='all'||s.market===market.value).map(s=>{
+  const f=s.outcome||{},out=node('div');out.append(node('strong',f.status||'Awaiting evaluation'));if(f.net_pct!=null)out.append(node('p',`Net ${f.net_pct.toFixed(2)}%`));
+  const entry=node('div');entry.append(node('strong',`${price(s.entry_min)} – ${price(s.entry_max)}`),node('small','Next session open only; skip outside range or below 1.5 reward/risk.'));if(s.entry_open_at)entry.append(node('small','Entry session: '+displayTime(s.entry_open_at)+' · expires '+displayTime(s.expires_at)));
+  return [s.market+' · '+s.symbol,s.direction.toUpperCase()+' · '+displayTime(s.confirmed_at),entry,`${price(s.stop)} / ${price(s.target)}`,`ROC ${s.roc_pct.toFixed(2)}% · efficiency ${s.efficiency.toFixed(2)} · extension ${s.extension_atr.toFixed(2)} ATR · ${s.version}`,out];
+ })));if(!signals.length)panel.append(node('p','No momentum signals available. Review the daily result and coverage.'));}
+ market.onchange=render;render();
+ if(source==='live'&&latest){const details=node('details');details.append(node('summary','Momentum scan coverage'),table(['Market','Asset','Status','Details'],latest.coverage.map(r=>[r.market,r.symbol||'Broad universe',r.status,r.reason||(r.eligible!=null?`${r.eligible} eligible histories`:r.candles?`${r.candles} closed daily candles`:'')])));content.append(details);}
+}

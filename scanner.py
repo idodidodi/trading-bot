@@ -267,7 +267,7 @@ def provider_error(code):
     }.get(code, 'Provider rejected request; check symbol, entitlement, quota, and API key')
 
 
-def scan_once(store, config, rules, now=None, stop=None, catchup=False):
+def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_momentum=False):
     from managed_assets import effective, cache_candles, for_timeframe
     from kraken_feed import fetch_kraken
     from oanda_feed import fetch_oanda
@@ -279,6 +279,13 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False):
     config, stock_selection = resolve_weekly_stocks(store, config, rules, now)
     from daily_universe import resolve
     config, selection = resolve(store, config, now)
+    # Independent daily strategy: RSI rules and alert state remain separate.
+    from momentum import scan as scan_momentum
+    if run_momentum:
+        try:
+            scan_momentum(store, config, now, stop=stop)
+        except Exception:
+            store.log('Momentum scan failed', 'Daily strategy unavailable; check provider access and diagnostics')
     if catchup:
         # Recover the last monitored rotating feeds as well as today's picks.
         # Offline days have no recorded selection; never invent those picks.
@@ -460,7 +467,7 @@ def scanner_worker(store, config, rules, stop):
                 progress.update(phase='scanning', next_scan_at=None)
                 db.execute('UPDATE scanner_status SET payload=? WHERE id=1', (json.dumps(progress),))
         command=command or claim(store)
-        coverage = scan_once(store, config, rules, stop=stop,catchup=command or False)
+        coverage = scan_once(store, config, rules, stop=stop,catchup=command or False,run_momentum=True)
         if command and not stop.is_set():
             finish(store,command,coverage,sum(r.get('new_signals',0) for r in coverage))
             command=None
@@ -469,6 +476,8 @@ def scanner_worker(store, config, rules, stop):
         from managed_assets import effective
         current, _ = effective(store, config)
         delay = max(30, current.get('poll_seconds', 300))
+        from momentum import seconds_to_scan
+        delay = min(delay, seconds_to_scan(store))
         closes = [r['next_close_at'] / 1000 for r in (coverage or []) if r.get('next_close_at')]
         if closes:
             delay = min(delay, max(30, min(closes) + 15 - time.time()))

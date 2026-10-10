@@ -77,3 +77,7 @@ Validation: `python3 -m unittest test_finding_followup`, `node cloud/test_follow
 ## Close-based divergence deployment (8 October 2026)
 
 `backtests` version 3 is deployed and ACTIVE. Its downloaded source matches `cloud/functions/backtests` exactly; unauthenticated invocation returns 401. New replay uses close-price pivots and retains wick Bollinger touches. `close-divergence.sql` was applied to update the strategy description without replacing sharing, signal-action, or follow-up dispatchers. Use this targeted migration for existing installations instead of rerunning `backtests.sql`. The local scanner was restarted and its health endpoint confirms close-based rules. Saved historical findings retain their original evidence until a new replay is requested.
+
+## Momentum daily strategy (10 October 2026)
+
+Apply `momentum.sql` after the currently installed dispatcher migrations and publish the updated static UI. The migration reads dedicated `momentum-live` and `momentum-backtest` summary records through the existing authorized dispatcher. Restart the local worker to activate daily scans and priority summary sync. The migration was applied to the existing hosted Supabase installation on 10 October 2026 and its installation query returned true. Scratch PostgreSQL tests verified owner reads, rejection of unauthorised reads and invalid sources, and idempotent application. Momentum views default separately to RSI; momentum does not enter RSI signal or replay tables. See `../MOMENTUM.md` for rules and evaluation limitations.
