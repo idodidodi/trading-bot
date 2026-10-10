@@ -12,6 +12,8 @@ RULES = dict(fast=20, slow=50, breakout=20, roc=10, min_roc_pct=2,
              min_efficiency=.35, max_extension_atr=2, entry_tolerance_atr=.5,
              stop_atr=1.5, target_r=2, max_hold=10, cost_bps=10)
 MIN_HISTORY = 80
+from stock_policy import MIN_PRICE, scan_day
+RULES['min_stock_price'] = MIN_PRICE
 VERSION += '-' + hashlib.sha256(json.dumps(RULES,sort_keys=True).encode()).hexdigest()[:8]
 
 
@@ -38,6 +40,7 @@ def candidate(bars, symbol, market, index=None, indicators=None):
     if i<MIN_HISTORY-1:return None
     fast,slow,atr=indicators or features(bars)
     b,previous=bars[i],bars[i-1]; a=atr[i]
+    if market=='stock' and b.close<MIN_PRICE:return None
     if not a or a<=0:return None
     roc=(b.close/bars[i-10].close-1)*100
     travel=sum(abs(bars[k].close-bars[k-1].close) for k in range(i-9,i+1))
@@ -175,31 +178,36 @@ def scan(store, config, now=None, stop=None, force=False):
     with store.connect() as db:
         initialize(db)
         prior=db.execute('SELECT payload FROM momentum_runs WHERE day=?',(day,)).fetchone()
+    prior=json.loads(prior[0]) if prior else None
     if prior and not force:
-        prior=json.loads(prior[0])
         if not prior.get('retryable',prior['status']!='completed') or now-prior['scanned_at']<3600000:return prior
     histories={};coverage=[]
-    prior=json.loads(prior[0]) if prior else None
-    try:
-        from weekly_stock_screen import universe
-        from alpaca_feed import fetch_alpaca_multi
-        from market_calendar import stock_trading_day, stock_close
-        sp400,sp500=universe();symbols=sorted(set(sp400)|set(sp500))
-        excluded={a.get('symbol',a['id']) for a in config['assets'] if a.get('enabled') is False}
-        symbols=[s for s in symbols if s not in excluded]
-        stock_bars=fetch_alpaca_multi(symbols,'daily',end=now,lookback_days=400)
-        # Expected last US regular session, including holidays and early closes.
-        ny=datetime.fromtimestamp(now/1000,ZoneInfo('America/New_York'));expected=ny.date()
-        while not stock_trading_day(expected) or stock_close(expected).timestamp()*1000>now-16*60000:
-            expected-=timedelta(days=1)
-        for symbol in symbols:
-            bars=check_candles(stock_bars.get(symbol,[]),now)
-            if len(bars)<MIN_HISTORY or bars[-1].end<int(stock_close(expected).timestamp()*1000):
-                coverage.append(dict(market='stock',symbol=symbol,status='unavailable',reason='Insufficient or stale daily history'));continue
-            histories[('stock',symbol)]=bars
-        coverage.append(dict(market='stock',status='scanned',symbols=len(stock_bars),eligible=sum(k[0]=='stock' for k in histories)))
-    except Exception:
-        coverage.append(dict(market='stock',status='unavailable',reason='US daily scan failed; check Alpaca credentials and feed entitlement'))
+    stock_enabled=scan_day(now)
+    if stock_enabled:
+        try:
+            from weekly_stock_screen import universe
+            from alpaca_feed import fetch_alpaca_multi
+            from market_calendar import stock_trading_day, stock_close
+            sp400,sp500=universe();symbols=sorted(set(sp400)|set(sp500))
+            excluded={a.get('symbol',a['id']) for a in config['assets'] if a.get('enabled') is False}
+            symbols=[s for s in symbols if s not in excluded]
+            stock_bars=fetch_alpaca_multi(symbols,'daily',end=now,lookback_days=400)
+            # Expected last US regular session, including holidays and early closes.
+            ny=datetime.fromtimestamp(now/1000,ZoneInfo('America/New_York'));expected=ny.date()
+            while not stock_trading_day(expected) or stock_close(expected).timestamp()*1000>now-16*60000:
+                expected-=timedelta(days=1)
+            for symbol in symbols:
+                bars=check_candles(stock_bars.get(symbol,[]),now)
+                if len(bars)<MIN_HISTORY or bars[-1].end<int(stock_close(expected).timestamp()*1000):
+                    coverage.append(dict(market='stock',symbol=symbol,status='unavailable',reason='Insufficient or stale daily history'));continue
+                if bars[-1].close<MIN_PRICE:
+                    coverage.append(dict(market='stock',symbol=symbol,status='excluded',reason='Stock below $5 minimum'));continue
+                histories[('stock',symbol)]=bars
+            coverage.append(dict(market='stock',status='scanned',symbols=len(stock_bars),eligible=sum(k[0]=='stock' for k in histories)))
+        except Exception:
+            coverage.append(dict(market='stock',status='unavailable',reason='US daily scan failed; check Alpaca credentials and feed entitlement'))
+    else:
+        coverage.append(dict(market='stock',status='weekday only',reason='Stock scans run Monday–Friday on the Israel schedule'))
     from managed_assets import for_timeframe
     crypto={a.get('symbol',a['id']):a for a in config['assets'] if a.get('enabled',True) and a.get('market')=='crypto'}
     # Keep tracking issued trades after a rotating crypto leaves today's universe.
@@ -242,11 +250,16 @@ def scan(store, config, now=None, stop=None, force=False):
         # A retry can fill a missing market but never rewrite an already issued pick.
         issued=prior.get('picks',{}).get(market) if prior else None
         picks[market]=issued or (None if repeated else pick|dict(published_at=now)|entry_session(market,now) if pick else None)
-        results.append(dict(market=market,status='signal' if picks[market] else 'already published' if repeated else 'no qualifying setup' if any(k[0]==market for k in histories) else 'unavailable',candidates=len(candidates)))
+        results.append(dict(market=market,status='signal' if picks[market] else 'already published' if repeated else 'no qualifying setup' if any(k[0]==market for k in histories) else 'weekday only' if market=='stock' and not stock_enabled else 'no eligible stocks' if market=='stock' and any(c['market']=='stock' and c['status']=='scanned' for c in coverage) else 'unavailable',candidates=len(candidates)))
     payload=dict(strategy='momentum',version=VERSION,day=day,scanned_at=now,picks=picks,results=results,coverage=coverage,
                  status='partial' if not crypto or any(c['status']=='unavailable' for c in coverage) else 'completed')
     payload['retryable']=not crypto or any(c['status']=='unavailable' and (c['market']=='crypto' or 'symbol' not in c) for c in coverage)
-    report=replay(histories)
+    replay_histories=dict(histories)
+    if not stock_enabled:
+        with store.connect() as db:
+            for symbol,raw in db.execute("SELECT symbol,payload FROM momentum_history WHERE market='stock'"):
+                replay_histories[('stock',symbol)]=[Candle(**b) for b in json.loads(raw)]
+    report=replay(replay_histories)
     with store.connect() as db:
         for (market,symbol),bars in histories.items():
             db.execute('INSERT OR REPLACE INTO momentum_history VALUES(?,?,?)',(market,symbol,json.dumps([vars(b) for b in bars])))

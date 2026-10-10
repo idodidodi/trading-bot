@@ -103,6 +103,9 @@ def plan(signal, account, asset, quote, now):
     timestamp=int(datetime.fromisoformat(quote['t'].replace('Z','+00:00')).timestamp()*1000)
     if not 0<=now-timestamp<=60_000:raise ValueError('Fresh execution quote unavailable')
     bid,ask=float(quote['bp']),float(quote['ap'])
+    from stock_policy import MIN_PRICE
+    if signal['market']=='stock' and (min(bid,ask,signal['entry_min'])<MIN_PRICE):
+        raise ValueError('Stock below $5 minimum; paper entry excluded')
     if not 0<bid<=ask or (ask/bid-1)>.01:raise ValueError('Invalid or excessive quote spread')
     price=ask if signal['direction']=='buy' else bid
     if not signal['entry_min']<=price<=signal['entry_max']:raise ValueError('Opening quote outside entry range')

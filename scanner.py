@@ -322,6 +322,11 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
             provider = asset['provider']
             row = dict(asset=asset['id'], timeframe=timeframe, provider=provider,
                        exchange=asset.get('exchange', ''), symbol=asset.get('symbol', asset['id']))
+            from market_calendar import is_stock
+            from stock_policy import scan_day, next_scan, MIN_PRICE
+            if is_stock(asset) and not scan_day(now):
+                coverage.append(row|dict(status='weekday only',reason='Stock scans paused Saturday/Sunday',checked_at=now,next_close_at=next_scan(now)))
+                continue
             from scan_schedule import identity, saved, save, next_due, provider_lag
             schedule_key=identity(asset,timeframe,rules)
             previous=saved(store,schedule_key,now)
@@ -369,7 +374,9 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     row['next_close_at'] = candles[-1].end + ((now - candles[-1].end) // period + 1) * period
                 cache_candles(store, asset, timeframe, candles)
                 if candles:row['last_closed_at']=candles[-1].end
-                if len(candles) < minimum_history(rules):
+                if is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
+                    row.update(status='excluded',candles=len(candles),reason='Stock below $5 minimum; no signals generated')
+                elif len(candles) < minimum_history(rules):
                     row.update(status='insufficient history', candles=len(candles),
                                reason=f'Only {len(candles)} closed candles available; '
                                       f'need {minimum_history(rules)} for this strategy. '

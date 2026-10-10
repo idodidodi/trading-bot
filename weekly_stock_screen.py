@@ -53,6 +53,9 @@ def resolve(store, config, rules, now):
     policy=config.get('weekly_stock_screen', {})
     if not policy.get('enabled'):
         return config, None
+    from stock_policy import scan_day,MIN_PRICE
+    if not scan_day(now):
+        return config,dict(status='weekday only',reason='Stock screening paused Saturday/Sunday')
     day, starts_at=local_day(policy, now)
     week_start_at, week=week_start(policy, day)
     with store.connect() as db:
@@ -63,6 +66,7 @@ def resolve(store, config, rules, now):
     permanent={a.get('symbol',a['id']).upper() for a in config['assets'] if a.get('market') not in ('forex','crypto','futures')}
     policy_stamp={key:policy.get(key) for key in ('count','lookback_weeks','source')}
     policy_stamp['excluded_portfolio']=sorted(permanent)
+    policy_stamp['min_stock_price']=MIN_PRICE
     if selection and selection.get('policy')!=policy_stamp:
         selection=None
     if selection:
@@ -88,13 +92,13 @@ def resolve(store, config, rules, now):
             histories=cached_snapshot(store,pool,now)
             upper=[];lower=[]
             for symbol,candles in histories.items():
-                if symbol in seen or len(candles)<rules['bb_period']:
+                if symbol in seen or len(candles)<rules['bb_period'] or candles[-1].close<MIN_PRICE:
                     continue
                 _,lo,up=indicators(candles,rules)
                 lookback=min(policy.get('lookback_weeks',5),len(candles))
                 for i in range(len(candles)-lookback,len(candles)):
                     candle=candles[i];low_band,upper_band=lo[i],up[i]
-                    if low_band is None or upper_band is None or candle.close<=0:
+                    if low_band is None or upper_band is None or candle.close<MIN_PRICE:
                         continue
                     if candle.high>=upper_band:
                         upper.append(dict(symbol=symbol,close=candle.close,band=upper_band,
