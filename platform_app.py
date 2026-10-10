@@ -479,6 +479,9 @@ def main():
     from cloud_sync import worker as sync_worker
     sync_thread = threading.Thread(target=sync_worker, args=(store, stop), daemon=True)
     sync_thread.start()
+    from paper_trading import worker as paper_worker
+    paper_thread = threading.Thread(target=paper_worker, args=(store, stop), daemon=True)
+    paper_thread.start()
     host = os.environ.get('HOST', '127.0.0.1')
     scanner_thread = None
     if not legacy_webhook:
@@ -516,6 +519,7 @@ def main():
         stop.set()
         worker.join(timeout=20)
         sync_thread.join(timeout=12)
+        paper_thread.join(timeout=16)
         if scanner_thread:
             scanner_thread.join(timeout=21)
 

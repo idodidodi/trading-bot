@@ -278,7 +278,10 @@ def view(store, source='live', limit=30):
                     s=s|entry_session(s['market'],s['published_at'])
                 bars=[Candle(**b) for b in histories.get((s['market'],s['symbol']),[])]
                 signals.append(s|dict(outcome=outcome(s,bars),published_day=row['day']))
-    return dict(latest=latest,signals=signals,note='At most one new stock and one crypto candidate per daily scan. No qualifying setup and unavailable coverage are reported explicitly. Entry expires after the next session; shown levels are research candidates.')
+    from paper_trading import view as paper_view, identity as paper_identity
+    paper=paper_view(store);executions={r['id']:r for r in paper['trades']}
+    for s in signals:s['paper']=executions.get(paper_identity(s))
+    return dict(latest=latest,signals=signals,paper=paper,note='At most one new stock and one crypto candidate per daily scan. No qualifying setup and unavailable coverage are reported explicitly. Entry expires after the next session; shown levels are research candidates.')
 
 
 if __name__=='__main__':

@@ -184,6 +184,7 @@ async function momentumFindings(source){
  const data=await request('/api/momentum?source='+source);if(strategyViews[source]!=='momentum')return;
  content.replaceChildren(node('h2',source==='live'?'Daily momentum signals':'Momentum backtests'),strategySelector(source));
  content.append(node('p',data.note||''));
+ if(source==='live'&&data.paper){const p=data.paper,st=p.status||{};content.append(node('p',`Paper trading: ${p.enabled?'enabled':'disabled'} · ${p.broker} · ${p.risk_pct}% risk · $${p.max_notional.toLocaleString()} position cap · equity ${st.equity==null?'—':'$'+st.equity.toLocaleString()} · checked ${st.checked_at?displayTime(st.checked_at):'pending'}`));}
  const latest=data.latest;
  if(source==='live'&&latest){
   content.append(node('p',`Scan: ${displayTime(latest.scanned_at)} · ${latest.status} · ${latest.version}`));
@@ -202,6 +203,7 @@ async function momentumFindings(source){
  const price=v=>Number(v.toPrecision(7));
  function render(){panel.replaceChildren(table(['Market / asset','Direction / confirmation','Entry range','Stop / target','Evidence','Outcome'],signals.filter(s=>market.value==='all'||s.market===market.value).map(s=>{
   const f=s.outcome||{},out=node('div');out.append(node('strong',f.status||'Awaiting evaluation'));if(f.net_pct!=null)out.append(node('p',`Net ${f.net_pct.toFixed(2)}%`));
+  if(s.paper){const p=s.paper;out.append(node('p','Alpaca paper: '+p.state));if(p.reason)out.append(node('small',p.reason));if(p.gross_return_pct!=null)out.append(node('small',`Paper gross ${p.gross_return_pct.toFixed(2)}% · P/L $${p.gross_pnl.toFixed(2)} before fees`));if(p.order?.filled_avg_price)out.append(node('small',`Filled ${p.order.filled_qty} at ${p.order.filled_avg_price}`));if(p.sizing)out.append(node('small',`Planned risk $${p.sizing.risk_dollars.toFixed(2)} · value $${p.sizing.notional.toFixed(2)}`));}
   const entry=node('div');entry.append(node('strong',`${price(s.entry_min)} – ${price(s.entry_max)}`),node('small','Next session open only; skip outside range or below 1.5 reward/risk.'));if(s.entry_open_at)entry.append(node('small','Entry session: '+displayTime(s.entry_open_at)+' · expires '+displayTime(s.expires_at)));
   return [s.market+' · '+s.symbol,s.direction.toUpperCase()+' · '+displayTime(s.confirmed_at),entry,`${price(s.stop)} / ${price(s.target)}`,`ROC ${s.roc_pct.toFixed(2)}% · efficiency ${s.efficiency.toFixed(2)} · extension ${s.extension_atr.toFixed(2)} ATR · ${s.version}`,out];
  })));if(!signals.length)panel.append(node('p','No momentum signals available. Review the daily result and coverage.'));}

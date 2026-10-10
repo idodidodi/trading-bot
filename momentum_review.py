@@ -19,10 +19,15 @@ def metrics(signals):
 
 def review(store):
     live=view(store,limit=None);backtest=view(store,'backtest')
-    report=dict(reviewed_at=int(time.time()*1000),version=VERSION,
+    from paper_trading import view as paper_view
+    paper=paper_view(store)
+    report=dict(paper_execution=paper,reviewed_at=int(time.time()*1000),version=VERSION,
                 live={},by_version={},replay=backtest.get('metrics',{}),coverage=live.get('latest',{}),
                 decision='Retain current rules until sufficient forward results and independent holdout evidence support a change.',
                 improvement_policy='Review failures and entry gaps first. Propose small changes on a training window, validate on a later untouched time window with costs, compare by market and version. At least 30 completed forward trades per market before tuning from live outcomes. Three days alone cannot establish a statistical edge. Never rewrite issued signal rules or levels. Version and test accepted changes.')
+    report['paper_return_note']='Actual paper fills; gross returns exclude fees. Separate from daily candle simulation and backtests.'
+    report['paper_returns']={m:{'closed_fills':len(v),'average_gross_pct':sum(v)/len(v) if v else None} for m in ('stock','crypto') for v in [[r['gross_return_pct'] for r in paper['trades'] if r['signal']['market']==m and 'gross_return_pct' in r]]}
+    report['paper_by_market']={m:{state:sum(r['signal']['market']==m and r['state']==state for r in paper['trades']) for state in sorted({r['state'] for r in paper['trades']})} for m in ('stock','crypto')}
     for market in ('stock','crypto'):
         signals=[s for s in live['signals'] if s['market']==market]
         report['live'][market]=metrics(signals)
