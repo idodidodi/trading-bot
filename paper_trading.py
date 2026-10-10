@@ -328,10 +328,30 @@ def cycle(store):
             else:fcntl.flock(handle.fileno(),fcntl.LOCK_UN)
 
 
+def check_and_log(store):
+    started=int(time.time()*1000)
+    try:
+        result=cycle(store)
+    except Exception as exc:
+        store.log('Paper trading check failed',str(exc) if isinstance(exc,(ValueError,BrokerError)) else type(exc).__name__)
+        return None
+    status=result.get('status',{})
+    # A disabled executor or busy lock can return cached state, not a successful check.
+    if result.get('enabled') and status.get('checked_at',0)>=started:
+        with store.connect() as db:
+            exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='activity_log'").fetchone()
+            last=db.execute("SELECT id,event,occurred FROM activity_log WHERE event IN ('Paper trading check failed','Paper trading connection recovered') ORDER BY id DESC LIMIT 1").fetchone() if exists else None
+            if last and last[1]=='Paper trading check failed':
+                failed=datetime.fromtimestamp(last[2],ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y, %H:%M:%S')
+                details=f'Alpaca paper check succeeded; account {status.get("account_status","unknown")}. Previous failure: {failed} Israel time.'
+                # Persist resolution once; it survives restarts and is mirrored to the Logs UI.
+                db.execute("INSERT INTO activity_log(occurred,event,details) SELECT ?,?,? WHERE (SELECT id FROM activity_log WHERE event IN ('Paper trading check failed','Paper trading connection recovered') ORDER BY id DESC LIMIT 1)=?",(time.time(),'Paper trading connection recovered',details,last[0]))
+    return result
+
+
 def worker(store, stop):
     while not stop.is_set():
-        try:cycle(store)
-        except Exception as exc:store.log('Paper trading check failed',str(exc) if isinstance(exc,(ValueError,BrokerError)) else type(exc).__name__)
+        check_and_log(store)
         stop.wait(15)
 
 

@@ -104,6 +104,31 @@ class PaperTests(unittest.TestCase):
         self.broker.positions=[dict(symbol='PCTY',qty='-2',asset_class='us_equity')]
         rows=self.run_tick(NOW+15000);self.assertEqual(self.broker.post_count,1)
         self.assertIn('direction changed',rows[0]['reason'])
+    def test_recovery_logged_once_after_failure_and_success(self):
+        success=dict(enabled=True,status=dict(checked_at=1000,account_status='ACTIVE'))
+        with patch('paper_trading.time.time',return_value=1),patch('paper_trading.cycle',side_effect=[TimeoutError(),success,success]):
+            p.check_and_log(self.store);p.check_and_log(self.store);p.check_and_log(self.store)
+        with self.store.connect() as db:
+            rows=db.execute("SELECT event,details FROM activity_log ORDER BY id").fetchall()
+        self.assertEqual([r[0] for r in rows],['Paper trading check failed','Paper trading connection recovered'])
+        self.assertIn('account ACTIVE',rows[1][1]);self.assertIn('Previous failure:',rows[1][1])
+    def test_healthy_check_does_not_spam_recovery_logs(self):
+        with patch('paper_trading.time.time',return_value=1),patch('paper_trading.cycle',return_value=dict(enabled=True,status=dict(checked_at=1000))):
+            p.check_and_log(self.store)
+        with self.store.connect() as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='activity_log'").fetchone())
+    def test_cached_or_disabled_check_does_not_resolve_failure(self):
+        self.store.log('Paper trading check failed','URLError')
+        for result in [dict(enabled=True,status=dict(checked_at=999)),dict(enabled=False,status=dict(checked_at=1000))]:
+            with patch('paper_trading.time.time',return_value=1),patch('paper_trading.cycle',return_value=result):p.check_and_log(self.store)
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM activity_log').fetchone()[0],1)
+    def test_recovery_detects_failure_persisted_before_restart(self):
+        self.store.log('Paper trading check failed','URLError')
+        restarted=Store(self.store.path)
+        with patch('paper_trading.time.time',return_value=1),patch('paper_trading.cycle',return_value=dict(enabled=True,status=dict(checked_at=1000))):p.check_and_log(restarted)
+        with restarted.connect() as db:
+            self.assertEqual(db.execute('SELECT event FROM activity_log ORDER BY id DESC LIMIT 1').fetchone()[0],'Paper trading connection recovered')
     def test_paper_host_cannot_be_overridden(self):
         import io
         class Response:
