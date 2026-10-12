@@ -110,7 +110,7 @@ class WindowsUpdateTests(unittest.TestCase):
         class Response(io.BytesIO):
             def __enter__(self):return self
             def __exit__(self,*args):self.close()
-        with tempfile.TemporaryDirectory() as root,patch('windows_update.get_json',return_value=dict(version='1.1.0',size=4,sha256='0'*64)),patch('windows_update.urllib.request.urlopen',return_value=Response(b'MZxx')):
+        with tempfile.TemporaryDirectory() as root,patch('windows_update.sys.platform','win32'),patch('windows_update.get_json',return_value=dict(version='1.1.0',size=4,sha256='0'*64)),patch('windows_update.urllib.request.urlopen',return_value=Response(b'MZxx')):
             with self.assertRaisesRegex(ValueError,'checksum'):u.download_release(Path(root),release)
             self.assertFalse((Path(root)/'FamilyTradingBot.new.exe').exists())
 

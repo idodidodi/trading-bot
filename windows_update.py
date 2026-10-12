@@ -19,15 +19,18 @@ _state={'version':VERSION,'phase':'idle','message':'Hourly update checks enabled
 
 
 def supported():
+    if sys.platform=='linux':
+        from linux_update import supported as linux_supported
+        return linux_supported()
     return sys.platform=='win32' and bool(getattr(sys,'frozen',False))
 
 
 def status():
-    with _lock:return dict(_state,supported=supported())
+    with _lock:return dict(_state,supported=supported(),platform='Linux' if sys.platform=='linux' else 'Windows')
 
 
 def request_check():
-    if not supported():raise ValueError('Automatic installation is available in the standalone Windows app')
+    if not supported():raise ValueError('Automatic installation is available in the standalone Windows or Linux app')
     _wake.set()
     return dict(message='Checking for updates…')
 
@@ -53,6 +56,9 @@ def get_json(url):
 
 
 def download_release(root,release):
+    if sys.platform=='linux':
+        from linux_update import download_release as linux_download
+        return linux_download(root,release)
     tag=release['tag_name']
     target_version=version_parts(tag)
     if target_version<=version_parts(VERSION):return None
@@ -115,6 +121,9 @@ try {
 
 
 def install(staged,shutdown):
+    if sys.platform=='linux':
+        from linux_update import install as linux_install
+        return linux_install(staged,shutdown)
     script=staged.parent/'install-update.ps1'
     script.write_text(INSTALLER)
     digest=hashlib.sha256(staged.read_bytes()).hexdigest()
@@ -127,7 +136,10 @@ def install(staged,shutdown):
 
 def worker(stop,shutdown):
     if not supported():return
-    root=Path(os.environ['LOCALAPPDATA'])/'FamilyTradingBot'/'updates'
+    if sys.platform=='linux':
+        from linux_launcher import app_root
+        root=app_root()/'updates'
+    else:root=Path(os.environ['LOCALAPPDATA'])/'FamilyTradingBot'/'updates'
     while not stop.is_set():
         try:
             with _lock:_state.update(phase='checking',message='Checking for updates…')
@@ -138,7 +150,7 @@ def worker(stop,shutdown):
                 with _lock:_state.update(phase='installing',message='Update verified. Installing and restarting…')
                 install(staged,shutdown)
                 return
-            with _lock:_state.update(phase='idle',message='The Windows app is up to date.')
+            with _lock:_state.update(phase='idle',message='The standalone app is up to date.')
         except Exception:
             with _lock:_state.update(phase='error',message='Update check failed. The installed app continues running; retry with Check for updates.')
         _wake.wait(3600)

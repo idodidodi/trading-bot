@@ -1,0 +1,46 @@
+name: Linux standalone release
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install runtime and build dependencies
+        run: python3 -m pip install -r windows-build-requirements.txt
+      - name: Verify scanner and updater
+        run: |
+          python3 -m unittest discover -q
+          expected_tag="v$(python3 -c 'from app_version import VERSION; print(VERSION)')"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$expected_tag" ]; then
+            echo 'Release tag does not match application version' >&2
+            exit 1
+          fi
+      - name: Build standalone executable
+        run: bash scripts/build-linux.sh
+      - name: Smoke-test frozen app and persistent settings
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/family-bot-smoke
+          PORT: '18080'
+        run: |
+          unset DISPLAY WAYLAND_DISPLAY
+          mkdir -p "$XDG_DATA_HOME"
+          ./dist/FamilyTradingBot-linux-x86_64 > "$RUNNER_TEMP/family-bot.log" 2>&1
+          python3 scripts/smoke-linux.py
+      - name: Publish Linux assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python3 -c 'from app_version import VERSION; print(VERSION)')
+          tag="v$version"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "Family Trading Bot $version" --notes 'Standalone Family Trading Bot release with persistent per-user data and hourly updates.'
+          fi
+          gh release upload "$tag" dist/FamilyTradingBot-linux-x86_64 dist/linux-x86_64-update.json --clobber
