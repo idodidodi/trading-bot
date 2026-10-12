@@ -246,6 +246,19 @@ async function csvBacktestFindings(strategy=null,supplied=null){
  strategyViews.backtest=report.strategy==='pin-bars'?'pin-bars':'rsi';
  content.append(node('h3',`${report.symbol} · ${report.timeframe} · ${report.strategy}`),node('p',`${displayTime(report.start_at)} → ${displayTime(report.end_at)} · ${report.candles} completed candles · ${report.signal_count} signals · ${report.excluded_open_candles} unfinished candles excluded`),node('p',`Initial ${report.warmup_candles} candles provide indicator warm-up. ${report.limited_history?'Limited history. ':''}${report.alignment}.`),node('p',report.note));
  const movement=(s,h)=>{const f=s.forward?.[h];return f?.status==='complete'?`${f.directional_close_pct.toFixed(2)}% direction-adjusted close · favorable ${f.favorable_pct.toFixed(2)}% · adverse ${f.adverse_pct.toFixed(2)}%`:'Incomplete forward history';};
- content.append(table(['Confirmed','Timeframe','Direction','Evidence','Next 5 candles','Next 10 candles'],report.signals.map(s=>[displayTime(s.confirmed_at),s.timeframe||report.timeframe,s.direction.toUpperCase(),s.strategy==='pin-bars'?`EMA ${s.fast_ema.toFixed(4)} / ${s.slow_ema.toFixed(4)} · body ${s.body.toFixed(4)} · wicks ${s.lower_wick.toFixed(4)} / ${s.upper_wick.toFixed(4)}`:`Price ${s.price1} → ${s.price2} · RSI ${s.rsi1.toFixed(2)} → ${s.rsi2.toFixed(2)}`,movement(s,5),movement(s,10)])));
+ content.append(table(['Confirmed','Timeframe','Direction','Candle','Evidence','Next 5 candles','Next 10 candles'],report.signals.map(s=>[displayTime(s.confirmed_at),s.timeframe||report.timeframe,s.direction.toUpperCase(),candleDrawing(s),s.strategy==='pin-bars'?`EMA ${s.fast_ema.toFixed(4)} / ${s.slow_ema.toFixed(4)} · body ${s.body.toFixed(4)} · wicks ${s.lower_wick.toFixed(4)} / ${s.upper_wick.toFixed(4)}`:`Price ${s.price1} → ${s.price2} · RSI ${s.rsi1.toFixed(2)} → ${s.rsi2.toFixed(2)}`,movement(s,5),movement(s,10)])));
  const nav=node('div');if(csvPage>0)nav.append(button('Previous',()=>{csvPage--;csvBacktestFindings().catch(e=>message(e.message,true));}));if(report.has_more)nav.append(button('Next',()=>{csvReportId=report.id;csvPage++;csvBacktestFindings().catch(e=>message(e.message,true));}));content.append(nav);
+}
+
+function candleDrawing(s){
+ const {open,high,low,close}=s;
+ if(![open,high,low,close].every(Number.isFinite)||low>Math.min(open,close)||high<Math.max(open,close))return node('small','OHLC unavailable');
+ const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 64 96');svg.setAttribute('width','64');svg.setAttribute('height','96');svg.setAttribute('role','img');svg.setAttribute('aria-label',`Signal candle: open ${open}, high ${high}, low ${low}, close ${close}`);
+ const title=document.createElementNS('http://www.w3.org/2000/svg','title');title.textContent=`Open ${open} · High ${high} · Low ${low} · Close ${close}. Each candle is scaled to its own high–low range.`;svg.append(title);
+ const y=price=>high===low?48:10+76*(high-price)/(high-low),color=close>=open?'#34d399':'#f87171';
+ const shape=(tag,attrs)=>{const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [key,value] of Object.entries(attrs))n.setAttribute(key,String(value));svg.append(n);};
+ shape('line',{x1:32,x2:32,y1:y(high),y2:y(low),stroke:color,'stroke-width':2});
+ if(open===close)shape('line',{x1:22,x2:42,y1:y(open),y2:y(close),stroke:color,'stroke-width':3});
+ else shape('rect',{x:22,y:Math.min(y(open),y(close)),width:20,height:Math.max(1,Math.abs(y(open)-y(close))),fill:color,rx:1});
+ return svg;
 }
