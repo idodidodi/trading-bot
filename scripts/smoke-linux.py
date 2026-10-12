@@ -30,17 +30,21 @@ def stop_app():
         try:binary=(entry/'exe').resolve()
         except OSError:continue
         if binary==root/'bin/FamilyTradingBot':matches.append(int(entry.name))
+    parents={pid:int(next(line for line in Path('/proc',str(pid),'status').read_text().splitlines() if line.startswith('PPid:')).split()[1]) for pid in matches}
+    # Signal only the outer bootloader; it forwards once to the inner app.
     for pid in matches:
+        if parents[pid] in matches:continue
         try:os.kill(pid,signal.SIGTERM)
         except ProcessLookupError:pass
-    for _ in range(30):
+    # The app's bounded worker joins total 69 seconds when requests are in flight.
+    for _ in range(180):
         if not any(Path('/proc',str(pid)).exists() for pid in matches):return
         time.sleep(.5)
     # An orphaned bootloader may become a zombie before the runner reaps it.
     for pid in matches:
         if not Path('/proc',str(pid)).exists():continue
         if Path('/proc',str(pid),'stat').read_text().split(') ')[1].startswith('Z'):continue
-        raise RuntimeError('Frozen app did not stop gracefully')
+        raise RuntimeError('Frozen app did not stop gracefully: '+Path(os.environ['RUNNER_TEMP'],'family-bot.log').read_text())
 
 
 ready()
