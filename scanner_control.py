@@ -52,10 +52,11 @@ def finish(store,key,coverage,new_findings):
         saved=db.execute('SELECT COUNT(*) FROM catchup_findings WHERE command_id=?',(key,)).fetchone()[0]
     new_findings=max(saved,new_findings)
     failures=[r for r in coverage if r['status'] in ('unavailable','insufficient history')]
-    payload=dict(findings=new_findings,checks=sum(not r.get('check_state') for r in coverage),
+    pin_count=sum(r.get('pin_bars',{}).get('new_signals',0) for r in coverage if not r.get('check_state'))
+    payload=dict(pin_bars=pin_count,findings=new_findings,checks=sum(not r.get('check_state') for r in coverage),
                  unavailable=len(failures),completed_at=time.time(),
                  reason='Some histories are unavailable; see coverage and Logs.' if failures else '')
-    text=(f"Catch-up completed\n{new_findings} new divergence findings saved.\n"
+    text=(f"Catch-up completed\n{new_findings} new divergence findings and {pin_count} Pin-Bar signals saved.\n"
           f"{payload['checks']} asset/timeframe checks; {len(failures)} unavailable or insufficient histories.\n"
           'Open Signals and coverage for details. Catch-up is limited to available provider history.')
     with store.connect() as db:

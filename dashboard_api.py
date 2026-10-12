@@ -14,6 +14,18 @@ def ensure(store):
 def read(store, path):
     url=urlsplit(path);query=parse_qs(url.query)
     param=lambda key,default='':query.get(key,[default])[0]
+    if url.path=='/api/csv-backtests':
+        from csv_backtests import view
+        page=int(param('page','0'))
+        if not 0<=page<=10000:raise ValueError('Invalid page')
+        strategy=param('strategy') or None
+        if strategy not in (None,'pin-bars','confirmed','warmup'):raise ValueError('Invalid strategy')
+        return view(store,param('id') or None,page,strategy)
+    if url.path=='/api/pin-bars':
+        from pin_bars import view
+        page = int(param('page','0'))
+        if not 0 <= page <= 10000:raise ValueError('Invalid page')
+        return view(store,page)
     if url.path=='/api/momentum':
         from momentum import view
         source=param('source','live')

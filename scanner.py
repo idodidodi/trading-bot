@@ -269,6 +269,8 @@ def provider_error(code):
 
 def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_momentum=False):
     from managed_assets import effective, cache_candles, for_timeframe
+    import pin_bars
+    pin_rules = pin_bars.load_rules()
     from kraken_feed import fetch_kraken
     from oanda_feed import fetch_oanda
     from tiingo_feed import fetch_tiingo
@@ -328,7 +330,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 coverage.append(row|dict(status='weekday only',reason='Stock scans paused Saturday/Sunday',checked_at=now,next_close_at=next_scan(now)))
                 continue
             from scan_schedule import identity, saved, save, next_due, provider_lag
-            schedule_key=identity(asset,timeframe,rules)
+            schedule_key=identity(asset,timeframe,rules | dict(skill_hash=rules['skill_hash'] + pin_rules['version']))
             previous=saved(store,schedule_key,now)
             if previous:
                 coverage.append(previous)
@@ -374,6 +376,13 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     row['next_close_at'] = candles[-1].end + ((now - candles[-1].end) // period + 1) * period
                 cache_candles(store, asset, timeframe, candles)
                 if candles:row['last_closed_at']=candles[-1].end
+                if is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
+                    row['pin_bars'] = dict(status='excluded', reason='Stock below $5 minimum')
+                else:
+                    selection_start = selection['starts_at'] if asset.get('daily_selected') and selection and not catchup else None
+                    if asset.get('weekly_screen_selected'):
+                        selection_start = asset.get('weekly_screen_since',asset['weekly_screen_week_start'])
+                    row['pin_bars'] = pin_bars.scan(store, asset, timeframe, candles, pin_rules, now, selection_start, catchup=bool(catchup))
                 if is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
                     row.update(status='excluded',candles=len(candles),reason='Stock below $5 minimum; no signals generated')
                 elif len(candles) < minimum_history(rules):

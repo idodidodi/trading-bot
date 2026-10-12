@@ -35,6 +35,7 @@ async function request(path,body){
  if(online)await refreshSession();
  let url=path,headers={},method=body?'POST':'GET';
  if(online){url=config.supabaseUrl+'/rest/v1/rpc/dashboard_api';method='POST';headers={apikey:config.publishableKey,Authorization:'Bearer '+token};body={installation:config.installationId,operation:path,input:body||{}};}
+ if(online&&path==='/api/csv-backtests'&&body.input&&Object.keys(body.input).length){url=config.supabaseUrl+'/functions/v1/csv-backtests';body={installation:config.installationId,input:body.input};}
  if(online&&path==='/api/backtests'&&body.input&&Object.keys(body.input).length){url=config.supabaseUrl+'/functions/v1/backtests';body={installation:config.installationId,input:body.input};}
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
  try{const r=await fetch(url,{method,headers:{...headers,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,signal:controller.signal});const result=await r.json();if(online&&r.status===401){sessionStorage.removeItem('dashboard_token');token=null;$('login').hidden=false;}if(!r.ok||result.error)throw Error(result.error||result.message||'Request failed');return result;}finally{clearTimeout(timer);}
@@ -86,14 +87,15 @@ function selectionTable(headers,rows,ids){const grid=table(headers,rows);for(con
 let page=0,showArchived=false;
 const backtestSort={key:'confirmed_at',order:'asc'};
 const strategyViews={live:'rsi',backtest:'rsi'};
-function strategySelector(source){const label=node('label','Strategy '),select=node('select');select.setAttribute('aria-label','Strategy view');for(const [key,name] of [['rsi','RSI divergence'],['momentum','Daily momentum']]){const option=node('option',name);option.value=key;select.append(option);}select.value=strategyViews[source];select.onchange=()=>{strategyViews[source]=select.value;page=0;findings(source).catch(e=>message(e.message,true));};label.append(select);return label;}
+function strategySelector(source){const label=node('label','Strategy '),select=node('select');select.setAttribute('aria-label','Strategy view');for(const [key,name] of [['rsi','RSI divergence'],['momentum','Daily momentum'],['pin-bars','Pin-Bars']]){const option=node('option',name);option.value=key;select.append(option);}select.value=strategyViews[source];select.onchange=()=>{strategyViews[source]=select.value;page=0;if(source==='backtest'){csvReportId=null;csvPage=0;}findings(source).catch(e=>message(e.message,true));};label.append(select);return label;}
 async function findings(source){
+ if(strategyViews[source]==='pin-bars')return source==='live'?pinBarFindings():csvBacktestFindings('pin-bars');
  if(strategyViews[source]==='momentum')return momentumFindings(source);
  const result=await request(`/api/findings?source=${source}&page=${page}&archived=${showArchived}${source==='backtest'?`&sort=${backtestSort.key}&order=${backtestSort.order}`:''}`);if(strategyViews[source]!=='rsi')return;content.replaceChildren(node('h2',source==='live'?'Signal workspace':'Historical research'));
  content.append(strategySelector(source));
  if(source==='live'){const label=node('label','Show archived'),check=node('input');check.type='checkbox';check.checked=showArchived;check.onchange=()=>{showArchived=check.checked;page=0;findings(source).catch(e=>message(e.message,true));};label.prepend(check);content.append(label);}
  const metrics=node('div');metrics.className='metrics';for(const [label,value] of [['Findings on this page',result.findings.length],['Markets covered',(result.summary||[]).length],['Needs attention',(result.summary||[]).filter(r=>/unavailable|insufficient|partial/.test(r.status)).length]]){const card=node('div');card.append(node('span',label),node('strong',value));metrics.append(card);}content.append(metrics);
- if(source==='backtest')content.append(button('Configure & re-run backtests',configureBacktest));
+ if(source==='backtest')content.append(button('Configure & re-run backtests',configureBacktest),button('Upload CSV & backtest',uploadCSV),button('Uploaded CSV results',()=>csvBacktestFindings()));
  const tabs=node('div');tabs.className='mini-tabs';tabs.setAttribute('role','tablist');const panel=node('section');content.append(tabs,panel);
  function sortableHeader(label,key){
   if(source!=='backtest'||!key)return label;
@@ -209,4 +211,41 @@ async function momentumFindings(source){
  })));if(!signals.length)panel.append(node('p','No momentum signals available. Review the daily result and coverage.'));}
  market.onchange=render;render();
  if(source==='live'&&latest){const details=node('details');details.append(node('summary','Momentum scan coverage'),table(['Market','Asset','Status','Details'],latest.coverage.map(r=>[r.market,r.symbol||'Broad universe',r.status,r.reason||(r.eligible!=null?`${r.eligible} eligible histories`:r.candles?`${r.candles} closed daily candles`:'')])));content.append(details);}
+}
+
+async function pinBarFindings(){
+ content.replaceChildren(node('h2','Loading Pin-Bars…'),strategySelector('live'));
+ const data=await request('/api/pin-bars?page='+page);if(strategyViews.live!=='pin-bars')return;
+ content.replaceChildren(node('h2','Pin-Bars signals'),strategySelector('live'));
+ content.append(node('p',`EMA ${data.rules.fast}/${data.rules.slow} · wick > ${data.rules.ratio} × body · touch either EMA · confirmed at the signal candle close.`));
+ content.append(node('p',data.scanned_at?'Latest scan: '+displayTime(data.scanned_at):'Awaiting the first scan.'));
+ if(online)content.append(node('p',`Hosted results show up to the latest ${data.mirror_limit??500} synced signals.`));
+ const rows=data.signals.map(s=>{const evidence=node('details');evidence.append(node('summary','Candle evidence'),node('p',`OHLC: ${s.open} / ${s.high} / ${s.low} / ${s.close}`),node('p',`Fast EMA: ${s.fast_ema} · slow EMA: ${s.slow_ema} · body: ${s.body} · lower wick: ${s.lower_wick} · upper wick: ${s.upper_wick}`),node('p',`Source: ${s.source} · candle: ${displayTime(s.candle_at)} · ${s.rules.seed}`));return [s.symbol,s.timeframe,s.direction.toUpperCase(),displayTime(s.confirmed_at),evidence];});
+ content.append(table(['Asset','Timeframe','Direction','Confirmed','Evidence'],rows));
+ if(!rows.length)content.append(node('p','No new Pin-Bar signals recorded. The first successful scan establishes a baseline.'));
+ const nav=node('div');if(page>0)nav.append(button('Previous',()=>{page--;pinBarFindings().catch(e=>message(e.message,true));}));if(data.has_more)nav.append(button('Next',()=>{page++;pinBarFindings().catch(e=>message(e.message,true));}));content.append(nav);
+ content.append(node('h3','Pin-Bars coverage'),table(['Asset','Timeframe','Provider','Status','Latest candle','Details'],data.coverage.map(r=>[r.asset,r.timeframe,r.provider,r.check_state||r.status,r.last_closed_at?displayTime(r.last_closed_at):'—',[r.reason||`${r.candles||0} closed candles · ${r.new_signals||0} new signals${r.limited_history?' · limited EMA history':''}`,r.data_notes].filter(Boolean).join(' · ')])));
+}
+
+let csvReportId=null,csvPage=0;
+async function uploadCSV(){
+ const dialog=$('backtest-dialog'),form=$('backtest-form');form.replaceChildren(node('h3','Upload candles & backtest'));
+ const file=node('input');file.type='file';file.accept='.csv,text/csv';file.required=true;file.setAttribute('aria-label','Candle CSV file');
+ const symbol=node('input');symbol.required=true;symbol.placeholder='Exact symbol, e.g. TVC:USOIL';symbol.setAttribute('aria-label','CSV instrument');
+ const frame=node('select');frame.setAttribute('aria-label','CSV timeframe');for(const key of frames){const o=node('option',key);o.value=key;frame.append(o);}frame.value='4h';
+ const strategy=node('select');strategy.setAttribute('aria-label','CSV strategy');for(const [key,label] of [['pin-bars','Pin-Bars'],['confirmed','Confirmed RSI divergence'],['warmup','Warm-up RSI divergence']]){const o=node('option',label);o.value=key;strategy.append(o);}strategy.value=strategyViews.backtest==='pin-bars'?'pin-bars':'confirmed';
+ file.onchange=()=>{const name=file.files?.[0]?.name||'';symbol.value=name.split(',')[0].replace('_',':').replace(/\.csv$/i,'');const match=name.match(/,\s*(60|240|1D|1W|1M|D|W|M)_/i);if(match)frame.value=({60:'1h',240:'4h','1D':'daily',D:'daily','1W':'weekly',W:'weekly','1M':'monthly',M:'monthly'})[match[1].toUpperCase()];};
+ form.append(node('label','CSV file'),file,node('label','Instrument'),symbol,node('label','Candle timeframe'),frame,node('label','Strategy'),strategy,node('p','Replay dates come from the CSV. Supports TradingView time/open/high/low/close exports and timestamp/closed_at candle files. Timestamps need a timezone or Unix time. Indicator columns are ignored. Maximum 2 MB / 20,000 candles.'));
+ const run=node('button','Upload & backtest');run.type='submit';form.append(run);form.onsubmit=async e=>{e.preventDefault();const selected=file.files?.[0];if(!selected){message('Choose a CSV file',true);return;}if(selected.size>2000000){message('CSV must be at most 2 MB',true);return;}run.disabled=true;try{const data=await request('/api/csv-backtests',{csv:await selected.text(),filename:selected.name,symbol:symbol.value.trim(),timeframe:frame.value,strategy:strategy.value});csvReportId=data.report.id;csvPage=0;strategyViews.backtest=data.report.strategy==='pin-bars'?'pin-bars':'rsi';dialog.close();await csvBacktestFindings();message('CSV backtest saved.');}catch(e){message(e.message,true);run.disabled=false;}};dialog.showModal();
+}
+async function csvBacktestFindings(strategy=null,supplied=null){
+ const data=supplied||await request('/api/csv-backtests?'+new URLSearchParams({page:csvPage,...(csvReportId?{id:csvReportId}:{}),...(strategy?{strategy}: {})}));
+ content.replaceChildren(node('h2','CSV backtests'),strategySelector('backtest'),button('Upload CSV & backtest',uploadCSV));
+ const picker=node('select');picker.setAttribute('aria-label','Saved CSV backtest');const choose=node('option','Choose a saved CSV backtest');choose.value='';picker.append(choose);for(const r of data.reports||[]){const o=node('option',`${r.symbol} · ${r.timeframe} · ${r.strategy} · ${r.filename}`);o.value=r.id;picker.append(o);}picker.value=data.report?.id||'';picker.onchange=()=>{csvReportId=picker.value||null;csvPage=0;csvBacktestFindings().catch(e=>message(e.message,true));};content.append(picker);
+ const report=data.report;if(report)csvReportId=report.id;if(!report){content.append(node('p','No CSV backtest saved for this strategy. Upload a candle file to replay its dates.'));return;}
+ strategyViews.backtest=report.strategy==='pin-bars'?'pin-bars':'rsi';
+ content.append(node('h3',`${report.symbol} · ${report.timeframe} · ${report.strategy}`),node('p',`${displayTime(report.start_at)} → ${displayTime(report.end_at)} · ${report.candles} completed candles · ${report.signal_count} signals · ${report.excluded_open_candles} unfinished candles excluded`),node('p',`Initial ${report.warmup_candles} candles provide indicator warm-up. ${report.limited_history?'Limited history. ':''}${report.alignment}.`),node('p',report.note));
+ const movement=(s,h)=>{const f=s.forward?.[h];return f?.status==='complete'?`${f.directional_close_pct.toFixed(2)}% direction-adjusted close · favorable ${f.favorable_pct.toFixed(2)}% · adverse ${f.adverse_pct.toFixed(2)}%`:'Incomplete forward history';};
+ content.append(table(['Confirmed','Direction','Evidence','Next 5 candles','Next 10 candles'],report.signals.map(s=>[displayTime(s.confirmed_at),s.direction.toUpperCase(),s.strategy==='pin-bars'?`EMA ${s.fast_ema.toFixed(4)} / ${s.slow_ema.toFixed(4)} · body ${s.body.toFixed(4)} · wicks ${s.lower_wick.toFixed(4)} / ${s.upper_wick.toFixed(4)}`:`Price ${s.price1} → ${s.price2} · RSI ${s.rsi1.toFixed(2)} → ${s.rsi2.toFixed(2)}`,movement(s,5),movement(s,10)])));
+ const nav=node('div');if(csvPage>0)nav.append(button('Previous',()=>{csvPage--;csvBacktestFindings().catch(e=>message(e.message,true));}));if(report.has_more)nav.append(button('Next',()=>{csvReportId=report.id;csvPage++;csvBacktestFindings().catch(e=>message(e.message,true));}));content.append(nav);
 }

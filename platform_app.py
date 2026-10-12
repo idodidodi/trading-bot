@@ -229,7 +229,7 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             try:
                 if not dry_run:send_telegram(token,chat_id,text,silent=quiet_hours())
                 with store.connect() as db:db.execute('UPDATE notification_queue SET status=? WHERE id=?',('dry-run' if dry_run else 'sent',key))
-                store.log('Catch-up summary delivered','dry-run' if dry_run else 'sent')
+                store.log('Queued notification delivered','dry-run' if dry_run else 'sent')
             except Exception:
                 with store.connect() as db:db.execute('UPDATE notification_queue SET attempts=?,next_attempt=? WHERE id=?',(attempts+1,time.time()+min(300,2**min(attempts+1,9)),key))
             continue
@@ -299,7 +299,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 else:
                     self.respond(404, {'error':'Not found'})
                 return
-            if route in ('/api/assets', '/api/findings', '/api/momentum', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates'):
+            if route in ('/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates'):
                 from dashboard_api import read
                 try:
                     self.respond(200, read(store, self.path))
@@ -359,7 +359,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 self.respond(404, {'error': 'Not found'})
 
         def do_POST(self):
-            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state','/api/catchup','/api/updates'):
+            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state','/api/catchup','/api/updates','/api/csv-backtests'):
                 from finding_feedback import save
                 host = self.headers.get('Host')
                 allowed = (f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}')
@@ -369,13 +369,16 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     return
                 try:
                     size = int(self.headers.get('Content-Length', '0'))
-                    if not 0 < size <= 32768:
+                    if not 0 < size <= (2_100_000 if self.path=='/api/csv-backtests' else 32768):
                         raise ValueError('Invalid body size')
                     self.connection.settimeout(2)
                     body = json.loads(self.rfile.read(size))
                     if not isinstance(body, dict):
                         raise ValueError('Expected JSON object')
-                    if self.path=='/api/catchup':
+                    if self.path=='/api/csv-backtests':
+                        from csv_backtests import save as save_csv
+                        self.respond(200,save_csv(store,body))
+                    elif self.path=='/api/catchup':
                         from scanner_control import request
                         if body.get('action')!='request':raise ValueError('Invalid scanner action')
                         self.respond(202,request(store))
@@ -397,8 +400,8 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                         self.respond(200, save(store, ROOT, body))
                 except LookupError as exc:
                     self.respond(409, {'error': str(exc)})
-                except (ValueError, TypeError, OSError):
-                    self.respond(400, {'error': 'Invalid asset configuration or feedback'})
+                except (ValueError, TypeError, OSError) as exc:
+                    self.respond(400, {'error': str(exc) if self.path=='/api/csv-backtests' and isinstance(exc,ValueError) else 'Invalid asset configuration or feedback'})
                 except sqlite3.Error:
                     self.respond(503, {'error': 'Local storage unavailable. Try saving again.'})
                 return

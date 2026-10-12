@@ -32,10 +32,16 @@ def meta(db,key,default='0'):
 def snapshot(store):
     from finding_followup import stored
     from momentum import view as momentum_view
+    from pin_bars import view as pin_bar_view
+    pin_live=pin_bar_view(store,page_size=500)
+    while pin_live['signals'] and len(canonical(pin_live).encode()) > 180000:
+        pin_live['signals'].pop()
+    pin_live['mirror_limit'] = len(pin_live['signals'])
     momentum_live=momentum_view(store)
     momentum_backtest=momentum_view(store,'backtest')
     with store.connect() as db:
         initialize(db)
+        enqueue(db,'summary','pin-bars-live',pin_live)
         enqueue(db,'summary','momentum-live',momentum_live)
         enqueue(db,'summary','momentum-backtest',momentum_backtest)
         config=db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
@@ -115,7 +121,7 @@ def snapshot(store):
 def batch(store):
     with store.connect() as db:
         initialize(db)
-        rows=db.execute("SELECT kind,key,event_id,payload FROM cloud_pending ORDER BY CASE WHEN kind='summary' AND (key IN ('scanner','selections','momentum-live','momentum-backtest') OR key LIKE 'catchup:%') THEN -1 ELSE CASE kind WHEN 'config' THEN 0 WHEN 'live' THEN 1 WHEN 'backtest' THEN 2 WHEN 'feedback' THEN 3 ELSE 4 END END,key LIMIT 100").fetchall()
+        rows=db.execute("SELECT kind,key,event_id,payload FROM cloud_pending ORDER BY CASE WHEN kind='summary' AND (key IN ('scanner','selections','pin-bars-live','momentum-live','momentum-backtest') OR key LIKE 'catchup:%') THEN -1 ELSE CASE kind WHEN 'config' THEN 0 WHEN 'live' THEN 1 WHEN 'backtest' THEN 2 WHEN 'feedback' THEN 3 ELSE 4 END END,key LIMIT 100").fetchall()
         base=int(meta(db,'config_base'));cursor=int(meta(db,'feedback_cursor'));state_cursor=int(meta(db,'state_cursor'))
     out=[];size=128
     for kind,key,event,raw in rows:
