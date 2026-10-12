@@ -14,6 +14,7 @@ import windows_update as updates
 
 
 class LinuxStandaloneTests(unittest.TestCase):
+    @unittest.skipUnless(os.name=='posix','Linux paths and loader variables use POSIX semantics')
     def test_persistent_root_and_native_environment(self):
         with patch.dict(os.environ,{'XDG_DATA_HOME':'/tmp/family linux','LD_LIBRARY_PATH':'/bundle','LD_LIBRARY_PATH_ORIG':'/system'}):
             self.assertEqual(launcher.app_root(),Path('/tmp/family linux/FamilyTradingBot'))
@@ -37,7 +38,7 @@ class LinuxStandaloneTests(unittest.TestCase):
             with patch('windows_update.get_json',return_value=manifest),patch('linux_update.urllib.request.urlopen',side_effect=lambda *args,**kw:io.BytesIO(binary)):
                 staged=updater.download_release(root,release)
                 self.assertEqual(staged.read_bytes(),binary)
-                self.assertTrue(staged.stat().st_mode&0o100)
+                if os.name=='posix':self.assertTrue(staged.stat().st_mode&0o100)
             with patch('windows_update.get_json',return_value=manifest|dict(sha256='0'*64)),patch('linux_update.urllib.request.urlopen',return_value=io.BytesIO(binary)):
                 with self.assertRaisesRegex(ValueError,'checksum'):updater.download_release(root,release)
                 self.assertFalse((root/'FamilyTradingBot.new').exists())
