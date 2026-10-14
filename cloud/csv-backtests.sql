@@ -11,7 +11,7 @@ returns jsonb language plpgsql security definer set search_path=public,pg_temp a
 #variable_conflict use_variable
 begin
  if coalesce(report->>'id','') !~ '^[a-f0-9]{64}$' or jsonb_typeof(report->'signals') is distinct from 'array'
-  or coalesce(report->>'strategy','') not in ('pin-bars','confirmed','warmup') then raise exception 'Invalid CSV report';end if;
+  or coalesce(report->>'strategy','') not in ('pin-bars','bb-pin-bars','confirmed','warmup') then raise exception 'Invalid CSV report';end if;
  insert into dashboard_csv_backtests values(installation,report->>'id',report,now())
  on conflict on constraint dashboard_csv_backtests_pkey do update set report=excluded.report,created=now();
  return jsonb_build_object('saved',true);
@@ -40,7 +40,7 @@ begin
   page_number:=page_text::integer;if page_number>10000 then raise exception 'Invalid page';end if;
   report_id:=substring(operation from '[?&]id=([^&]+)');
   strategy:=substring(operation from 'strategy=([^&]+)');
-  if strategy is not null and strategy not in ('pin-bars','confirmed','warmup') then raise exception 'Invalid strategy';end if;
+  if strategy is not null and strategy not in ('pin-bars','bb-pin-bars','confirmed','warmup') then raise exception 'Invalid strategy';end if;
   select r.report into result from dashboard_csv_backtests r where r.installation=installation
    and (report_id is null or r.id=report_id) and (strategy is null or r.report->>'strategy'=strategy)
    order by r.created desc limit 1;

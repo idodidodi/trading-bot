@@ -87,3 +87,7 @@ Apply `momentum.sql` after the currently installed dispatcher migrations and pub
 Apply `asset-strategies.sql` after the existing schema and provider migrations before publishing the updated Assets editor. It preserves the installed API dispatchers and is safe to rerun. Each permanent asset can select RSI divergence only, Pin-Bars only, or both, across its selected timeframes. Older configurations default to both; saves from older clients preserve an existing choice. Restart the local scanner to honor the selection. Daily momentum keeps its independent configuration.
 
 Validate with `python3 -m unittest test_managed_assets test_pin_bars test_scanner test_cloud_revision`, `node --check web/app.js`, and `test_asset_strategies.sql` in a disposable PostgreSQL database after the existing test setup and migration. Apply the migration twice to check idempotence.
+
+## BB Pin-Bars
+
+Apply `bb-pin-bars.sql` after CSV backtests and asset strategies. Deploy the updated `functions/csv-backtests` folder (including `bb-engine.mjs` and `rules.mjs`), publish the shared browser assets, and restart the worker. This adds a separate authenticated `/api/bb-pin-bars` mirror and accepts `bb-pin-bars` in CSV reports and per-asset selections. Existing defaults stay RSI + EMA Pin-Bars. See the root README for the independent BB rules.

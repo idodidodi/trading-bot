@@ -22,3 +22,22 @@ assert.throws(()=>parseCSV('x'.repeat(2000001),'4h',now));
 // The user's exported indicators are ignored: local and hosted replay use OHLC.
 if(process.env.CSV_TEST_FILE){const real={csv:fs.readFileSync(process.env.CSV_TEST_FILE,'utf8'),symbol:'TVC:USOIL',timeframe:'4h',strategy:'pin-bars'},cutoff=Date.UTC(2026,9,12,12);const a=await replayCSV(real,cutoff);const b=JSON.parse(execFileSync('python3',['-c','import sys,json;from csv_backtests import run;print(json.dumps(run(json.load(sys.stdin),'+cutoff+')))'],{input:JSON.stringify(real),encoding:'utf8',maxBuffer:4000000}));assert.deepEqual(a.signals,b.signals);console.log('Attached USOIL CSV parity:',a.candles,'closed candles,',a.signal_count,'signals');}
 console.log('CSV replay checks passed: local/cloud parity, dates, warm-up, open candles and invalid data.');
+// BB Pin-Bars has its own identity and no EMA dependency; EMA results stay unchanged.
+for(const mirror of [false,true]){
+ const sample=Array.from({length:22},(_,i)=>({start:start+i*14400000,open:100,high:100,low:100,close:100}));
+ sample.push({start:start+22*14400000,open:100,high:105,low:99.99,close:100.1});
+ const bbBars=mirror?sample.map(b=>({...b,open:200-b.open,high:200-b.low,low:200-b.high,close:200-b.close})):sample;
+ const input={...body,strategy:'bb-pin-bars',csv:'time,open,high,low,close\n'+bbBars.map(b=>`${b.start},${b.open},${b.high},${b.low},${b.close}`).join('\n')};
+ const actual=await replayCSV(input,now);
+ assert.equal(actual.signal_count,1);
+ assert.equal(actual.signals[0].strategy,'bb-pin-bars');
+ assert.equal(actual.signals[0].direction,mirror?'bullish':'bearish');
+ assert.equal(actual.warmup_candles,19);
+ assert.ok(!('fast_ema' in actual.signals[0]));
+ const expected=JSON.parse(execFileSync('python3',['-c','import sys,json;from csv_backtests import run;print(json.dumps(run(json.load(sys.stdin),'+now+')))'],{input:JSON.stringify(input),encoding:'utf8'}));
+ assert.deepEqual(actual.signals,expected.signals);
+ const ema=await replayCSV({...input,strategy:'pin-bars'},now);
+ assert.equal(ema.signal_count,mirror?1:0);
+ assert.notEqual(ema.id,actual.id);
+}
+console.log('BB Pin-Bars checks passed: independent direction, reports, warm-up and local/cloud parity.');

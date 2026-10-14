@@ -9,6 +9,7 @@ SUPPORTED_TIMEFRAMES = DEFAULTS + ['1h']
 LIMIT = 100
 PROVIDERS = ('csv', 'twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca')
 SCAN_STRATEGIES = ['rsi', 'pin-bars']
+SUPPORTED_SCAN_STRATEGIES = SCAN_STRATEGIES + ['bb-pin-bars']
 TOKEN = re.compile(r'[A-Za-z0-9_^=:.!/\-]{1,100}')
 
 
@@ -56,8 +57,8 @@ def validate_asset(asset):
     if type(asset.get('enabled')) is not bool:
         raise ValueError('Invalid enabled state')
     strategies = asset.get('scan_strategies', SCAN_STRATEGIES)
-    if not isinstance(strategies, list) or not strategies or any(s not in SCAN_STRATEGIES for s in strategies) or len(strategies) != len(set(strategies)):
-        raise ValueError('Choose RSI divergence, Pin-Bars, or both scan strategies')
+    if not isinstance(strategies, list) or not strategies or any(s not in SUPPORTED_SCAN_STRATEGIES for s in strategies) or len(strategies) != len(set(strategies)):
+        raise ValueError('Choose at least one supported scan strategy')
     frames=asset.get('timeframes')
     if not isinstance(frames,list) or not frames or any(f not in SUPPORTED_TIMEFRAMES for f in frames) or len(frames)!=len(set(frames)):
         raise ValueError('Choose at least one supported candle timeframe')
