@@ -446,11 +446,32 @@
       "tradingview_symbol": "",
       "unavailable_reason": "Exact futures provider, continuous-contract roll convention and feed access await configuration. No spot/CFD substitution.",
       "portfolio": true
+    },
+    {
+      "id": "RDW",
+      "symbol": "RDW",
+      "name": "Redwire Corporation",
+      "market": "stock",
+      "provider": "alpaca",
+      "exchange": "NYSE",
+      "enabled": true,
+      "feed_confirmed": true,
+      "timeframes": [
+        "monthly",
+        "weekly",
+        "daily",
+        "4h"
+      ],
+      "tradingview_symbol": "NYSE:RDW",
+      "portfolio": true,
+      "scan_strategies": [
+        "rsi"
+      ]
     }
   ],
   "request_spacing_seconds": 8,
   "daily_universe": {
-    "enabled": true,
+    "enabled": false,
     "timezone": "Asia/Jerusalem",
     "hour": 8,
     "count": 5,

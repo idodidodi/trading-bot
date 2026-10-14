@@ -81,3 +81,9 @@ Validation: `python3 -m unittest test_finding_followup`, `node cloud/test_follow
 ## Momentum daily strategy (10 October 2026)
 
 Apply `momentum.sql` after the currently installed dispatcher migrations and publish the updated static UI. The migration reads dedicated `momentum-live` and `momentum-backtest` summary records through the existing authorized dispatcher. Restart the local worker to activate daily scans and priority summary sync. The migration was applied to the existing hosted Supabase installation on 10 October 2026 and its installation query returned true. Scratch PostgreSQL tests verified owner reads, rejection of unauthorised reads and invalid sources, and idempotent application. Momentum views default separately to RSI; momentum does not enter RSI signal or replay tables. See `../MOMENTUM.md` for rules and evaluation limitations.
+
+## Per-asset scan strategies
+
+Apply `asset-strategies.sql` after the existing schema and provider migrations before publishing the updated Assets editor. It preserves the installed API dispatchers and is safe to rerun. Each permanent asset can select RSI divergence only, Pin-Bars only, or both, across its selected timeframes. Older configurations default to both; saves from older clients preserve an existing choice. Restart the local scanner to honor the selection. Daily momentum keeps its independent configuration.
+
+Validate with `python3 -m unittest test_managed_assets test_pin_bars test_scanner test_cloud_revision`, `node --check web/app.js`, and `test_asset_strategies.sql` in a disposable PostgreSQL database after the existing test setup and migration. Apply the migration twice to check idempotence.

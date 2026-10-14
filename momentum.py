@@ -144,6 +144,11 @@ def session(now):
     return boundary.date().isoformat()
 
 
+def same_confirmation(pick, previous):
+    """A version hash change must not make an already-issued candle look new."""
+    return bool(pick and any(s and (s.get('symbol'),s.get('confirmed_at'))==(pick['symbol'],pick['confirmed_at']) for s in previous))
+
+
 def entry_session(market, now):
     zone=ZoneInfo('America/New_York' if market=='stock' else 'UTC')
     local=datetime.fromtimestamp(now/1000,zone)
@@ -243,10 +248,10 @@ def scan(store, config, now=None, stop=None, force=False):
             if s:candidates.append(s)
         candidates.sort(key=lambda s:(-s['score'],s['symbol']))
         pick=candidates[0] if candidates else None
-        # Do not publish the same stock confirmation again over weekends/holidays.
+        # Preserve issued confirmations across retries, weekends, and rule-version changes.
         with store.connect() as db:
             old=[json.loads(r[0]).get('picks',{}).get(market) for r in db.execute('SELECT payload FROM momentum_runs WHERE day<? ORDER BY day DESC LIMIT 7',(day,))]
-        repeated=pick and any(s and (s['symbol'],s['confirmed_at'],s['version'])==(pick['symbol'],pick['confirmed_at'],pick['version']) for s in old)
+        repeated=same_confirmation(pick,old)
         # A retry can fill a missing market but never rewrite an already issued pick.
         issued=prior.get('picks',{}).get(market) if prior else None
         picks[market]=issued or (None if repeated else pick|dict(published_at=now)|entry_session(market,now) if pick else None)

@@ -29,6 +29,51 @@ class AssetsTests(unittest.TestCase):
         self.assertEqual(result['config']['assets'][1]['timeframes'],['daily'])
         with self.assertRaises(LookupError):change(self.store,{'action':'bulk','tickers':'MSFT','revision':1})
         self.assertFalse(result['config']['assets'][2]['enabled'])
+    def test_strategy_defaults_validation_and_sync(self):
+        from managed_assets import validate_asset
+        asset=get(self.store)['config']['assets'][0]
+        self.assertEqual(asset['scan_strategies'],['rsi','pin-bars'])
+        for choices in (['rsi'],['pin-bars'],['rsi','pin-bars']):
+            asset['scan_strategies']=choices
+            saved=change(self.store,dict(action='save',revision=get(self.store)['revision'],asset=asset))
+            self.assertEqual(saved['config']['assets'][0]['scan_strategies'],choices)
+            config_records=[r for r in batch(self.store)['records'] if r['kind']=='config']
+            self.assertEqual(config_records[-1]['payload']['config']['assets'][0]['scan_strategies'],choices)
+        for bad in ([],['unknown'],['rsi','rsi'],'rsi',None,[{}]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                validate_asset(asset | dict(scan_strategies=bad))
+        legacy=dict(asset);legacy.pop('scan_strategies')
+        validate_asset(legacy)
+        with self.store.connect() as db:
+            db.execute('UPDATE managed_config SET payload=? WHERE id=1',(json.dumps(dict(self.config,assets=[legacy])),))
+        self.assertEqual(get(self.store)['config']['assets'][0]['scan_strategies'],['rsi','pin-bars'])
+
+    def test_strategy_selection_gates_scanners_and_invalidates_schedule(self):
+        from test_pin_bars import bars
+        candles=bars()[-25:] # Enough for Pin-Bars, fewer than RSI requires.
+        asset=get(self.store)['config']['assets'][0]
+        asset.update(timeframes=['4h'],scan_strategies=['pin-bars'])
+        change(self.store,dict(action='save',revision=1,asset=asset))
+        with patch('scanner.read_csv',return_value=candles), patch('scanner.detect') as rsi:
+            coverage=scan_once(self.store,self.config,load_rules(),candles[-1].end)
+            rsi.assert_not_called()
+        self.assertEqual(coverage[0]['status'],'baseline set')
+        self.assertEqual(coverage[0]['rsi_status'],'disabled')
+        asset['scan_strategies']=['rsi']
+        change(self.store,dict(action='save',revision=2,asset=asset))
+        with patch('scanner.read_csv',return_value=fixture()), patch('pin_bars.scan') as pins, patch('scanner.detect',return_value=[]) as rsi:
+            coverage=scan_once(self.store,self.config,load_rules(),candles[-1].end)
+            pins.assert_not_called()
+            self.assertEqual(rsi.call_count,2)
+        self.assertEqual(coverage[0]['pin_bars']['status'],'disabled')
+        self.assertNotIn('check_state',coverage[0])
+        asset['scan_strategies']=['rsi','pin-bars']
+        change(self.store,dict(action='save',revision=3,asset=asset))
+        with patch('scanner.read_csv',return_value=fixture()), patch('pin_bars.scan',return_value=dict(status='scanned',new_signals=0)) as pins, patch('scanner.detect',return_value=[]) as rsi:
+            scan_once(self.store,self.config,load_rules(),candles[-1].end)
+            pins.assert_called_once()
+            self.assertEqual(rsi.call_count,2)
+
     def test_cycle_uses_asset_frames_and_applies_revision(self):
         asset=get(self.store)['config']['assets'][0];asset['timeframes']=['4h']
         change(self.store,{'action':'save','asset':asset,'revision':1})

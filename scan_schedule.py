@@ -12,6 +12,7 @@ def initialize(db):
 def identity(asset, timeframe, rules):
     fields={k:asset.get(k) for k in ('id','provider','symbol','exchange','path','max_data_age_seconds','continuous')}
     fields.update(timeframe=timeframe,skill=rules['skill_hash'])
+    fields['scan_strategies'] = sorted(asset.get('scan_strategies', ['rsi', 'pin-bars']))
     if asset['provider']=='csv' and asset.get('path'):
         from pathlib import Path
         from platform_app import ROOT

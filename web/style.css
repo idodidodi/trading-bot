@@ -12,3 +12,17 @@
 .pagination{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;padding:20px 12px}.pagination button{margin:0;padding:7px 11px}.pagination button[aria-current=page]{background:#1c4e54;border-color:#69c6b0;color:#fff}.pagination small{margin:0 0 0 10px}
 
 .selected-row td,.asset-row.selected-row{background:#234657!important;box-shadow:inset 3px 0 #67e8f9}.finding-row.selected-row td{border-color:#42738a}.asset-row{border:1px solid #2a3d55;border-radius:9px;margin:8px 0;background:#111e30}.asset-row summary{padding:14px;cursor:pointer}.asset-row fieldset{margin:0;border:0;background:transparent}.asset-unavailable summary{color:#fca5a5}.asset-group h4{color:#b6f7e6}td strong.success,td strong.error{display:block;margin-bottom:6px}
+
+.overview-monitor{padding:28px;border:1px solid #293b51;border-radius:16px;background:linear-gradient(125deg,#17283a,#101b2b);margin-bottom:24px}
+.overview-monitor h2{margin:0 0 10px;font-size:26px}
+.overview-description{margin:0;color:#a1b4cb;line-height:1.6}
+.overview-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
+.overview-actions button,.overview-updates button{margin:0;min-height:44px;padding:11px 18px}
+.overview-actions .overview-primary{background:#9ae6d1;border-color:#9ae6d1;color:#0b252a;font-weight:600}
+.overview-actions .overview-primary:hover{background:#b6f7e6;border-color:#b6f7e6}
+.overview-resources{display:flex;flex-wrap:wrap;gap:12px 24px;margin-top:20px;padding-top:18px;border-top:1px solid #293b51}
+.overview-resources a{display:inline-flex;align-items:center;min-height:32px;color:#a9c9de;text-underline-offset:4px;line-height:1.5}
+.overview-resources a:hover{color:#b6f7e6}
+.overview-updates:empty{display:none}
+.overview-updates{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:18px;color:#94a3b8;font-size:13px}
+@media(max-width:700px){.overview-monitor{padding:20px}.overview-monitor h2{font-size:24px}.overview-actions{flex-direction:column;align-items:stretch;margin-top:20px}.overview-actions button{width:100%}.overview-resources{flex-direction:column;align-items:flex-start;gap:8px}}

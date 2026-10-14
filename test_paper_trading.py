@@ -19,9 +19,14 @@ ASSET=dict(status='active',tradable=True,shortable=True,**{'class':'us_equity'},
 QUOTE=dict(t='2026-10-12T13:30:00Z',bp=99.99,ap=100)
 
 class FakeBroker:
-    def __init__(self):self.orders={};self.positions=[];self.post_count=0;self.fail_after_post=False;self.quote_data=QUOTE.copy();self.clock=True
+    def __init__(self):self.orders={};self.positions=[];self.post_count=0;self.fail_after_post=False;self.quote_data=QUOTE.copy();self.clock=True;self.quote_failures=0
     def lookup(self,key):return self.orders.get(key)
-    def quote(self,s):return self.quote_data
+    def quote(self,s):
+        if self.quote_failures:
+            self.quote_failures-=1
+            import urllib.error
+            raise urllib.error.URLError('temporary network failure')
+        return self.quote_data
     def request(self,path,method='GET',body=None,data=False):
         if path=='/v2/account':return ACCOUNT.copy()
         if path=='/v2/positions':return self.positions.copy()
@@ -59,6 +64,18 @@ class PaperTests(unittest.TestCase):
     def test_scheduled_no_closed_market_order_and_missed_window(self):
         rows=self.run_tick(NOW-1000);self.assertEqual(rows[0]['state'],'scheduled');self.assertEqual(self.broker.post_count,0)
         rows=self.run_tick(NOW+p.ENTRY_WINDOW_MS);self.assertEqual(rows[0]['state'],'skipped');self.assertEqual(self.broker.post_count,0)
+
+    def test_temporary_quote_failure_retries_at_most_three_times(self):
+        self.broker.quote_failures=5
+        for attempt in range(3):rows=self.run_tick(NOW+attempt*15000)
+        self.assertEqual(rows[0]['state'],'skipped');self.assertEqual(rows[0]['entry_attempts'],3)
+        self.assertIn('after 3 attempts',rows[0]['reason']);self.assertEqual(self.broker.post_count,0)
+
+    def test_permanent_spread_failure_is_not_retried(self):
+        self.broker.quote_data=QUOTE|dict(bp=99,ap=102)
+        rows=self.run_tick(NOW);self.assertEqual(rows[0]['state'],'skipped')
+        self.assertEqual(rows[0]['entry_attempts'],1);self.assertIn('spread',rows[0]['reason'])
+        self.assertEqual(self.broker.post_count,0)
     def test_ambiguous_post_reconciles_without_duplicate_after_restart(self):
         self.broker.fail_after_post=True
         self.run_tick();self.assertEqual(self.broker.post_count,1)

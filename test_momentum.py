@@ -52,6 +52,13 @@ class MomentumTests(unittest.TestCase):
         self.assertEqual([(s['market'],s['symbol']) for s in r['signals']],[('crypto','C'),('stock','A')])
         self.assertEqual(r['metrics']['closed_trades'],0)
 
+    def test_confirmation_not_reissued_after_version_hash_changes(self):
+        pick=dict(symbol='PCTY',confirmed_at=123,version='momentum-v2')
+        prior=[dict(symbol='PCTY',confirmed_at=123,version='momentum-v1')]
+        self.assertTrue(momentum.same_confirmation(pick,prior))
+        self.assertFalse(momentum.same_confirmation(pick,[dict(symbol='PCTY',confirmed_at=124,version='momentum-v1')]))
+        self.assertFalse(momentum.same_confirmation(pick,[dict(symbol='ABC',confirmed_at=123,version='momentum-v1')]))
+
     def test_stock_entry_uses_session_open_not_midnight_bar_timestamp(self):
         from scanner import timestamp
         s=momentum.candidate(trend(),'X','stock')

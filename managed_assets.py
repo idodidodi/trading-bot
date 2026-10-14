@@ -8,6 +8,7 @@ DEFAULTS = ['monthly', 'weekly', 'daily', '4h']
 SUPPORTED_TIMEFRAMES = DEFAULTS + ['1h']
 LIMIT = 100
 PROVIDERS = ('csv', 'twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca')
+SCAN_STRATEGIES = ['rsi', 'pin-bars']
 TOKEN = re.compile(r'[A-Za-z0-9_^=:.!/\-]{1,100}')
 
 
@@ -22,6 +23,7 @@ def ensure(store, config):
     for asset in value['assets']:
         asset.setdefault('timeframes', value.get('timeframes', DEFAULTS))
         asset.setdefault('enabled', True)
+        asset.setdefault('scan_strategies', SCAN_STRATEGIES.copy())
         asset.setdefault('tradingview_symbol', '')
     with store.connect() as db:
         initialize(db)
@@ -35,6 +37,8 @@ def get(store):
     if not row:
         raise ValueError('Asset configuration has not been initialized')
     result=dict(revision=row[0], applied_revision=row[1], config=json.loads(row[2]))
+    for asset in result['config']['assets']:
+        asset.setdefault('scan_strategies', SCAN_STRATEGIES.copy())
     with store.connect() as db:
         if db.execute("SELECT 1 FROM sqlite_master WHERE name='cloud_meta'").fetchone():
             result['sync']=dict(db.execute("SELECT key,value FROM cloud_meta WHERE key IN ('error','last_sync')"))
@@ -51,6 +55,9 @@ def validate_asset(asset):
         raise ValueError('Select CSV, Twelve Data, Kraken, OANDA, Tiingo or Alpaca')
     if type(asset.get('enabled')) is not bool:
         raise ValueError('Invalid enabled state')
+    strategies = asset.get('scan_strategies', SCAN_STRATEGIES)
+    if not isinstance(strategies, list) or not strategies or any(s not in SCAN_STRATEGIES for s in strategies) or len(strategies) != len(set(strategies)):
+        raise ValueError('Choose RSI divergence, Pin-Bars, or both scan strategies')
     frames=asset.get('timeframes')
     if not isinstance(frames,list) or not frames or any(f not in SUPPORTED_TIMEFRAMES for f in frames) or len(frames)!=len(set(frames)):
         raise ValueError('Choose at least one supported candle timeframe')
@@ -169,7 +176,7 @@ def change(store, body):
             current=assets[index]
             validate_asset(current | incoming)
             # Do not accept arbitrary file paths, credentials or unknown scanner fields.
-            for key in ('provider','enabled','timeframes','symbol','exchange','tradingview_symbol','feed_confirmed','timeframe_providers'):
+            for key in ('provider','enabled','timeframes','symbol','exchange','tradingview_symbol','feed_confirmed','timeframe_providers','scan_strategies'):
                 if key in incoming:current[key]=incoming[key]
             current.setdefault('path','data/candles/{asset}-{timeframe}.csv')
             results=[dict(ticker=current['id'],status='saved')]

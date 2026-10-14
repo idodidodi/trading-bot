@@ -16,6 +16,7 @@ PAPER_HOST = 'https://paper-api.alpaca.markets'
 DATA_HOST = 'https://data.alpaca.markets'
 TERMINAL = {'filled','canceled','expired','rejected'}
 ENTRY_WINDOW_MS = 300_000
+MAX_ENTRY_ATTEMPTS = 3
 
 
 class BrokerError(Exception):
@@ -62,6 +63,23 @@ def initialize(db):
 def identity(signal):
     key=[signal[k] for k in ('market','symbol','direction','confirmed_at','version')]
     return 'mom-'+hashlib.sha256(json.dumps(key).encode()).hexdigest()[:28]
+
+
+def temporary_failure(exc):
+    return (isinstance(exc,(urllib.error.URLError,TimeoutError,ConnectionError)) or
+            isinstance(exc,BrokerError) and (exc.status==429 or exc.status>=500))
+
+
+def note_transient_failure(store, records, now):
+    for record in records.values():
+        if record.get('state')!='scheduled':continue
+        signal=record['signal'];opening=signal['entry_open_at']
+        if not opening<=now<min(opening+ENTRY_WINDOW_MS,signal['expires_at']):continue
+        attempts=int(record.get('entry_attempts',0))+1
+        reason='Temporary paper connection failure'
+        if attempts>=MAX_ENTRY_ATTEMPTS:record.update(state='skipped',entry_attempts=attempts,reason=f'{reason} after {MAX_ENTRY_ATTEMPTS} attempts')
+        else:record.update(entry_attempts=attempts,last_attempt_at=now,reason=f'{reason}; retry {attempts}/{MAX_ENTRY_ATTEMPTS}')
+        save(store,record)
 
 
 def save(store, record):
@@ -260,16 +278,22 @@ def tick(store, broker=None, now=None):
     now=int(time.time()*1000) if now is None else now
     broker=broker or AlpacaPaper()
     if os.environ.get('PAPER_TRADING_ENABLED','false').lower()!='true':return view(store)
-    account=broker.request('/v2/account')
+    records={r['id']:r for r in view(store)['trades']}
+    signals=signals_view(store)['signals']
+    for signal in signals:
+        key=identity(signal)
+        if key not in records:
+            records[key]=dict(id=key,signal=signal,state='scheduled',account=None,created_at=now)
+            save(store,records[key])
+    try:account=broker.request('/v2/account')
+    except Exception as exc:
+        if temporary_failure(exc):note_transient_failure(store,records,now)
+        raise
     fingerprint=hashlib.sha256(account['id'].encode()).hexdigest()[:16]
     if account['status']!='ACTIVE' or account.get('account_blocked') or account.get('trading_blocked'):
         raise ValueError('Paper account is not enabled for trading')
-    records={r['id']:r for r in view(store)['trades']}
-    for signal in signals_view(store)['signals']:
-        key=identity(signal)
-        if key not in records:
-            records[key]=dict(id=key,signal=signal,state='scheduled',account=fingerprint,created_at=now)
-            save(store,records[key])
+    for record in records.values():
+        if record.get('account') is None:record['account']=fingerprint;save(store,record)
     busy=set()
     for record in records.values():
         if record['state'] in {'scheduled','skipped','closed','closed unfilled'}:continue
@@ -278,10 +302,16 @@ def tick(store, broker=None, now=None):
         except Exception as exc:
             record['reason']=str(exc) if isinstance(exc,(BrokerError,ValueError)) else type(exc).__name__;save(store,record)
         if record['state'] not in {'closed','closed unfilled'}:busy.add(record['signal']['market'])
-    positions=broker.request('/v2/positions');orders=broker.request('/v2/orders?status=open&nested=true&limit=500')
+    try:
+        positions=broker.request('/v2/positions');orders=broker.request('/v2/orders?status=open&nested=true&limit=500')
+    except Exception as exc:
+        if temporary_failure(exc):note_transient_failure(store,records,now)
+        raise
     for record in sorted(records.values(),key=lambda r:r['signal']['entry_open_at']):
         if record['state']!='scheduled':continue
         signal=record['signal'];opening=signal['entry_open_at']
+        attempts=int(record.get('entry_attempts',0))
+        post_started=False
         try:
             if record['account']!=fingerprint:raise ValueError('Paper account changed; scheduled entry requires review')
             if now>=min(opening+ENTRY_WINDOW_MS,signal['expires_at']):raise ValueError('Opening execution window missed; no late entry')
@@ -290,18 +320,40 @@ def tick(store, broker=None, now=None):
             if signal['market'] in busy:raise ValueError('One momentum position per market already reserved')
             if any(p['asset_class']==('us_equity' if signal['market']=='stock' else 'crypto') for p in positions):raise ValueError('Existing paper position in this market; no overlapping entry')
             if any(o['asset_class']==('us_equity' if signal['market']=='stock' else 'crypto') for o in orders):raise ValueError('Existing paper order in this market; no overlapping entry')
+            attempts+=1;record.update(entry_attempts=attempts,last_attempt_at=now);save(store,record)
             if signal['market']=='stock' and not broker.request('/v2/clock')['is_open']:continue
             asset=broker.request('/v2/assets/'+urllib.parse.quote(signal['symbol'],safe=''))
-            order,sizing=plan(signal,account,asset,broker.quote(signal),now)
+            quote=broker.quote(signal)
+            quote_time=datetime.fromisoformat(quote['t'].replace('Z','+00:00'))
+            quote_price=float(quote['ap'] if signal['direction']=='buy' else quote['bp'])
+            record.update(asset_name=asset.get('name') or signal['symbol'],entry_quote=dict(price=quote_price,source='Alpaca IEX' if signal['market']=='stock' else 'Alpaca crypto quote',timestamp=int(quote_time.timestamp()*1000),bid=float(quote['bp']),ask=float(quote['ap'])))
+            save(store,record)
+            order,sizing=plan(signal,account,asset,quote,now)
             record.update(state='submitting',sizing=sizing,order_request=order)
             save(store,record) # Commit before sending, including deterministic client order ID.
             busy.add(signal['market'])
+            post_started=True
             response=broker.request('/v2/orders','POST',order)
             record['order']=order_summary(response);record['state']='entry pending';save(store,record)
         except ValueError as exc:
             record.update(state='skipped',reason=str(exc));save(store,record)
         except Exception as exc:
-            record['reason']=str(exc) if isinstance(exc,BrokerError) else type(exc).__name__;save(store,record)
+            if post_started:
+                try:found=broker.lookup(identity(signal))
+                except Exception:found=None
+                if found:
+                    record.update(order=order_summary(found),state='entry pending',reason='Submission reconciled by client order ID')
+                elif isinstance(exc,BrokerError) and 400<=exc.status<500 and exc.status!=429:
+                    record.update(state='skipped',reason=str(exc))
+                else:
+                    record.update(state='submission unknown',reason='Order submission outcome ambiguous; reconciled by client ID, no retry')
+            elif temporary_failure(exc):
+                reason='Temporary paper connection/quote failure'
+                if attempts>=MAX_ENTRY_ATTEMPTS:record.update(state='skipped',reason=f'{reason} after {MAX_ENTRY_ATTEMPTS} attempts')
+                else:record.update(state='scheduled',reason=f'{reason}; retry {attempts}/{MAX_ENTRY_ATTEMPTS}')
+            else:
+                record.update(state='skipped',reason=str(exc) if isinstance(exc,BrokerError) else type(exc).__name__)
+            save(store,record)
     status=dict(checked_at=now,broker='Alpaca paper',account_status=account['status'],equity=float(account['equity']),
                 buying_power=float(account['buying_power']),shorting_enabled=account.get('shorting_enabled'),crypto_status=account.get('crypto_status'))
     with store.connect() as db:db.execute('INSERT OR REPLACE INTO paper_status VALUES(1,?)',(json.dumps(status),))

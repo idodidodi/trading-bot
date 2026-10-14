@@ -8,7 +8,9 @@ import json
 import math
 import os
 from pathlib import Path
+import threading
 import time
+from zoneinfo import ZoneInfo
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -321,9 +323,10 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
             continue
         for timeframe in configured_asset.get('timeframes', config['timeframes']):
             asset = for_timeframe(configured_asset, timeframe)
+            strategies = configured_asset.get('scan_strategies', ['rsi', 'pin-bars'])
             provider = asset['provider']
             row = dict(asset=asset['id'], timeframe=timeframe, provider=provider,
-                       exchange=asset.get('exchange', ''), symbol=asset.get('symbol', asset['id']))
+                       exchange=asset.get('exchange', ''), symbol=asset.get('symbol', asset['id']), scan_strategies=strategies)
             from market_calendar import is_stock
             from stock_policy import scan_day, next_scan, MIN_PRICE
             if is_stock(asset) and not scan_day(now):
@@ -376,7 +379,9 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     row['next_close_at'] = candles[-1].end + ((now - candles[-1].end) // period + 1) * period
                 cache_candles(store, asset, timeframe, candles)
                 if candles:row['last_closed_at']=candles[-1].end
-                if is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
+                if 'pin-bars' not in strategies:
+                    row['pin_bars'] = dict(status='disabled', reason='Pin-Bars scanning disabled for this asset')
+                elif is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
                     row['pin_bars'] = dict(status='excluded', reason='Stock below $5 minimum')
                 else:
                     selection_start = selection['starts_at'] if asset.get('daily_selected') and selection and not catchup else None
@@ -385,6 +390,11 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     row['pin_bars'] = pin_bars.scan(store, asset, timeframe, candles, pin_rules, now, selection_start, catchup=bool(catchup))
                 if is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
                     row.update(status='excluded',candles=len(candles),reason='Stock below $5 minimum; no signals generated')
+                elif 'rsi' not in strategies:
+                    # Top-level counts belong to RSI; Pin-Bars counts stay nested.
+                    row.update({k: v for k, v in row['pin_bars'].items() if k not in ('new_signals', 'historical_matches')})
+                    row.update(candles=len(candles), new_signals=0, historical_matches=0,
+                               rsi_status='disabled')
                 elif len(candles) < minimum_history(rules):
                     row.update(status='insufficient history', candles=len(candles),
                                reason=f'Only {len(candles)} closed candles available; '
@@ -461,7 +471,39 @@ def load_config():
     return config
 
 
+def next_heartbeat_at(now):
+    """Next HH:15 boundary (Israel's UTC offsets are whole hours)."""
+    target = math.floor(now / 3600) * 3600 + 15 * 60
+    return target if target > now else target + 3600
+
+
+def scanner_heartbeat(store, finished):
+    target = next_heartbeat_at(time.time())
+    while not finished.is_set():
+        now = time.time()
+        if now >= target:
+            with store.connect() as db:
+                saved = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
+            phase = json.loads(saved[0]).get('phase', 'starting') if saved else 'starting'
+            stamp = datetime.fromtimestamp(now, ZoneInfo('Asia/Jerusalem')).strftime('%Y-%m-%d %H:%M:%S')
+            store.log('Scanner heartbeat', f'Scanner is running · {phase} · {stamp} (Israel time)')
+            target = next_heartbeat_at(now)
+        finished.wait(min(1, max(0, target - now)))
+
+
 def scanner_worker(store, config, rules, stop):
+    prepare_store(store)
+    finished = threading.Event()
+    heartbeat = threading.Thread(target=scanner_heartbeat, args=(store, finished), daemon=True)
+    heartbeat.start()
+    try:
+        _scanner_worker(store, config, rules, stop)
+    finally:
+        finished.set()
+        heartbeat.join(timeout=2)
+
+
+def _scanner_worker(store, config, rules, stop):
     prepare_store(store)
     from managed_assets import ensure
     ensure(store, config)
