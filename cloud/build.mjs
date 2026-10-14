@@ -2,6 +2,7 @@
 import {readFile, mkdir, rm, copyFile, writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {resolve, dirname} from 'node:path';
+import {buildManifest} from './version.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const defaults = JSON.parse(await readFile(resolve(root, 'cloud/browser-config.json'), 'utf8'));
@@ -29,4 +30,5 @@ const assets = ['index.html', 'style.css', 'app.js', 'chart.js', 'vendor/lightwe
 for (const asset of assets) await copyFile(resolve(root, 'web', asset), resolve(out, 'web', asset));
 await copyFile(resolve(root, 'web/index.html'), resolve(out, 'index.html'));
 await writeFile(resolve(out, 'web/config.js'), 'window.DASHBOARD_CONFIG = ' + JSON.stringify(config) + ';\n');
+await writeFile(resolve(out, 'web/version.json'), JSON.stringify(await buildManifest(root)));
 console.log(`Built static dashboard in dist/ (${assets.length + 2} public files).`);

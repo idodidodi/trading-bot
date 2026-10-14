@@ -34,6 +34,10 @@ def load_env():
                     continue
                 key, value = line.split('=', 1)
                 key = key.strip().removeprefix('export ').strip()
+                # Source production must be selected by the launching process,
+                # never inherited accidentally from a shared credentials file.
+                if key == 'TRADING_BOT_ENV':
+                    continue
                 if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key):
                     continue
                 value = value.strip()
@@ -162,6 +166,9 @@ class Store:
             return result.rowcount == 1
 
     def log(self, event, details):
+        from runtime_env import environment
+        if environment() != 'prod':
+            return
         with self.connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS activity_log(id INTEGER PRIMARY KEY, occurred REAL, event TEXT, details TEXT)")
             db.execute("INSERT INTO activity_log(occurred,event,details) VALUES(?,?,?)", (time.time(), event, details))
@@ -292,6 +299,10 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 self.respond(200, (ROOT / 'web/index.html').read_text(encoding='utf-8'), 'text/html; charset=utf-8')
                 return
             if route.startswith('/web/'):
+                if route == '/web/version.json':
+                    from version_info import local_versions
+                    self.respond(200, local_versions())
+                    return
                 allowed_files = {'style.css':'text/css', 'app.js':'text/javascript', 'config.js':'text/javascript', 'chart.js':'text/javascript', 'vendor/lightweight-charts.js':'text/javascript', 'favicon.svg':'image/svg+xml'}
                 name = route.removeprefix('/web/')
                 if name in allowed_files:
@@ -299,7 +310,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 else:
                     self.respond(404, {'error':'Not found'})
                 return
-            if route in ('/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates'):
+            if route in ('/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions'):
                 from dashboard_api import read
                 try:
                     self.respond(200, read(store, self.path))
@@ -456,6 +467,10 @@ class LocalHTTPServer(ThreadingHTTPServer):
 
 def main():
     load_env()
+    from runtime_env import configure
+    runtime = configure(ROOT)
+    from version_info import local_versions
+    local_versions()
     rules = load_rules()
     secret = os.environ.get('WEBHOOK_SECRET', '')
     token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -504,7 +519,7 @@ def main():
     if legacy_webhook:
         webhook_server = ThreadingHTTPServer((host, int(os.environ.get('WEBHOOK_PORT', '8081'))), handler_factory(store, rules, secret, dry_run))
         threading.Thread(target=webhook_server.serve_forever, daemon=True).start()
-    print(f'Dashboard port={server.server_port}; source={"legacy webhook" if legacy_webhook else "local scanner"}; delivery={"dry-run" if dry_run else "Telegram"}.')
+    print(f'Environment={runtime}; dashboard port={server.server_port}; data={data}; source={"legacy webhook" if legacy_webhook else "local scanner"}; delivery={"dry-run" if dry_run else "Telegram"}.')
     def terminate(signum, frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, terminate)

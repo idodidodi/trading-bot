@@ -48,7 +48,7 @@ class FakeBroker:
 class PaperTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.store=Store(Path(self.tmp.name)/'test.sqlite3')
-        self.env=patch.dict(os.environ,PAPER_TRADING_ENABLED='true',PAPER_RISK_PCT='1',PAPER_MAX_NOTIONAL='10000');self.env.start()
+        self.env=patch.dict(os.environ,TRADING_BOT_ENV='prod',PAPER_TRADING_ENABLED='true',PAPER_RISK_PCT='1',PAPER_MAX_NOTIONAL='10000');self.env.start()
         self.broker=FakeBroker();self.signals=[signal()]
         self.source=patch('momentum.view',side_effect=lambda *a,**kw:dict(signals=self.signals));self.source.start()
     def tearDown(self):self.source.stop();self.env.stop();self.tmp.cleanup()

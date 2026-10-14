@@ -68,7 +68,10 @@ def main():
         os.environ['SSL_CERT_FILE']=certifi.where()
         threading.Timer(2,open_dashboard).start()
     else:
-        threading.Timer(2,lambda:webbrowser.open('http://127.0.0.1:8080')).start()
+        from platform_app import ROOT, load_env
+        from runtime_env import configure
+        load_env();configure(ROOT)
+        threading.Timer(2,lambda:webbrowser.open('http://127.0.0.1:'+os.environ.get('PORT','8080'))).start()
     from platform_app import main as run
     run()
 

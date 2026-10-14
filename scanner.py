@@ -578,6 +578,8 @@ if __name__ == '__main__':
     parser.add_argument('--once', action='store_true', help='Scan once without starting Telegram delivery')
     parser.parse_args()
     load_env()
+    from runtime_env import configure
+    configure(ROOT)
     data = Path(os.environ.get('DATA_DIR', str(ROOT / 'data')))
     data.mkdir(parents=True, exist_ok=True)
     store = Store(data / 'signals.sqlite3')

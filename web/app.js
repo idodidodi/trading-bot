@@ -209,6 +209,36 @@ $('close-followup').onclick=()=>$('followup-dialog').close();
 async function requestCatchup(){try{const result=await request('/api/catchup',{action:'request'});message(result.status==='pending'?'Catch-up queued. The scanner will process missed closed candles and send a Telegram summary when online.':`Catch-up ${result.status}${result.reason?': '+result.reason:''}`);watchCatchup(result.id);}catch(e){message(e.message,true);}}
 async function loadUpdateControls(actions){try{const value=await request('/api/updates');if(!value.supported)return;const label=node('span',`${value.platform||'Windows'} app ${value.version} · hourly updates enabled`);actions.append(label,button('Check for updates',async()=>{try{const result=await request('/api/updates',{action:'check'});message(result.message||'Checking for updates…');}catch(e){message(e.message,true);}}));}catch{}}
 
+let versionRequest=0;
+function versionMatch(current,latest){return !current||!latest?'Comparison unavailable':current===latest?'Matches GitHub':'Differs from GitHub';}
+async function openVersions(){
+ const dialog=$('settings-dialog'),panel=$('version-content'),id=++versionRequest;
+ panel.replaceChildren(node('p','Checking versions…'));if(!dialog.open)dialog.showModal();
+ try{
+  let value;
+  if(online){
+   const [manifest,findings]=await Promise.all([fetch('/web/version.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('UI version unavailable');return r.json();}),request('/api/findings?source=live')]);
+   value={environment:'Online dashboard',local:findings.scan?.versions||{},online_ui:manifest,scanner_checked_at:findings.scan?.scanned_at};
+  }else value=await request('/api/versions');
+  if(id!==versionRequest||!dialog.open)return;
+  const local=value.local||{},github=value.github||{},remote=value.online_ui||{};
+  panel.replaceChildren(node('p',`Environment: ${value.environment}`));
+  if(!online)panel.append(node('p',value.environment==='prod'?'Production activity logs and cloud sync enabled.':'Development uses separate data; persistent activity logging, cloud sync and deliveries disabled.'));
+  const rows=[['Local UI',local.ui||'Unavailable',versionMatch(local.ui,github.ui)],['Online UI',remote.ui||'Unavailable',versionMatch(remote.ui,github.ui)],['Local scanner',local.scanner||'Unavailable',versionMatch(local.scanner,github.scanner)],['GitHub UI',github.ui||'Unavailable','Latest default branch'],['GitHub scanner',github.scanner||'Unavailable','Latest default branch'],['Installed app',local.version||'Unavailable','Running version'],['Latest executable release',value.release?.version||'Unavailable','GitHub release']];
+  panel.append(table(['Component','Version','Status'],rows));
+  if(github.commit)panel.append(node('p','GitHub commit: '+github.commit.slice(0,12)));
+  if(online)panel.append(node('p',`Local versions are reported by the production scanner’s last cloud sync${value.scanner_checked_at?' (scan '+displayTime(value.scanner_checked_at)+')':''}. Older scanners may not report versions yet. GitHub comparisons are available in the local dashboard.`));
+  else if(!value.online_ui)panel.append(node('p','Set ONLINE_DASHBOARD_URL in .env to compare the deployed online UI.'));
+  for(const [label,entry] of [['GitHub',value.github],['Release',value.release],['Online UI',value.online_ui]])if(entry?.error)panel.append(node('p',label+': '+entry.error));
+  panel.append(node('p','A GitHub push updates source code. The executable takes an update after a newer vX.Y.Z release is published and installed. Component fingerprints detect changes even when the app version stays the same.'));
+  const actions=node('div');actions.append(button('Refresh versions',openVersions));panel.append(actions);
+  if(value.updates?.supported){actions.append(button('Check for app update',async()=>{try{const result=await request('/api/updates',{action:'check'});message(result.message);}catch(e){message(e.message,true);}}));panel.append(node('p',value.updates.message||''));}
+ }catch(e){if(id===versionRequest&&dialog.open)panel.replaceChildren(node('p',e.message),button('Retry',openVersions));}
+}
+$('settings').onclick=openVersions;
+$('close-settings').onclick=()=>$('settings-dialog').close();
+$('settings-dialog').addEventListener('close',()=>{versionRequest++;});
+
 async function watchCatchup(id,attempt=0){if(attempt>60)return;setTimeout(async()=>{try{const value=await request('/api/catchup');if(value.id!==id)return;if(value.status==='completed'||value.status==='failed')message(`Catch-up ${value.status}: ${value.findings||0} new findings, ${value.unavailable||0} unavailable histories. ${value.reason||''}`,value.status==='failed');else watchCatchup(id,attempt+1);}catch{}},10000);}
 
 async function momentumFindings(source){

@@ -10,3 +10,4 @@ supabase/
 
 build/
 *.spec
+web/version.json

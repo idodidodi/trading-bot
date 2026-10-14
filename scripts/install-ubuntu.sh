@@ -26,6 +26,7 @@ ExecStart=/usr/bin/python3 "$APP_DIR/platform_app.py"
 Restart=on-failure
 RestartSec=15
 Environment=PYTHONUNBUFFERED=1
+Environment=TRADING_BOT_ENV=prod
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=HOST=127.0.0.1
 NoNewPrivileges=true

@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 import urllib.request
 from http.server import ThreadingHTTPServer
 from backtest import START, END, replay, run_backtest
@@ -12,6 +13,7 @@ from scanner import prepare_store, scan_once
 from test_scanner import fixture
 
 
+@patch.dict('os.environ', {'TRADING_BOT_ENV': 'prod'})
 class TabsTests(unittest.TestCase):
     def permissive_rules(self):
         return load_rules() | {'max_band_slope_pct': 1.5}

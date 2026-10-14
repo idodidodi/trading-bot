@@ -68,7 +68,9 @@ def snapshot(store):
         scan=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone() if status_exists else None
         if scan:
             enqueue(db,'summary','live',json.loads(scan[0]).get('coverage',[]))
-            enqueue(db,'summary','scanner',json.loads(scan[0]))
+            from version_info import local_versions
+            from runtime_env import environment
+            enqueue(db,'summary','scanner',json.loads(scan[0]) | dict(versions=local_versions(),environment=environment()))
         selections={}
         for table,field,order in [('daily_universe','daily_selection','session'),('weekly_stock_screen','weekly_stock_selection','day')]:
             if db.execute("SELECT 1 FROM sqlite_master WHERE name=?",(table,)).fetchone():
@@ -185,6 +187,8 @@ def apply(store,response):
 
 
 def worker(store,stop):
+    from runtime_env import environment
+    if environment() != 'prod':return
     url=os.environ.get('CLOUD_SYNC_URL','');token=os.environ.get('CLOUD_SYNC_TOKEN','')
     if not url or not token:return
     if not url.startswith('https://'):raise ValueError('Cloud sync requires HTTPS')

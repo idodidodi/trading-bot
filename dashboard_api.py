@@ -14,6 +14,9 @@ def ensure(store):
 def read(store, path):
     url=urlsplit(path);query=parse_qs(url.query)
     param=lambda key,default='':query.get(key,[default])[0]
+    if url.path=='/api/versions':
+        from version_info import versions
+        return versions()
     if url.path=='/api/csv-backtests':
         from csv_backtests import view
         page=int(param('page','0'))

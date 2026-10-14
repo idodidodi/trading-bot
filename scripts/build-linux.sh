@@ -6,6 +6,7 @@ if [[ "$(uname -s)" != Linux || "$(uname -m)" != x86_64 ]]; then
   exit 1
 fi
 python3 -m pip install -r windows-build-requirements.txt
+python3 scripts/build-version.py
 python3 -m PyInstaller --noconfirm --clean --onefile --name FamilyTradingBot-linux-x86_64 \
   --collect-all tzdata --collect-data certifi \
   --add-data 'web:web' --add-data 'skills:skills' --add-data 'scanner.json:.' \

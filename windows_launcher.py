@@ -36,7 +36,11 @@ def main():
         if ctypes.windll.kernel32.GetLastError()==183:
             webbrowser.open('http://127.0.0.1:8080')
             return
-    threading.Timer(2,lambda:webbrowser.open('http://127.0.0.1:8080')).start()
+    if not frozen:
+        from platform_app import ROOT, load_env
+        from runtime_env import configure
+        load_env();configure(ROOT)
+    threading.Timer(2,lambda:webbrowser.open('http://127.0.0.1:'+os.environ.get('PORT','8080'))).start()
     from platform_app import main as run
     run()
 

@@ -13,6 +13,10 @@ from cloud_sync import apply, batch, meta, snapshot
 
 def main():
     load_env()
+    from runtime_env import environment, configure
+    if environment() != 'prod':
+        raise SystemExit('Cloud upload is production-only. Run with TRADING_BOT_ENV=prod and the production DATA_DIR.')
+    configure(ROOT)
     url = os.environ.get("CLOUD_SYNC_URL", "")
     token = os.environ.get("CLOUD_SYNC_TOKEN", "")
     if not url.startswith("https://") or not token:

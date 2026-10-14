@@ -409,6 +409,9 @@ def worker(store, stop):
 
 if __name__=='__main__':
     from platform_app import ROOT, Store, load_env
-    load_env();store=Store(Path(os.environ.get('DATA_DIR',str(ROOT/'data')))/'signals.sqlite3')
+    from runtime_env import configure
+    load_env();configure(ROOT)
+    data=Path(os.environ['DATA_DIR']);data.mkdir(parents=True,exist_ok=True)
+    store=Store(data/'signals.sqlite3')
     result=cycle(store)
     print(json.dumps(result,indent=2))

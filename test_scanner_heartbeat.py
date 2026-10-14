@@ -9,6 +9,7 @@ from platform_app import Store
 from scanner import next_heartbeat_at, prepare_store, scanner_heartbeat, scanner_worker
 
 
+@patch.dict('os.environ', {'TRADING_BOT_ENV': 'prod'})
 class ScannerHeartbeatTests(unittest.TestCase):
     def test_wall_clock_schedule_before_at_and_after_quarter_hour(self):
         self.assertEqual(next_heartbeat_at(899), 900)
