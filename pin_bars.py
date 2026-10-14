@@ -40,7 +40,11 @@ def direction(bar, fast, slow, ratio):
     body = abs(bar.open - bar.close)
     lower = min(bar.open, bar.close) - bar.low
     upper = bar.high - max(bar.open, bar.close)
-    if (fast > slow and bar.close > slow and lower > body * ratio
+    # Bullish bias comes from the dominant lower wick, regardless of body color.
+    # User override: allow bullish pin bars below the slow EMA or in a downtrend.
+    # fast > slow
+    # bar.close > slow
+    if (lower > body * ratio
             and lower > upper and (bar.low <= fast or bar.low <= slow)):
         return 'bullish'
     if (fast < slow and bar.close < slow and upper > body * ratio

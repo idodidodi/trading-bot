@@ -23,8 +23,8 @@ class PinBarTests(unittest.TestCase):
         b = Candle(1000,2000,110,111.1,100,111)
         self.assertEqual(pin_bars.direction(b,108,105,2),'bullish')
         self.assertIsNone(pin_bars.direction(replace(b,low=108),108,105,2))
-        self.assertIsNone(pin_bars.direction(b,105,105,2))
-        self.assertIsNone(pin_bars.direction(b,115,111,2))
+        self.assertEqual(pin_bars.direction(b,105,105,2),'bullish')
+        self.assertEqual(pin_bars.direction(b,115,111,2),'bullish')
         self.assertIsNone(pin_bars.direction(replace(b,high=121),108,105,2))
         self.assertIsNone(pin_bars.direction(b,99,98,2))
         # Exact touch passes; a red body is allowed for the bullish pattern.
@@ -35,6 +35,10 @@ class PinBarTests(unittest.TestCase):
         self.assertIsNone(pin_bars.direction(replace(bearish,high=93),93,95,2))
         self.assertIsNone(pin_bars.direction(bearish,101,102,2))
         self.assertEqual(pin_bars.direction(replace(bearish,open=90),93,95,2),'bearish')
+
+    def test_marked_eurusd_candle_is_bullish_despite_red_body_and_downtrend(self):
+        b = Candle(1000,2000,1.11885,1.119349,1.1175,1.11876)
+        self.assertEqual(pin_bars.direction(b,1.1180955746596948,1.1192357959604202,2),'bullish')
 
     def test_ema_seed_and_confirmation_without_future_candles(self):
         self.assertEqual(pin_bars.ema([10,20,30],3),[10,15,22.5])

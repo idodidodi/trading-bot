@@ -1,6 +1,6 @@
 ---
 name: pin-bars
-description: Scan OHLC candles for the separate Pin-Bars strategy using EMA 8/21 trend alignment, a dominant wick, and an EMA touch. Use for bullish and bearish Pin-Bar scans or implementation based on EMA_PinBar_Alert.mq4.
+description: Scan OHLC candles for the separate Pin-Bars strategy using a dominant wick and an EMA touch, with EMA 8/21 trend filters for bearish signals only. Use for bullish and bearish Pin-Bar scans or implementation based on EMA_PinBar_Alert.mq4 with the documented user override.
 ---
 
 # Pin-Bars
@@ -32,8 +32,9 @@ Preserve numeric precision until display.
 All conditions must hold on the same candle:
 
 ```text
-fast_ema > slow_ema
-close > slow_ema
+# User override: allow bullish pin bars below the slow EMA or in a downtrend.
+# fast_ema > slow_ema
+# close > slow_ema
 lower_wick > body * pin_bar_ratio
 lower_wick > upper_wick
 low <= fast_ema OR low <= slow_ema
@@ -51,7 +52,7 @@ upper_wick > lower_wick
 high >= fast_ema OR high >= slow_ema
 ```
 
-Use the strict inequalities exactly: a wick equal to twice the body fails at the default ratio; equal EMAs, a close equal to the slow EMA, or equal opposing wicks also fail. Touching an EMA exactly passes the touch condition. The touch rule uses OR, so touching either EMA is enough. Do not require touching both or crossing and reclaiming the fast EMA.
+Use the strict inequalities exactly: a wick equal to twice the body or equal opposing wicks fails. For bearish signals only, equal EMAs or a close equal to the slow EMA also fails. The bullish EMA alignment and close-above-slow filters are disabled by user request; a dominant lower wick gives bullish bias regardless of candle body color. Touching an EMA exactly passes the touch condition. The touch rule uses OR, so touching either EMA is enough. Do not require touching both or crossing and reclaiming the fast EMA.
 
 The source does not require a bullish candle body for a long signal or a bearish body for a short signal. A zero-body candle can qualify if its dominant wick is positive and all remaining conditions hold; compare products directly rather than dividing by body size. Do not add RSI, Bollinger Band, pivot, candle-color, slope, or additional wick filters.
 

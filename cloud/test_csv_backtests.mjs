@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {execFileSync} from 'node:child_process';
-import {parseCSV,replayCSV} from './functions/csv-backtests/engine.mjs';
+import {detectPinBars,parseCSV,replayCSV} from './functions/csv-backtests/engine.mjs';
+// The marked red-bodied EURUSD candle is bullish even below EMA 21 in a downtrend.
+const marked={start:22*14400000,end:23*14400000,open:1.11885,high:1.119349,low:1.1175,close:1.11876};
+const downtrend=Array.from({length:22},(_,i)=>({start:i*14400000,end:(i+1)*14400000,open:1.122-i*.0001,high:1.122-i*.0001,low:1.122-i*.0001,close:1.122-i*.0001}));
+const markedSignals=detectPinBars([...downtrend,marked],{fast:8,slow:21,ratio:2},'test','EURUSD','4h');
+assert.equal(markedSignals.at(-1).direction,'bullish');
+assert.ok(markedSignals.at(-1).fast_ema<markedSignals.at(-1).slow_ema);
+assert.ok(marked.close<markedSignals.at(-1).slow_ema);
 const start=1700000000000,bars=Array.from({length:70},(_,i)=>({start:start+i*14400000,open:100+i,high:101+i,low:99+i,close:100+i}));bars.at(-1).open=168;bars.at(-1).high=169.1;bars.at(-1).low=149;
 const csv='time,open,high,low,close,EMA,EMA\n'+bars.map(b=>`${b.start},${b.open},${b.high},${b.low},${b.close},999,999`).join('\n');
 const body={csv,symbol:'TEST',timeframe:'4h',strategy:'pin-bars'},now=bars.at(-1).start+14400000;
