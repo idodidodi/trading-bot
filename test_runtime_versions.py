@@ -16,7 +16,7 @@ class RuntimeTests(unittest.TestCase):
         with patch.dict(os.environ, {'DATA_DIR':'/production', 'PORT':'8080', 'DRY_RUN':'false',
                                      'PAPER_TRADING_ENABLED':'true'}, clear=True):
             self.assertEqual(runtime.configure('/source'), 'dev')
-            self.assertEqual(os.environ['DATA_DIR'], '/source/data/dev')
+            self.assertEqual(Path(os.environ['DATA_DIR']), Path('/source/data/dev'))
             self.assertEqual(os.environ['PORT'], '8082')
             self.assertEqual(os.environ['DRY_RUN'], 'true')
             self.assertEqual(os.environ['PAPER_TRADING_ENABLED'], 'false')
@@ -28,7 +28,7 @@ class RuntimeTests(unittest.TestCase):
     def test_executable_always_production_and_source_service_can_opt_in(self):
         with patch.dict(os.environ, {'TRADING_BOT_ENV':'dev','DATA_DIR':'/production','PORT':'8080'}, clear=True), patch('sys.frozen',True,create=True):
             self.assertEqual(runtime.configure('/bundle'), 'prod')
-            self.assertEqual(os.environ['DATA_DIR'], '/production')
+            self.assertEqual(Path(os.environ['DATA_DIR']), Path('/production'))
             self.assertEqual(os.environ['PORT'], '8080')
         with patch.dict(os.environ, {'TRADING_BOT_ENV':'prod'}, clear=True):
             self.assertEqual(runtime.data_directory('/source'), Path('/source/data'))
