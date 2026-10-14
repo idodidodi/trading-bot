@@ -2,7 +2,26 @@ name: Windows standalone release
 on:
   workflow_dispatch:
   push:
+    branches: ['**']
     tags: ['v*']
+    # Path filters apply to branch pushes; version tags always build.
+    paths:
+      - '*.py'
+      - 'web/**'
+      - 'skills/**'
+      - 'scanner.json'
+      - 'stock_universe.json'
+      - 'tradingview_template.pine'
+      - '.env.example'
+      - '*requirements*.txt'
+      - 'pyproject.toml'
+      - 'poetry.lock'
+      - 'uv.lock'
+      - 'scripts/build-*.sh'
+      - 'scripts/build-*.ps1'
+      - 'scripts/*-manifest.py'
+      - 'scripts/smoke-*.py'
+      - '.github/workflows/**'
 permissions:
   contents: write
 jobs:
@@ -41,7 +60,17 @@ jobs:
           }
           Get-Process FamilyTradingBot -ErrorAction SilentlyContinue | Stop-Process -Force
           if (-not $Ready) { throw 'Standalone Windows app did not start correctly' }
+      - name: Save executable and update manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: family-trading-bot-windows-${{ github.sha }}
+          path: |
+            dist/FamilyTradingBot.exe
+            dist/windows-update.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
