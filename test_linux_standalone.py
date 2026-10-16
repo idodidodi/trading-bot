@@ -14,6 +14,7 @@ import windows_update as updates
 
 
 class LinuxStandaloneTests(unittest.TestCase):
+    @unittest.skipUnless(os.name=='posix','XDG absolute paths use POSIX semantics')
     def test_standard_secrets_location_and_custom_path_validation(self):
         with patch.dict(os.environ,{},clear=True):
             self.assertEqual(launcher.settings_path(),Path.home()/'.config/FamilyTradingBot/.env')
@@ -31,7 +32,7 @@ class LinuxStandaloneTests(unittest.TestCase):
             (root/'data').mkdir();(root/'data/history').write_text('keep')
             settings=launcher.prepare_settings(root,Path(folder)/'bundle')
             self.assertEqual(settings.read_text(),'TELEGRAM_BOT_TOKEN=legacy\n')
-            self.assertEqual(settings.stat().st_mode&0o777,0o600)
+            if os.name=='posix':self.assertEqual(settings.stat().st_mode&0o777,0o600)
             settings.write_text('TELEGRAM_BOT_TOKEN=new\n')
             launcher.prepare_settings(root,Path(folder)/'bundle')
             self.assertIn('new',settings.read_text())
