@@ -24,7 +24,7 @@ SKILL = ROOT / 'skills/rsi-divergence/SKILL.md'
 
 
 def load_env():
-    path = ROOT / '.env'
+    path = Path(os.environ.get('TRADING_BOT_ENV_FILE', str(ROOT / '.env'))).expanduser()
     if path.exists():
         for line in path.read_text(encoding='utf-8').splitlines():
             if line.strip() and not line.lstrip().startswith('#'):

@@ -48,14 +48,21 @@ def stop_app():
 
 
 ready()
-settings=root/'.env'
+settings=Path(os.environ['XDG_CONFIG_HOME'])/'FamilyTradingBot'/'.env'
+assert settings.is_file()
+assert not (root/'.env').exists()
 with settings.open('a') as output:output.write('\n# smoke-test: settings must survive restart\n')
-marker=root/'data'/'persistent-smoke.txt';marker.write_text('preserved')
+# Verify a data location selected from the external secrets file on restart.
+custom_data=Path(os.environ['RUNNER_TEMP'])/'family-external-data'
+custom_data.mkdir(exist_ok=True)
+with settings.open('a') as output:output.write('\nDATA_DIR="'+str(custom_data)+'"\n')
+marker=custom_data/'persistent-smoke.txt';marker.write_text('preserved')
 stop_app()
 with Path(os.environ['RUNNER_TEMP'],'family-bot.log').open('a') as log:
     subprocess.Popen([str(root/'bin/FamilyTradingBot')],stdout=log,stderr=log)
 ready()
 assert 'settings must survive restart' in settings.read_text()
 assert marker.read_text()=='preserved'
+assert (custom_data/'signals.sqlite3').exists()
 stop_app()
 print('Native Linux startup, update support, graceful stop and persistent-data restart passed.')

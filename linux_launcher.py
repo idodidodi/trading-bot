@@ -14,6 +14,48 @@ def app_root():
     return base/'FamilyTradingBot'
 
 
+def settings_path():
+    custom=os.environ.get('TRADING_BOT_ENV_FILE')
+    if custom:
+        path=Path(custom).expanduser()
+        if not path.is_absolute():
+            raise ValueError('TRADING_BOT_ENV_FILE must be an absolute path')
+        return path
+    directory=os.environ.get('XDG_CONFIG_HOME')
+    base=Path(directory) if directory and Path(directory).is_absolute() else Path.home()/'.config'
+    return base/'FamilyTradingBot'/'.env'
+
+
+def prepare_settings(root, bundle):
+    settings=settings_path()
+    if os.environ.get('TRADING_BOT_ENV_FILE'):
+        # A typo in a custom secrets path must not silently create a dry-run setup.
+        if not settings.is_file():
+            raise FileNotFoundError('TRADING_BOT_ENV_FILE must point to an existing file')
+    else:
+        settings.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+        if not settings.exists():
+            legacy=root/'.env'
+            text=legacy.read_text(encoding='utf-8') if legacy.exists() else (bundle/'.env.example').read_text(encoding='utf-8').replace('DRY_RUN=false','DRY_RUN=true')
+            # Keep the old file for rollback; never overwrite configured secrets.
+            fd=os.open(settings,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+            with os.fdopen(fd,'w',encoding='utf-8') as output:output.write(text)
+    return settings
+
+
+def configure_storage(root, bundle):
+    os.environ['TRADING_BOT_ROOT']=str(root)
+    os.environ['TRADING_BOT_ENV_FILE']=str(prepare_settings(root,bundle))
+    from platform_app import load_env
+    load_env()
+    # Load .env before choosing data storage so DATA_DIR works in either source.
+    data=Path(os.environ.get('DATA_DIR',str(root/'data'))).expanduser()
+    if not data.is_absolute():
+        raise ValueError('DATA_DIR must be an absolute path for the Linux executable')
+    data.mkdir(parents=True,exist_ok=True,mode=0o700)
+    os.environ['DATA_DIR']=str(data)
+
+
 def external_environment():
     env=dict(os.environ)
     # Native tools must use system libraries, rather than PyInstaller's bundle.
@@ -57,12 +99,7 @@ def main():
             shutil.copytree(bundle/name,root/name,dirs_exist_ok=True)
         for name in ('scanner.json','stock_universe.json','tradingview_template.pine','.env.example'):
             shutil.copy2(bundle/name,root/name)
-        settings=root/'.env'
-        if not settings.exists():
-            settings.write_text((root/'.env.example').read_text(encoding='utf-8').replace('DRY_RUN=false','DRY_RUN=true'),encoding='utf-8')
-            settings.chmod(0o600)
-        os.environ['TRADING_BOT_ROOT']=str(root)
-        os.environ['DATA_DIR']=str(root/'data')
+        configure_storage(root,bundle)
         os.chdir(root)
         import certifi
         os.environ['SSL_CERT_FILE']=certifi.where()

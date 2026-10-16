@@ -47,6 +47,7 @@ jobs:
       - name: Smoke-test frozen app and persistent settings
         env:
           XDG_DATA_HOME: ${{ runner.temp }}/family-bot-smoke
+          XDG_CONFIG_HOME: ${{ runner.temp }}/family-bot-config
           PORT: '18080'
         run: |
           unset DISPLAY WAYLAND_DISPLAY

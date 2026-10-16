@@ -11,9 +11,28 @@ chmod +x FamilyTradingBot-linux-x86_64
 
 The app installs its managed executable in `~/.local/share/FamilyTradingBot/bin/FamilyTradingBot` and opens http://127.0.0.1:8080 in the default browser when a desktop session is available. On a headless computer it starts the scanner without opening a browser. Keep it running in a terminal; close it with Ctrl+C. Running the downloaded executable again opens the existing managed installation.
 
-Settings are in `~/.local/share/FamilyTradingBot/.env`; SQLite state and candle history are in its `data` directory. If `XDG_DATA_HOME` is an absolute path, the app uses `$XDG_DATA_HOME/FamilyTradingBot` instead. No administrator rights are needed.
+Secrets are read from `~/.config/FamilyTradingBot/.env`, outside the program directory. SQLite state and candle history are stored in `~/.local/share/FamilyTradingBot/data`. Absolute `XDG_CONFIG_HOME` and `XDG_DATA_HOME` values replace `~/.config` and `~/.local/share` respectively. No administrator rights are needed.
 
-First launch uses **dry run**. Add your existing provider and Telegram settings to `.env`, set `DRY_RUN=false`, stop the app and restart. For migration, stop the old scanner, copy its `.env` and `data` directory into the persistent folder, and remove old machine-specific `SSL_CERT_FILE` settings. Run one scanner per installation to avoid duplicate alerts.
+Before first launch, you can copy your existing credentials into the standard secrets location:
+
+```sh
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/FamilyTradingBot"
+chmod 700 "${XDG_CONFIG_HOME:-$HOME/.config}/FamilyTradingBot"
+cp /path/to/existing/.env "${XDG_CONFIG_HOME:-$HOME/.config}/FamilyTradingBot/.env"
+chmod 600 "${XDG_CONFIG_HOME:-$HOME/.config}/FamilyTradingBot/.env"
+```
+
+To use other external locations, set an existing secrets file and a data directory when launching:
+
+```sh
+TRADING_BOT_ENV_FILE=/absolute/path/to/secrets/.env \
+DATA_DIR=/absolute/path/to/data \
+./FamilyTradingBot-linux-x86_64
+```
+
+`DATA_DIR=/absolute/path/to/data` can also be placed inside `.env`. Process environment values take precedence over values in the file. Custom paths must be absolute; `~` is expanded in these two overrides. An explicitly selected missing secrets file is an error. Data directories are created as needed. Restart after changing settings. Use the same launch overrides on subsequent manual launches; automatic updates inherit them.
+
+With no existing credentials file, first launch creates one with **dry run** enabled and owner-only permissions. Add your provider and Telegram settings and set `DRY_RUN=false` when ready to send alerts. On upgrade, the previous `~/.local/share/FamilyTradingBot/.env` is copied into the standard secrets folder only if no new file exists; the old copy is retained for rollback and is no longer read. Existing data stays in place. For migration from a source installation, stop the old scanner, copy its `.env` into the secrets folder and its `data` directory into the data location, and remove old machine-specific `SSL_CERT_FILE` settings. Run one scanner per installation to avoid duplicate alerts. Updates preserve external secrets and data.
 
 The app checks stable GitHub releases at startup and **every hour**. The Overview **Check for updates** button checks immediately. Downloads must match the release manifest's size, SHA-256 checksum, Linux platform and x86_64 ELF header. After a verified download the app stops gracefully, atomically replaces its managed executable and restarts. It retains the previous executable as `FamilyTradingBot.previous`; settings and history stay outside the binary. Failed update checks leave the current version running. Replacement failures restore the previous executable; startup failures can be recovered manually using the retained backup.
 
