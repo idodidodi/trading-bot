@@ -11,6 +11,15 @@ chmod +x FamilyTradingBot-linux-x86_64
 
 The app installs its managed executable in `~/.local/share/FamilyTradingBot/bin/FamilyTradingBot` and opens http://127.0.0.1:8080 in the default browser when a desktop session is available. On a headless computer it starts the scanner without opening a browser. Keep it running in a terminal; close it with Ctrl+C. Running the downloaded executable again opens the existing managed installation.
 
+To manually upgrade an existing installation with a branch-build executable, stop the running app first, then replace the managed binary and launch it:
+
+```sh
+BOT_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/FamilyTradingBot"
+mkdir -p "$BOT_DIR/bin"
+install -m 700 ./FamilyTradingBot-linux-x86_64 "$BOT_DIR/bin/FamilyTradingBot"
+"$BOT_DIR/bin/FamilyTradingBot"
+```
+
 Secrets are read from `~/.config/FamilyTradingBot/.env`, outside the program directory. SQLite state and candle history are stored in `~/.local/share/FamilyTradingBot/data`. Absolute `XDG_CONFIG_HOME` and `XDG_DATA_HOME` values replace `~/.config` and `~/.local/share` respectively. No administrator rights are needed.
 
 Before first launch, you can copy your existing credentials into the standard secrets location:
