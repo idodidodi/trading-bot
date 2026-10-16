@@ -24,7 +24,7 @@ SKILL = ROOT / 'skills/rsi-divergence/SKILL.md'
 
 
 def load_env():
-    path = ROOT / '.env'
+    path = Path(os.environ.get('TRADING_BOT_ENV_FILE', str(ROOT / '.env'))).expanduser()
     if path.exists():
         for line in path.read_text(encoding='utf-8').splitlines():
             if line.strip() and not line.lstrip().startswith('#'):
@@ -370,7 +370,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 self.respond(404, {'error': 'Not found'})
 
         def do_POST(self):
-            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state','/api/catchup','/api/updates','/api/csv-backtests'):
+            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state','/api/catchup','/api/updates','/api/csv-backtests','/api/connection-test'):
                 from finding_feedback import save
                 host = self.headers.get('Host')
                 allowed = (f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}')
@@ -386,7 +386,13 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     body = json.loads(self.rfile.read(size))
                     if not isinstance(body, dict):
                         raise ValueError('Expected JSON object')
-                    if self.path=='/api/csv-backtests':
+                    if self.path=='/api/connection-test':
+                        from connection_tests import run, ConnectionTestError
+                        try:
+                            self.respond(200,run(body.get('action'),rules))
+                        except ConnectionTestError as exc:
+                            self.respond(502,{'error':str(exc)})
+                    elif self.path=='/api/csv-backtests':
                         from csv_backtests import save as save_csv
                         self.respond(200,save_csv(store,body))
                     elif self.path=='/api/catchup':

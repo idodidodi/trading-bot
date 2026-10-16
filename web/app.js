@@ -31,13 +31,13 @@ if(online&&location.hash){
   history.replaceState(null,'',location.pathname+location.search);
  }
 }
-async function request(path,body){
+async function request(path,body,timeout=15000){
  if(online)await refreshSession();
  let url=path,headers={},method=body?'POST':'GET';
  if(online){url=config.supabaseUrl+'/rest/v1/rpc/dashboard_api';method='POST';headers={apikey:config.publishableKey,Authorization:'Bearer '+token};body={installation:config.installationId,operation:path,input:body||{}};}
  if(online&&path==='/api/csv-backtests'&&body.input&&Object.keys(body.input).length){url=config.supabaseUrl+'/functions/v1/csv-backtests';body={installation:config.installationId,input:body.input};}
  if(online&&path==='/api/backtests'&&body.input&&Object.keys(body.input).length){url=config.supabaseUrl+'/functions/v1/backtests';body={installation:config.installationId,input:body.input};}
- const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeout);
  try{const r=await fetch(url,{method,headers:{...headers,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,signal:controller.signal});const result=await r.json();if(online&&r.status===401){sessionStorage.removeItem('dashboard_token');token=null;$('login').hidden=false;}if(!r.ok||result.error)throw Error(result.error||result.message||'Request failed');return result;}finally{clearTimeout(timer);}
 }
 let refreshPending=null;
@@ -209,6 +209,23 @@ $('close-followup').onclick=()=>$('followup-dialog').close();
 async function requestCatchup(){try{const result=await request('/api/catchup',{action:'request'});message(result.status==='pending'?'Catch-up queued. The scanner will process missed closed candles and send a Telegram summary when online.':`Catch-up ${result.status}${result.reason?': '+result.reason:''}`);watchCatchup(result.id);}catch(e){message(e.message,true);}}
 async function loadUpdateControls(actions){try{const value=await request('/api/updates');if(!value.supported)return;const label=node('span',`${value.platform||'Windows'} app ${value.version} · hourly updates enabled`);actions.append(label,button('Check for updates',async()=>{try{const result=await request('/api/updates',{action:'check'});message(result.message||'Checking for updates…');}catch(e){message(e.message,true);}}));}catch{}}
 
+function connectionTestControls(panel){
+ if(online)return;
+ const section=node('section'),result=node('p'),actions=node('div'),buttons=[];
+ section.append(node('h3','Connection tests'),node('p','Send a Telegram test message or save one DEMO-CLOUD-SYNC finding in the cloud. These manual tests run even when automatic delivery or sync is disabled.'));
+ result.setAttribute('role','status');result.setAttribute('aria-live','polite');
+ for(const [action,label] of [['telegram','Test Telegram'],['cloud-demo','Sync demo signal to cloud']]){
+  const control=button(label,async()=>{
+   for(const item of buttons)item.disabled=true;
+   result.className='';result.textContent=action==='telegram'?'Sending test message…':'Syncing demo signal…';
+   try{const value=await request('/api/connection-test',{action},30000);result.className='success';result.textContent=value.message;}
+   catch(e){result.className='error';result.textContent=e.name==='AbortError'?'Test timed out. Check Telegram or the online dashboard before retrying.':e.message;}
+   finally{for(const item of buttons)item.disabled=false;}
+  });
+  buttons.push(control);actions.append(control);
+ }
+ section.append(actions,result);panel.append(section);
+}
 let versionRequest=0;
 function versionMatch(current,latest){return !current||!latest?'Comparison unavailable':current===latest?'Matches GitHub':'Differs from GitHub';}
 async function openVersions(){
@@ -232,6 +249,7 @@ async function openVersions(){
   for(const [label,entry] of [['GitHub',value.github],['Release',value.release],['Online UI',value.online_ui]])if(entry?.error)panel.append(node('p',label+': '+entry.error));
   panel.append(node('p','A GitHub push updates source code. The executable takes an update after a newer vX.Y.Z release is published and installed. Component fingerprints detect changes even when the app version stays the same.'));
   const actions=node('div');actions.append(button('Refresh versions',openVersions));panel.append(actions);
+  connectionTestControls(panel);
   if(value.updates?.supported){actions.append(button('Check for app update',async()=>{try{const result=await request('/api/updates',{action:'check'});message(result.message);}catch(e){message(e.message,true);}}));panel.append(node('p',value.updates.message||''));}
  }catch(e){if(id===versionRequest&&dialog.open)panel.replaceChildren(node('p',e.message),button('Retry',openVersions));}
 }

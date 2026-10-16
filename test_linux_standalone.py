@@ -14,6 +14,59 @@ import windows_update as updates
 
 
 class LinuxStandaloneTests(unittest.TestCase):
+    @unittest.skipUnless(os.name=='posix','XDG absolute paths use POSIX semantics')
+    def test_standard_secrets_location_and_custom_path_validation(self):
+        with patch.dict(os.environ,{},clear=True):
+            self.assertEqual(launcher.settings_path(),Path.home()/'.config/FamilyTradingBot/.env')
+        with patch.dict(os.environ,{'XDG_CONFIG_HOME':'relative'},clear=True):
+            self.assertEqual(launcher.settings_path(),Path.home()/'.config/FamilyTradingBot/.env')
+        with patch.dict(os.environ,{'XDG_CONFIG_HOME':'/tmp/config with spaces'},clear=True):
+            self.assertEqual(launcher.settings_path(),Path('/tmp/config with spaces/FamilyTradingBot/.env'))
+        with patch.dict(os.environ,{'TRADING_BOT_ENV_FILE':'relative.env'},clear=True):
+            with self.assertRaisesRegex(ValueError,'absolute'):launcher.settings_path()
+
+    def test_migrates_legacy_secrets_without_overwriting_or_moving_data(self):
+        with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,{'XDG_CONFIG_HOME':folder+'/config'},clear=True):
+            root=Path(folder)/'application';root.mkdir()
+            (root/'.env').write_text('TELEGRAM_BOT_TOKEN=legacy\n')
+            (root/'data').mkdir();(root/'data/history').write_text('keep')
+            settings=launcher.prepare_settings(root,Path(folder)/'bundle')
+            self.assertEqual(settings.read_text(),'TELEGRAM_BOT_TOKEN=legacy\n')
+            if os.name=='posix':self.assertEqual(settings.stat().st_mode&0o777,0o600)
+            settings.write_text('TELEGRAM_BOT_TOKEN=new\n')
+            launcher.prepare_settings(root,Path(folder)/'bundle')
+            self.assertIn('new',settings.read_text())
+            self.assertIn('legacy',(root/'.env').read_text())
+            self.assertEqual((root/'data/history').read_text(),'keep')
+
+    def test_new_install_is_dry_run_and_existing_secrets_are_never_replaced(self):
+        with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,{'XDG_CONFIG_HOME':folder+'/config'},clear=True):
+            bundle=Path(folder)/'bundle';bundle.mkdir()
+            (bundle/'.env.example').write_text('DRY_RUN=false\n')
+            settings=launcher.prepare_settings(Path(folder)/'app',bundle)
+            self.assertEqual(settings.read_text(),'DRY_RUN=true\n')
+            launcher.prepare_settings(Path(folder)/'app',bundle)
+            self.assertEqual(settings.read_text(),'DRY_RUN=true\n')
+
+    def test_external_env_and_data_paths_and_environment_precedence(self):
+        with tempfile.TemporaryDirectory(prefix='family storage ') as folder:
+            base=Path(folder);settings=base/'secrets.env'
+            settings.write_text('DATA_DIR="'+str(base/'external data')+'"\nDRY_RUN=true\n')
+            for override in (None,str(base/'environment data')):
+                env={'TRADING_BOT_ENV_FILE':str(settings)}
+                if override:env['DATA_DIR']=override
+                with patch.dict(os.environ,env,clear=True):
+                    launcher.configure_storage(base/'application',base/'bundle')
+                    expected=Path(override) if override else base/'external data'
+                    self.assertEqual(Path(os.environ['DATA_DIR']),expected)
+                    self.assertTrue(expected.is_dir())
+                    self.assertEqual(os.environ['DRY_RUN'],'true')
+            with patch.dict(os.environ,{'TRADING_BOT_ENV_FILE':str(base/'missing.env')},clear=True):
+                with self.assertRaises(FileNotFoundError):launcher.prepare_settings(base,base)
+            settings.write_text('DATA_DIR=relative\n')
+            with patch.dict(os.environ,{'TRADING_BOT_ENV_FILE':str(settings)},clear=True):
+                with self.assertRaisesRegex(ValueError,'absolute'):launcher.configure_storage(base,base)
+
     @unittest.skipUnless(os.name=='posix','Linux paths and loader variables use POSIX semantics')
     def test_persistent_root_and_native_environment(self):
         with patch.dict(os.environ,{'XDG_DATA_HOME':'/tmp/family linux','LD_LIBRARY_PATH':'/bundle','LD_LIBRARY_PATH_ORIG':'/system'}):
