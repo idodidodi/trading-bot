@@ -1,11 +1,12 @@
 import fs from 'node:fs';
+import {defaults} from './functions/csv-backtests/rules.mjs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 import {detect,validateCandles,followupWindows} from './functions/backtests/engine.mjs';
-const script=fs.readFileSync('cloud/functions/backtests/index.ts','utf8').replace(/^import .*;\n/,'');
+const script=fs.readFileSync('cloud/functions/backtests/index.ts','utf8').replace(/^import .*;\n/gm,'');
 let handler,background,writes=[],owner=true,validToken=true,invalidHistory=false;
 const rules={rsi_period:3,bb_period:20,bb_multiplier:2,pivot_left:2,pivot_right:1,min_spacing:5,max_spacing:60};
-const context=vm.createContext({Error,detect,validateCandles,followupWindows,URLSearchParams,Response,crypto,TextEncoder,Deno:{env:{get:k=>k==='SUPABASE_URL'?'https://test.supabase.co':'server-key'},serve:fn=>handler=fn},EdgeRuntime:{waitUntil:p=>background=p},fetch:async(url,options={})=>{
+const context=vm.createContext({defaults,Error,detect,validateCandles,followupWindows,URLSearchParams,Response,crypto,TextEncoder,Deno:{env:{get:k=>k==='SUPABASE_URL'?'https://test.supabase.co':'server-key'},serve:fn=>handler=fn},EdgeRuntime:{waitUntil:p=>background=p},fetch:async(url,options={})=>{
  if(url.endsWith('/auth/v1/user'))return Response.json({}, {status:validToken?200:401});
  if(url.endsWith('/rpc/dashboard_api')){assert.equal(options.headers.Authorization,'Bearer user-token');return Response.json(owner?{id:'job',status:'running'}:{error:'Not authorized'},{status:owner?200:403});}
  if(url.includes('kind=eq.backtest_run'))return Response.json([{payload:{rules}}]);

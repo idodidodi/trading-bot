@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Scanner changelog &amp; FMP setup</title>
+<style>body{font:17px/1.6 system-ui,sans-serif;max-width:780px;margin:48px auto;padding:0 24px;color:#202938;background:#fafbfc}h1,h2{line-height:1.2}code,pre{background:#e9edf2;border-radius:4px}code{padding:2px 5px}pre{padding:16px;overflow:auto}li{margin:10px 0}a{color:#2458a0}</style>
+</head>
+<body>
+<h1>Scanner changelog &amp; FMP setup</h1>
+<p>Source update · October 17, 2026 · Pending executable release</p>
+<h2>What changed</h2>
+<ul>
+<li>S&amp;P 500 cash index: FMP symbol <code>^GSPC</code>, scanner asset <code>SPX</code>.</li>
+<li>Daily scanning, with complete weekly and monthly candles aggregated from daily OHLC. Daily candles become eligible after midnight UTC following the session date.</li>
+<li>Historical downloads support pagination beyond 5,000 rows, CSV exports and local FMP backtests.</li>
+<li>DAX and intraday index candles require additional subscription access on the tested account.</li>
+</ul>
+<h2>Update your local credentials</h2>
+<p>Stop the scanner and edit its existing credentials file using a local text editor. Keep all other settings.</p>
+<ul>
+<li>Source checkout: <code>.env</code> beside <code>platform_app.py</code>.</li>
+<li>Linux app: <code>~/.config/FamilyTradingBot/.env</code>; an absolute <code>XDG_CONFIG_HOME</code> changes the config directory.</li>
+<li>Windows app: <code>%LOCALAPPDATA%\FamilyTradingBot\.env</code>.</li>
+<li>If your installation selects a custom <code>TRADING_BOT_ENV_FILE</code>, edit that file.</li>
+</ul>
+<p>Add or update this line, replacing the placeholder with your own key only in that local file:</p>
+<pre>FMP_API_KEY=YOUR_OWN_FMP_API_KEY</pre>
+<p>On macOS/Linux, restrict the actual file to your user:</p>
+<pre>chmod 600 /absolute/path/to/.env</pre>
+<p>On Windows, keep the file in your private user profile. If the folder is shared, restrict file access in Properties → Security.</p>
+<p>Restart the scanner. A process environment variable with the same name overrides the file; update it as well if you set one.</p>
+<h2>Enable an existing SPX asset</h2>
+<p>In Assets choose <strong>FMP cash indices</strong>, symbol <code>^GSPC</code>, exchange <code>INDEX</code>, market <code>index</code>. Choose daily, weekly and monthly only, confirm the feed, and enable SPX. A new feed starts with a signal baseline.</p>
+<p>Source installations can verify and activate the feed, back up SQLite and export history using:</p>
+<pre>.venv/bin/python scripts/activate-fmp.py --database /absolute/path/to/signals.sqlite3</pre>
+<p>Use the database for your installation. Fresh installations include the SPX default; upgrades preserve saved asset settings. Online asset editing needs the updated <code>cloud/providers.sql</code> migration.</p>
+<h2>Keep the key private</h2>
+<p>Enter the real key only in the local credentials file or process environment. Do not enter it in Assets or the online dashboard, or include it in screenshots, chat, Git or release notes. The example file contains an empty key. Executable updates preserve your existing credentials and bundle only the empty template. FMP errors shown by the scanner exclude authenticated URLs and provider response bodies.</p>
+<p>This page never reads or submits credentials. If a key is exposed, replace it in your FMP account and update the local file.</p>
+</body>
+</html>

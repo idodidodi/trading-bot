@@ -47,6 +47,7 @@ jobs:
       - name: Smoke-test frozen app and persistent settings
         env:
           XDG_DATA_HOME: ${{ runner.temp }}/family-bot-smoke
+          XDG_CONFIG_HOME: ${{ runner.temp }}/family-bot-config
           PORT: '18080'
         run: |
           unset DISPLAY WAYLAND_DISPLAY
@@ -70,6 +71,6 @@ jobs:
           version=$(python3 -c 'from app_version import VERSION; print(VERSION)')
           tag="v$version"
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --target "$GITHUB_SHA" --title "Family Trading Bot $version" --notes 'Standalone Family Trading Bot release with persistent per-user data and hourly updates.'
+            gh release create "$tag" --target "$GITHUB_SHA" --title "Family Trading Bot $version" --notes-file CHANGELOG.md
           fi
           gh release upload "$tag" dist/FamilyTradingBot-linux-x86_64 dist/linux-x86_64-update.json --clobber

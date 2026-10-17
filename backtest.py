@@ -36,13 +36,18 @@ def run_backtest(store, config, rules, *, provisional=False):
         for timeframe in config['timeframes']:
             row = dict(asset=asset['id'], timeframe=timeframe)
             try:
-                if asset['provider'] in ('alpaca', 'tiingo'):
+                if asset['provider'] in ('alpaca', 'tiingo', 'fmp'):
                     from alpaca_feed import fetch_alpaca
                     from tiingo_feed import fetch_tiingo
                     if asset['provider'] == 'alpaca':
                         bars = fetch_alpaca(asset, timeframe, start='2016-01-01T00:00:00Z', end=end_iso)
                         feed_id = f"alpaca:{asset.get('exchange', 'Alpaca-' + asset.get('alpaca_feed', 'sip') + '-split')}:{asset['symbol']}"
                         row['source'] = dict(provider='Alpaca', feed=asset.get('alpaca_feed', 'sip'), adjustment='split')
+                    elif asset['provider'] == 'fmp':
+                        from fmp_feed import fetch_fmp
+                        bars = fetch_fmp(asset, timeframe, end=end_iso)
+                        feed_id = f"fmp:INDEX:{asset['symbol']}"
+                        row['source'] = dict(provider='FMP', feed='cash index', alignment='UTC calendar')
                     else:
                         bars = fetch_tiingo(asset, timeframe, start=f'{year-1}-01-01T00:00:00Z', end=end_iso)
                         feed_id = f"tiingo:Tiingo-UTC:{asset['symbol']}"

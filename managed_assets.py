@@ -7,7 +7,7 @@ import time
 DEFAULTS = ['monthly', 'weekly', 'daily', '4h']
 SUPPORTED_TIMEFRAMES = DEFAULTS + ['1h']
 LIMIT = 100
-PROVIDERS = ('csv', 'twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca')
+PROVIDERS = ('csv', 'twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca', 'fmp')
 SCAN_STRATEGIES = ['rsi', 'pin-bars']
 SUPPORTED_SCAN_STRATEGIES = SCAN_STRATEGIES + ['bb-pin-bars']
 TOKEN = re.compile(r'[A-Za-z0-9_^=:.!/\-]{1,100}')
@@ -53,9 +53,11 @@ def validate_asset(asset):
     if not isinstance(asset, dict) or not isinstance(asset.get('id'),str) or not TOKEN.fullmatch(asset['id']):
         raise ValueError('Invalid ticker')
     if asset.get('provider') not in PROVIDERS:
-        raise ValueError('Select CSV, Twelve Data, Kraken, OANDA, Tiingo or Alpaca')
+        raise ValueError('Select CSV, Twelve Data, Kraken, OANDA, Tiingo, Alpaca or FMP')
     if type(asset.get('enabled')) is not bool:
         raise ValueError('Invalid enabled state')
+    if 'market' in asset and asset['market'] not in (None, 'stock', 'stocks', 'equity', 'equities', 'etf', 'forex', 'crypto', 'index', 'indices', 'commodity', 'commodities', 'futures'):
+        raise ValueError('Invalid asset market')
     strategies = asset.get('scan_strategies', SCAN_STRATEGIES)
     if not isinstance(strategies, list) or not strategies or any(s not in SUPPORTED_SCAN_STRATEGIES for s in strategies) or len(strategies) != len(set(strategies)):
         raise ValueError('Choose at least one supported scan strategy')
@@ -69,7 +71,7 @@ def validate_asset(asset):
     if asset.get('tradingview_symbol') and ':' not in asset['tradingview_symbol']:
         raise ValueError('TradingView symbol must include its exchange, e.g. NASDAQ:NVDA')
     overrides = asset.get('timeframe_providers', {})
-    if not isinstance(overrides, dict) or any(f not in SUPPORTED_TIMEFRAMES or p not in ('twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca') for f, p in overrides.items()):
+    if not isinstance(overrides, dict) or any(f not in SUPPORTED_TIMEFRAMES or p not in ('twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca', 'fmp') for f, p in overrides.items()):
         raise ValueError('Invalid timeframe providers')
     if overrides and asset['provider'] == 'csv':
         raise ValueError('Timeframe provider overrides require an API feed')
@@ -93,6 +95,10 @@ def validate_asset(asset):
             if asset['provider'] == 'oanda' and asset.get('exchange') != 'OANDA':
                 raise ValueError('Select OANDA as the provider exchange')
             validate_oanda(feed, frame)
+
+        if feed['provider'] == 'fmp' and asset['enabled']:
+            from fmp_feed import validate_feed as validate_fmp
+            validate_fmp(feed, frame)
 
         if feed['provider'] == 'tiingo' and asset['enabled']:
             from tiingo_feed import validate_feed as validate_tiingo
@@ -177,7 +183,7 @@ def change(store, body):
             current=assets[index]
             validate_asset(current | incoming)
             # Do not accept arbitrary file paths, credentials or unknown scanner fields.
-            for key in ('provider','enabled','timeframes','symbol','exchange','tradingview_symbol','feed_confirmed','timeframe_providers','scan_strategies'):
+            for key in ('provider','enabled','timeframes','symbol','exchange','tradingview_symbol','feed_confirmed','timeframe_providers','scan_strategies','market'):
                 if key in incoming:current[key]=incoming[key]
             current.setdefault('path','data/candles/{asset}-{timeframe}.csv')
             results=[dict(ticker=current['id'],status='saved')]

@@ -78,7 +78,7 @@ jobs:
           $Version = python -c "from app_version import VERSION; print(VERSION)"
           $Tag = "v$Version"
           gh release view $Tag *> $null
-          if ($LASTEXITCODE -ne 0) { gh release create $Tag --target $env:GITHUB_SHA --title "Family Trading Bot $Version" --notes 'Standalone Windows scanner with hourly automatic updates. State and credentials remain in LocalAppData.' }
+          if ($LASTEXITCODE -ne 0) { gh release create $Tag --target $env:GITHUB_SHA --title "Family Trading Bot $Version" --notes-file CHANGELOG.md }
           if ($LASTEXITCODE -ne 0) { throw 'Release creation failed' }
           gh release upload $Tag dist/FamilyTradingBot.exe dist/windows-update.json --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Release upload failed' }

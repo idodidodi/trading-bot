@@ -240,18 +240,19 @@
     },
     {
       "id": "SPX",
-      "provider": "csv",
-      "path": "data/candles/{asset}-{timeframe}.csv",
-      "enabled": false,
+      "provider": "fmp",
+      "enabled": true,
       "timeframes": [
         "monthly",
         "weekly",
-        "daily",
-        "4h",
-        "1h"
+        "daily"
       ],
       "tradingview_symbol": "SP:SPX",
-      "portfolio": true
+      "portfolio": true,
+      "symbol": "^GSPC",
+      "exchange": "INDEX",
+      "market": "index",
+      "feed_confirmed": true
     },
     {
       "id": "MRVL",

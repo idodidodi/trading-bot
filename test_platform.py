@@ -18,7 +18,6 @@ from platform_app import Store, delivery_worker, handler_factory, load_env, load
 def example():
     return dict(secret='s' * 32, symbol='OANDA:EURUSD', timeframe='240', direction='bullish',
                 price1=1.10, price2=1.09, rsi1=15.0, rsi2=25.0, band1=1.11, band2=1.095,
-                band_slope_pct=0.25,
                 pivot1=1700000000000, pivot2=1700100000000, confirmed_at=1700200000000,
                 spacing=7, rules=load_rules())
 
@@ -48,7 +47,7 @@ class RulesTests(unittest.TestCase):
         self.assertEqual(validate_signal(p, load_rules())['direction'], 'bearish')
 
     def test_reject_invalid_evidence(self):
-        changes = [dict(price2=1.11), dict(rsi2=10), dict(band2=1.08), dict(spacing=2),
+        changes = [dict(price2=1.11), dict(rsi2=10), dict(band2=1.08), dict(spacing=1),
                    dict(rsi1=float('nan')), dict(pivot2=1700000000000), dict(rsi2=101), dict(rules={})]
         for change in changes:
             with self.subTest(change=change), self.assertRaises(ValueError):

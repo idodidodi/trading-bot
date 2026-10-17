@@ -37,6 +37,18 @@ class WeeklyStockScreenTests(unittest.TestCase):
             self.assertEqual(two['status'],'partial')
             self.assertFalse(set(two['symbols']) & set(one['symbols']))
 
+    def test_managed_stock_disable_and_timeframes_override_rotating_selection(self):
+        with patch('weekly_stock_screen.universe',return_value=(list(self.history),[])), \
+             patch('weekly_stock_screen._market_snapshot',return_value=self.history):
+            _,selection=resolve(self.store,self.config,load_rules(),instant('2026-10-05T09:00:00'))
+            symbol=selection['symbols'][0]
+            managed=dict(id='STOCK-'+symbol,symbol=symbol,market='stock',provider='alpaca',enabled=False,timeframes=['daily','1h'])
+            config=self.config|dict(assets=[managed])
+            effective,new_selection=resolve(self.store,config,load_rules(),instant('2026-10-05T09:00:00'))
+        self.assertNotIn(symbol,new_selection['symbols'])
+        matches=[a for a in effective['assets'] if a['id']==managed['id']]
+        self.assertEqual(matches,[managed])
+
     def test_five_weekdays_have_100_distinct_stocks(self):
         symbols=[f'Q{i:03d}' for i in range(120)]
         histories={symbol:self.history['T000'] for symbol in symbols}

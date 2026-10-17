@@ -1,10 +1,11 @@
 import {detect,validateCandles,followupWindows} from './engine.mjs';
+import {defaults} from '../csv-backtests/rules.mjs';
 const url=Deno.env.get('SUPABASE_URL'),key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type','Access-Control-Allow-Methods':'POST,OPTIONS'};
 const admin={apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json'};
 async function api(path,body){const r=await fetch(url+'/rest/v1/'+path,{headers:admin,method:body?'POST':'GET',body:body?JSON.stringify(body):undefined});if(!r.ok)throw Error('Cloud storage operation failed');return r.status===204?null:await r.json();}
 async function run(installation,job,input){try{
- const history=await api('dashboard_records?'+new URLSearchParams({installation:'eq.'+installation,kind:'eq.backtest_run',select:'payload',order:'updated_at.desc',limit:'1'}));const historicalRules=history[0]?.payload.rules;if(!historicalRules)throw Error('Historical rules have not synced');const rules={...historicalRules,price_source:'close',strategy_revision:'close-divergence-v1'};
+ const history=await api('dashboard_records?'+new URLSearchParams({installation:'eq.'+installation,kind:'eq.backtest_run',select:'payload',order:'updated_at.desc',limit:'1'}));const rules=defaults.rsi;
  const year=history[0]?.payload.year||2020,start=Date.UTC(year,0,1),end=history[0]?.payload.end_at||Math.min(Date.UTC(year+1,0,1),Date.now()),results=[],findings=[];
  for(const asset of input.assets)for(const timeframe of input.timeframes){const candles=[];for(let offset=0;offset<100000;offset+=1000){const rows=await api('dashboard_records?'+new URLSearchParams({installation:'eq.'+installation,kind:'eq.candle','payload->>source':'eq.backtest','payload->>symbol':'eq.'+asset,'payload->>timeframe':'eq.'+timeframe,select:'payload',order:'payload->>start.asc',offset:String(offset),limit:'1000'}));candles.push(...rows.map((r)=>r.payload));if(rows.length<1000)break;if(offset===99000)throw Error('Historical series exceeds replay limit');}
  let row={asset,timeframe,status:'unavailable',signals:0,note:'Historical candles have not synced'};

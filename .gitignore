@@ -1,4 +1,5 @@
 .env
+.env.prod
 data/
 __pycache__/
 *.pyc
@@ -11,3 +12,7 @@ supabase/
 build/
 *.spec
 web/version.json
+
+.DS_Store
+
+data.zip

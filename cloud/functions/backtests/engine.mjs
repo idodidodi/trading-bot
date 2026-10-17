@@ -1,5 +1,5 @@
 export {followupWindows} from './followup.mjs';
-// Mirrors scanner.detect: close pivots, band-touch references, Wilder RSI, and slope filter.
+// Mirrors scanner.detect: all eligible close-pivot pairs; only P2 needs a BB touch.
 export function detect(candles,rules,symbol,timeframe,provisional=false){
  const n=rules.rsi_period,b=rules.bb_period,left=rules.pivot_left,right=rules.pivot_right;
  const rsi=[],lower=[],upper=[];let gain=0,loss=0;
@@ -18,34 +18,30 @@ export function detect(candles,rules,symbol,timeframe,provisional=false){
  }
  const minimum=Math.max(b+left+right,n+1,rules.max_spacing+left+right+1),signals=[];
  for(const direction of ['bullish','bearish']){
-  let previous=null;
-  const prices=candles.map(c=>rules.price_source==='close'?c.close:(direction==='bullish'?c.low:c.high));
+  let references=[];
+  const prices=candles.map(c=>c.close);
   const bands=direction==='bullish'?lower:upper;
   const pivot=(j,end)=>prices.slice(j-left,j).concat(prices.slice(j+1,end)).every(v=>direction==='bullish'?prices[j]<v:prices[j]>v);
   for(let i=left;i<(provisional?candles.length:candles.length-right);i++){
    if(provisional){
     const j=i-right;
-    if(j>=left&&pivot(j,i+1)){
-     const wick=direction==='bullish'?candles[j].low:candles[j].high;
-     const touch=bands[j]!==undefined&&(direction==='bullish'?wick<=bands[j]:wick>=bands[j]);
-     if(touch)previous=j;
-    }
+    if(j>=left&&pivot(j,i+1))references.push(j);
    }
+   references=references.filter(j=>i-j<=rules.max_spacing);
    if(!pivot(i,provisional?i+1:i+right+1))continue;
-   const first=previous,touch=direction==='bullish'?candles[i].low:candles[i].high;
+   const touch=direction==='bullish'?candles[i].low:candles[i].high;
    const bandTouch=bands[i]!==undefined&&(direction==='bullish'?touch<=bands[i]:touch>=bands[i]);
-   if(!provisional&&bandTouch)previous=i;
-   if(first===null||[rsi[first],rsi[i],bands[first],bands[i]].some(v=>v===undefined))continue;
+   for(const first of references){
+   if([rsi[first],rsi[i],bands[first],bands[i]].some(v=>v===undefined))continue;
    const spacing=i-first,event=provisional?i:i+right;
    if(spacing<rules.min_spacing||spacing>rules.max_spacing||event<minimum-1)continue;
    const divergence=direction==='bullish'?prices[i]<prices[first]&&rsi[i]>rsi[first]:prices[i]>prices[first]&&rsi[i]<rsi[first];
-   const period=rules.band_slope_period??3,window=bands.slice(i-period+1,i+1),mean=window.reduce((a,v)=>a+v,0)/period,meanX=(period-1)/2;
-   const denominator=Array.from({length:period},(_,x)=>(x-meanX)**2).reduce((a,v)=>a+v,0);
-   const slope=window.length===period&&window.every(Number.isFinite)&&mean!==0?window.reduce((a,v,x)=>a+(x-meanX)*(v-mean),0)/denominator/Math.abs(mean)*100:null;
-   if(!divergence||!bandTouch||slope===null||Math.abs(slope)>(rules.max_band_slope_pct??0.5))continue;
-   const s={symbol,timeframe,direction,price1:prices[first],price2:prices[i],rsi1:rsi[first],rsi2:rsi[i],band1:bands[first],band2:bands[i],band_touch_price:touch,band_slope_pct:slope,pivot1:candles[first].start,pivot2:candles[i].start,confirmed_at:candles[event].end,spacing,rules};
+   if(!divergence||!bandTouch)continue;
+   const s={symbol,timeframe,direction,price1:prices[first],price2:prices[i],rsi1:rsi[first],rsi2:rsi[i],band1:bands[first],band2:bands[i],band_touch_price:touch,pivot1:candles[first].start,pivot2:candles[i].start,confirmed_at:candles[event].end,spacing,rules};
    if(provisional)Object.assign(s,{signal_status:'provisional',alert_timing:'pivot_close',pivot_closed_at:candles[i].end});
    signals.push(s);
+   }
+   if(!provisional)references.push(i);
   }
  }
  return signals.sort((a,b)=>a.confirmed_at-b.confirmed_at);

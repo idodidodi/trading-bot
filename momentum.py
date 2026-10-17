@@ -177,6 +177,11 @@ def seconds_to_scan(store):
     return max(30,delay)
 
 
+def should_retry(crypto, coverage):
+    """Retry partial scans hourly whenever any enabled market lacks coverage."""
+    return not crypto or any(item.get('status') == 'unavailable' for item in coverage)
+
+
 def scan(store, config, now=None, stop=None, force=False):
     from scanner import Candle, check_candles
     now=int(time.time()*1000) if now is None else now;day=session(now)
@@ -258,7 +263,7 @@ def scan(store, config, now=None, stop=None, force=False):
         results.append(dict(market=market,status='signal' if picks[market] else 'already published' if repeated else 'no qualifying setup' if any(k[0]==market for k in histories) else 'weekday only' if market=='stock' and not stock_enabled else 'no eligible stocks' if market=='stock' and any(c['market']=='stock' and c['status']=='scanned' for c in coverage) else 'unavailable',candidates=len(candidates)))
     payload=dict(strategy='momentum',version=VERSION,day=day,scanned_at=now,picks=picks,results=results,coverage=coverage,
                  status='partial' if not crypto or any(c['status']=='unavailable' for c in coverage) else 'completed')
-    payload['retryable']=not crypto or any(c['status']=='unavailable' and (c['market']=='crypto' or 'symbol' not in c) for c in coverage)
+    payload['retryable']=should_retry(crypto,coverage)
     replay_histories=dict(histories)
     if not stock_enabled:
         with store.connect() as db:

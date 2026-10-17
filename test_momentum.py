@@ -75,6 +75,12 @@ class MomentumTests(unittest.TestCase):
         b=Candle(81*DAY,82*DAY,s['entry'],s['entry']+.1,s['entry']-.1,s['entry'])
         self.assertEqual(momentum.outcome(s,[b])['status'],'unavailable')
 
+    def test_partial_stock_symbol_coverage_retries_hourly(self):
+        stock_gap=[dict(market='stock',symbol='HONA',status='unavailable')]
+        self.assertTrue(momentum.should_retry({'BTC/USD': {}},stock_gap))
+        self.assertFalse(momentum.should_retry({'BTC/USD': {}},[dict(market='stock',status='scanned'),dict(market='crypto',symbol='BTC/USD',status='scanned')]))
+        self.assertTrue(momentum.should_retry({},[dict(market='stock',status='weekday only')]))
+
     def test_persist_restart_and_unavailable_not_no_signal(self):
         with tempfile.TemporaryDirectory() as directory:
             store=Store(Path(directory)/'db.sqlite3')

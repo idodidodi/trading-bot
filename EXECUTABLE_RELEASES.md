@@ -32,3 +32,7 @@ Branch builds do not publish GitHub release assets or update installed applicati
 4. Confirm both platform workflows succeed and both executables and update manifests appear on that GitHub release.
 
 Only builds whose ref starts with `refs/tags/v` publish release assets. A manual run on a version tag can retry publication; a manual run on a branch only produces an artifact. Installed applications discover newer stable releases through their existing update checks. Use a new version for changed executable content so existing installations can recognize the update.
+
+## Changelog and local credential instructions
+
+Release publication uses `CHANGELOG.md` as its release notes. Keep the upcoming entry current before tagging. The offline guide in `web/update-notes.html` ships inside both executables and is linked from Settings. Update its pending-release label when publishing the corresponding version. Keep credentials as placeholders or empty examples only; builds include `.env.example`, never `.env`, `.env.prod`, local SQLite databases or downloaded histories. Existing credentials files are preserved by the launchers and binary updaters; adding a new provider key requires a local edit and restart.

@@ -6,8 +6,8 @@ from platform_app import ROOT, load_rules
 
 _lock = threading.Lock()
 STRATEGIES = {
-    'confirmed': 'RSI(3), Wilder; Bollinger Bands(20, 2 population deviations). Consecutive strict close-price pivots that each wick-touch the relevant band, 2 left / 1 right, spacing 5–60. Lower close / higher close with opposing RSI, and relevant outer-band slope no steeper than 0.50% per candle over 3 candles. Alert after the following candle closes.',
-    'warmup': 'Same RSI, bands, slope filter and spacing. Potential second pivot evaluated at its own close using only preceding candles. Early warning; the following candle can invalidate the candidate.'
+    'confirmed': 'RSI(3), Wilder; Bollinger Bands(20, 2 population deviations). Strict close-price pivots, 2 left / 1 right; compare all earlier same-type pivots at spacing 2–60 (at least one intervening candle). Opposing closing price and RSI; only P2 must wick-touch its band. No slope filter. Alert after the following candle closes.',
+    'warmup': 'Same RSI, bands and pivot-pair rules. Potential second pivot evaluated at its own close using only preceding candles. Early warning; the following candle can invalidate the candidate.'
 }
 
 def options(store, job_id=None):
@@ -26,10 +26,11 @@ def options(store, job_id=None):
     live, _ = effective(store, load_config())
     alpaca_assets = sorted(a['id'] for a in live['assets'] if supported(a))
     tiingo_assets = sorted(a['id'] for a in live['assets'] if a.get('market')=='forex' and a.get('feed_confirmed') is True)
+    fmp_assets = sorted(a['id'] for a in live['assets'] if a.get('provider')=='fmp' and a.get('feed_confirmed') is True)
     csv_assets = sorted(assets)
-    assets=sorted(assets | set(alpaca_assets) | set(tiingo_assets))
+    assets=sorted(assets | set(alpaca_assets) | set(tiingo_assets) | set(fmp_assets))
     return dict(assets=assets, strategies=STRATEGIES, timeframes=['monthly','weekly','daily','4h','1h'], year=report.get('year', 2020) if report else 2020,
-                sources=['csv','alpaca','tiingo'], csv_assets=csv_assets, alpaca_assets=alpaca_assets, tiingo_assets=tiingo_assets,
+                sources=['csv','alpaca','tiingo','fmp'], fmp_assets=fmp_assets, csv_assets=csv_assets, alpaca_assets=alpaca_assets, tiingo_assets=tiingo_assets,
                 job=dict(id=job[0],status=job[1],**json.loads(job[2]),updated=job[3]) if job else None)
 
 def validate(body, available):
@@ -41,8 +42,8 @@ def validate(body, available):
 
 def start(store, body):
     available=options(store)['assets'];assets,frames,strategy=validate(body,available)
-    if body.get('source', 'csv') not in ('csv', 'alpaca', 'tiingo'):
-        raise ValueError('Select stored CSV history, Alpaca or Tiingo')
+    if body.get('source', 'csv') not in ('csv', 'alpaca', 'tiingo', 'fmp'):
+        raise ValueError('Select stored CSV history, Alpaca, Tiingo or FMP')
     if not _lock.acquire(blocking=False): raise LookupError('A backtest is already running')
     job=str(time.time_ns())
     try:
@@ -76,6 +77,12 @@ def start(store, body):
                 cfg['assets'] = [feeds[a] | dict(provider='tiingo', exchange='Tiingo', timeframe_providers={})
                                  if a in feeds and a in eligible
                                  else dict(id=a, provider='unsupported') for a in assets]
+            if body.get('source') == 'fmp':
+                from managed_assets import effective
+                from scanner import load_config
+                live, _ = effective(store, load_config())
+                feeds = {a['id']: a for a in live['assets'] if a.get('provider') == 'fmp'}
+                cfg['assets'] = [feeds.get(a, dict(id=a, provider='unsupported')) for a in assets]
             run_backtest(store,cfg,load_rules(),provisional=strategy=='warmup')
             status='completed';result=body
         except Exception:

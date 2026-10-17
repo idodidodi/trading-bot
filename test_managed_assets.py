@@ -29,6 +29,20 @@ class AssetsTests(unittest.TestCase):
         self.assertEqual(result['config']['assets'][1]['timeframes'],['daily'])
         with self.assertRaises(LookupError):change(self.store,{'action':'bulk','tickers':'MSFT','revision':1})
         self.assertFalse(result['config']['assets'][2]['enabled'])
+    def test_promoted_stock_market_persists_and_feed_settings_remain_valid(self):
+        state=change(self.store,dict(action='bulk',tickers='STOCK-AAPL',revision=1))
+        asset=dict(id='STOCK-AAPL',provider='alpaca',symbol='AAPL',exchange='Alpaca-sip-split',market='stock',feed_confirmed=True,enabled=True,timeframes=['weekly','daily'])
+        state=change(self.store,dict(action='save',revision=state['revision'],asset=asset))
+        saved=next(a for a in get(self.store)['config']['assets'] if a['id']=='STOCK-AAPL')
+        self.assertEqual(saved['market'],'stock')
+        from managed_assets import for_timeframe
+        self.assertEqual(for_timeframe(saved,'daily')['provider'],'alpaca')
+        state=change(self.store,dict(action='save',revision=state['revision'],asset=saved|dict(enabled=False,timeframes=['1h'])))
+        self.assertFalse(state['config']['assets'][-1]['enabled'])
+        self.assertEqual(state['config']['assets'][-1]['timeframes'],['1h'])
+        with self.assertRaisesRegex(ValueError,'Invalid asset market'):
+            change(self.store,dict(action='save',revision=state['revision'],asset=saved|dict(market='unknown')))
+
     def test_strategy_defaults_validation_and_sync(self):
         from managed_assets import validate_asset
         asset=get(self.store)['config']['assets'][0]

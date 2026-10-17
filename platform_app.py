@@ -24,7 +24,7 @@ SKILL = ROOT / 'skills/rsi-divergence/SKILL.md'
 
 
 def load_env():
-    path = ROOT / '.env'
+    path = Path(os.environ.get('TRADING_BOT_ENV_FILE', str(ROOT / '.env'))).expanduser()
     if path.exists():
         for line in path.read_text(encoding='utf-8').splitlines():
             if line.strip() and not line.lstrip().startswith('#'):
@@ -56,15 +56,13 @@ def load_rules():
         'pivot_right': r'candles to the left and (\d+) to the right',
         'min_spacing': r'- Pivot spacing: (\d+)–\d+ candles',
         'max_spacing': r'- Pivot spacing: \d+–(\d+) candles',
-        'band_slope_period': r'- Band-slope filter: measure the relevant outer band .* with a (\d+)-candle',
-        'max_band_slope_pct': r'exceeds ([\d.]+)% per candle\.',
     }
     rules = {}
     for key, pattern in patterns.items():
         match = re.search(pattern, text)
         if not match:
             raise ValueError(f'Cannot read {key} from {SKILL}; update the parser explicitly.')
-        rules[key] = float(match[1]) if key in ('bb_multiplier', 'max_band_slope_pct') else int(match[1])
+        rules[key] = float(match[1]) if key == 'bb_multiplier' else int(match[1])
     if any(v <= 0 for v in rules.values()) or rules['min_spacing'] > rules['max_spacing']:
         raise ValueError('Invalid indicator or pivot settings in skill.')
     source = re.search(r'- Divergence price source: (close)\.', text)
@@ -100,10 +98,6 @@ def validate_signal(body, rules):
         raise ValueError('RSI outside 0–100')
     if not rules['min_spacing'] <= body['spacing'] <= rules['max_spacing']:
         raise ValueError('Pivot spacing outside range')
-    slope = body.get('band_slope_pct')
-    if (isinstance(slope, bool) or not isinstance(slope, (int, float)) or not math.isfinite(slope)
-            or abs(slope) > rules['max_band_slope_pct']):
-        raise ValueError('Bollinger Band slope exceeds the configured limit')
     touch = body.get('band_touch_price', body['price2'])
     if isinstance(touch, bool) or not isinstance(touch, (int, float)) or not math.isfinite(touch):
         raise ValueError('Invalid band touch price')
@@ -116,7 +110,7 @@ def validate_signal(body, rules):
     if not valid:
         raise ValueError('Divergence or band-touch rule failed')
     # Store only known fields; never persist the webhook authentication secret.
-    clean = {k: body[k] for k in ('symbol', 'timeframe', 'direction', *keys, 'pivot1', 'pivot2', 'confirmed_at', 'spacing', 'rules', 'band_slope_pct')}
+    clean = {k: body[k] for k in ('symbol', 'timeframe', 'direction', *keys, 'pivot1', 'pivot2', 'confirmed_at', 'spacing', 'rules')}
     if 'band_touch_price' in body:
         clean['band_touch_price'] = touch
     if any(k in body for k in ('signal_status', 'alert_timing', 'pivot_closed_at')):
@@ -168,6 +162,8 @@ class Store:
     def log(self, event, details):
         from runtime_env import environment
         if environment() != 'prod':
+            stamp = datetime.now(ZoneInfo('Asia/Jerusalem')).strftime('%Y-%m-%d %H:%M:%S %z')
+            print(f'[DEV {stamp}] {event}: {details}', flush=True)
             return
         with self.connect() as db:
             db.execute("CREATE TABLE IF NOT EXISTS activity_log(id INTEGER PRIMARY KEY, occurred REAL, event TEXT, details TEXT)")
@@ -188,7 +184,7 @@ def message(payload):
             f"{payload['symbol']} · {payload['timeframe']}\n"
             f"Price: {payload['price1']:g} → {payload['price2']:g}\n"
             f"RSI({payload['rules']['rsi_period']}): {payload['rsi1']:.2f} → {payload['rsi2']:.2f}\n"
-            f"{'Lower' if payload['direction'] == 'bullish' else 'Upper'} BB touch: {payload['band2']:g} · slope {payload['band_slope_pct']:+.2f}%/candle\n"
+            f"{'Lower' if payload['direction'] == 'bullish' else 'Upper'} BB touch: {payload['band2']:g}\n"
             f"{timing}\n{payload.get('stage_description', 'Warm-up / potential divergence; awaiting pivot confirmation.' if provisional else 'Confirmed divergence / structural pivot confirmation after the next candle.')}\n{footer}")
 
 
@@ -370,7 +366,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 self.respond(404, {'error': 'Not found'})
 
         def do_POST(self):
-            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state','/api/catchup','/api/updates','/api/csv-backtests'):
+            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state','/api/catchup','/api/updates','/api/csv-backtests','/api/connection-test'):
                 from finding_feedback import save
                 host = self.headers.get('Host')
                 allowed = (f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}')
@@ -386,7 +382,13 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     body = json.loads(self.rfile.read(size))
                     if not isinstance(body, dict):
                         raise ValueError('Expected JSON object')
-                    if self.path=='/api/csv-backtests':
+                    if self.path=='/api/connection-test':
+                        from connection_tests import run, ConnectionTestError
+                        try:
+                            self.respond(200,run(body.get('action'),rules))
+                        except ConnectionTestError as exc:
+                            self.respond(502,{'error':str(exc)})
+                    elif self.path=='/api/csv-backtests':
                         from csv_backtests import save as save_csv
                         self.respond(200,save_csv(store,body))
                     elif self.path=='/api/catchup':

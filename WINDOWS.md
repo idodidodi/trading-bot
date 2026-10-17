@@ -15,3 +15,7 @@ The first release is unsigned by a Windows code-signing certificate. Windows may
 For developers: run `scripts/build-windows.ps1` on Windows. GitHub's **Windows standalone release** workflow builds, runs the Python tests, and smoke-tests the frozen app on relevant branch pushes, version tags, or manual runs. Branch builds are downloadable Actions artifacts; version tags publish the executable plus `windows-update.json`. See [executable build and release rules](EXECUTABLE_RELEASES.md). Build dependencies are in `windows-build-requirements.txt`.
 
 For an existing Ubuntu scanner: pull the updated repository, then restart `trading-bot.service`. Its one-time migration preserves existing assets and creates a database backup before adding the requested portfolio.
+
+## FMP update setup
+
+The S&P 500 provider needs your own `FMP_API_KEY` in the existing local credentials file described above. Updates preserve that file; do not overwrite it with `.env.example`. Restart after editing. See [changelog and secure setup instructions](CHANGELOG.md), or open **Settings → Changelog & FMP setup** in the local dashboard.

@@ -91,3 +91,9 @@ Validate with `python3 -m unittest test_managed_assets test_pin_bars test_scanne
 ## BB Pin-Bars
 
 Apply `bb-pin-bars.sql` after CSV backtests and asset strategies. Deploy the updated `functions/csv-backtests` folder (including `bb-engine.mjs` and `rules.mjs`), publish the shared browser assets, and restart the worker. This adds a separate authenticated `/api/bb-pin-bars` mirror and accepts `bb-pin-bars` in CSV reports and per-asset selections. Existing defaults stay RSI + EMA Pin-Bars. See the root README for the independent BB rules.
+
+## Manage assets from signals
+
+Every strategy's signal rows, including historical results, include **Manage asset**. The dialog saves scanner enablement and selected candle timeframes through the existing revision-checked Assets API without leaving the results page. Momentum continues to use daily candles. Historical signals without a current feed mapping link to Assets for explicit feed configuration.
+
+Saving a rotating selection promotes its exact observed feed to permanent assets. Reapply `providers.sql` before publishing this UI so hosted saves retain its market classification, then update the local worker. Managed stock entries take precedence over rotating weekly picks, including disabled entries and edited timeframes. If registration succeeds but feed validation fails, a disabled draft remains in Assets and the dialog reports it.

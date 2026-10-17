@@ -44,6 +44,19 @@ begin
   perform dashboard_api('00000000-0000-0000-0000-000000000002','/api/assets',jsonb_build_object('revision',revision,'action','save','asset',candidate||'{"market":"index"}'::jsonb));
   raise exception 'Cash index accepted as Alpaca equity';
  exception when raise_exception then if sqlerrm='Cash index accepted as Alpaca equity' then raise;end if;end;
+ -- Market classification must persist for promoted stock feeds without a listed-exchange mapping.
+ candidate:=candidate||'{"exchange":"Alpaca-sip-split","market":"stock","timeframes":["weekly","daily"]}'::jsonb;
+ saved:=dashboard_api('00000000-0000-0000-0000-000000000002','/api/assets',jsonb_build_object('revision',revision,'action','save','asset',candidate));
+ if not exists(select 1 from jsonb_array_elements(saved->'config'->'assets') a where a->>'id'='BTCUSD' and a->>'market'='stock') then raise exception 'Stock market classification was not saved';end if;
+ revision:=(saved->>'revision')::integer;
+ candidate:=candidate||'{"enabled":false,"timeframes":["1h"]}'::jsonb;
+ saved:=dashboard_api('00000000-0000-0000-0000-000000000002','/api/assets',jsonb_build_object('revision',revision,'action','save','asset',candidate));
+ if not exists(select 1 from jsonb_array_elements(saved->'config'->'assets') a where a->>'id'='BTCUSD' and a->>'enabled'='false' and a->'timeframes'='["1h"]') then raise exception 'Stock scanner settings were not saved';end if;
+ revision:=(saved->>'revision')::integer;
+ begin
+  perform dashboard_api('00000000-0000-0000-0000-000000000002','/api/assets',jsonb_build_object('revision',revision,'action','save','asset',candidate||'{"market":"unknown"}'::jsonb));
+  raise exception 'Unknown market accepted';
+ exception when raise_exception then if sqlerrm='Unknown market accepted' then raise;end if;end;
  -- The existing dispatcher must still handle backtest options.
  perform dashboard_api('00000000-0000-0000-0000-000000000002','/api/backtests');
 end $$;

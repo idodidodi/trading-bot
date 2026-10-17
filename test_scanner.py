@@ -151,7 +151,7 @@ class EngineTests(unittest.TestCase):
 
     def test_provisional_at_pivot_close_without_future_candles(self):
         from platform_app import validate_signal, message
-        rules = load_rules() | {'max_band_slope_pct': 1.5}
+        rules = load_rules()
         for bearish in (False, True):
             bars = fixture()
             if bearish:
@@ -173,7 +173,7 @@ class EngineTests(unittest.TestCase):
             self.assertFalse(any(s['pivot2'] == bars[256].start for s in detect(bars, rules, 'test:EURUSD', '4h')))
 
     def test_provisional_requires_strict_left_and_band_touch(self):
-        bars = fixture(); rules = load_rules() | {'max_band_slope_pct': 1.5}
+        bars = fixture(); rules = load_rules()
         self.assertEqual(detect(bars, rules | {'bb_multiplier': 20}, 'test:EURUSD', '4h', provisional=True), [])
         bars[255] = replace(bars[255], low=79, close=89)
         found = detect(bars, rules, 'test:EURUSD', '4h', provisional=True)
@@ -190,7 +190,7 @@ class EngineTests(unittest.TestCase):
 
     def test_real_candle_divergence_confirmation_and_touch(self):
         bars = fixture()
-        rules = load_rules() | {'max_band_slope_pct': 1.5}
+        rules = load_rules()
         self.assertEqual(detect(bars[:257], rules, 'test:EURUSD', '4h'), [])
         found = detect(bars[:258], rules, 'test:EURUSD', '4h')
         self.assertEqual(len(found), 1)
@@ -205,7 +205,7 @@ class EngineTests(unittest.TestCase):
     def test_one_right_confirmation_at_11_israel_time(self):
         from platform_app import message
         from scanner import timestamp
-        rules = load_rules() | {'max_band_slope_pct': 1.5}
+        rules = load_rules()
         self.assertEqual(rules['pivot_right'], 1)
         bars = fixture()
         pivot_start = timestamp('2026-10-06T03:00:00+03:00')
@@ -228,7 +228,7 @@ class EngineTests(unittest.TestCase):
     def test_bearish_symmetry_and_equal_pivots(self):
         bars = fixture()
         mirrored = [replace(c, open=200-c.open, close=200-c.close, high=200-c.low, low=200-c.high) for c in bars]
-        rules = load_rules() | {'max_band_slope_pct': 1.5}
+        rules = load_rules()
         signals = detect(mirrored, rules, 'test:EURUSD', '4h')
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0]['direction'], 'bearish')
@@ -237,7 +237,7 @@ class EngineTests(unittest.TestCase):
 
     def test_close_divergence_ignores_wick_extrema(self):
         from platform_app import validate_signal
-        rules = load_rules() | {'bb_multiplier': 3, 'max_band_slope_pct': 1.5}
+        rules = load_rules() | {'bb_multiplier': 3}
         for bearish in (False, True):
             bars = fixture()
             # P2 has a higher wick low, but a lower close; P3 has a lower wick.
@@ -280,7 +280,7 @@ class EngineTests(unittest.TestCase):
             prepare_store(store)
             config = {'timeframes': ['4h'], 'assets': [{'id': 'EURUSD', 'provider': 'csv', 'path': str(path)}]}
             bars = fixture()
-            rules=load_rules() | {'max_band_slope_pct': 1.5}
+            rules=load_rules()
             write(bars[:256])
             self.assertEqual(scan_once(store, config, rules, bars[-1].end)[0]['status'], 'baseline set')
             self.assertEqual(store.rows(), [])
@@ -295,23 +295,47 @@ class EngineTests(unittest.TestCase):
             restored = Store(Path(folder) / 'db.sqlite3')
             self.assertEqual(scan_once(restored, config, rules, bars[-1].end)[0]['new_signals'], 0)
 
-    def test_high_outer_band_slope_rejects_divergence(self):
+    def test_high_outer_band_slope_does_not_reject_divergence(self):
         bars=fixture()
-        self.assertEqual(detect(bars,load_rules(),'test:EURUSD','4h'),[])
+        self.assertEqual(len(detect(bars,load_rules(),'test:EURUSD','4h')),1)
 
-    def test_non_touch_pivot_does_not_reset_band_touch_reference(self):
+    def test_intervening_pivots_do_not_reset_earlier_references(self):
         bars=fixture();closes=[100.]*len(bars)
         for index,value in {250:110,251:100,252:98,253:105,254:99,255:100,256:111,257:100,258:98}.items():closes[index]=value
         bars=[replace(c,open=closes[i],close=closes[i],high=closes[i]+(0 if i==253 else 1),
                       low=closes[i]-(0 if i in (250,256) else 1)) for i,c in enumerate(bars)]
-        rules=load_rules()|{'max_band_slope_pct':1.2}
+        rules=load_rules()
         signals=detect(bars,rules,'TEST','4h')
         self.assertEqual(len(signals),1)
         self.assertEqual((signals[0]['pivot1'],signals[0]['pivot2']),(bars[250].start,bars[256].start))
-        # An intervening pivot that itself touches the upper band must reset the reference.
+        # An intervening band-touch pivot must not hide an earlier qualifying pair.
         bars[253]=replace(bars[253],high=120)
-        self.assertEqual(detect(bars,rules,'TEST','4h'),[])
+        self.assertEqual(detect(bars,rules,'TEST','4h'),signals)
 
+    def test_one_intervening_candle_and_only_second_band_touch(self):
+        from platform_app import validate_signal
+        for bearish in (True, False):
+            bars=fixture()
+            closes=[100.]*len(bars)
+            for i,value in {240:150.,250:110.,251:100.,252:111.}.items():
+                closes[i]=value
+            bars=[replace(c,open=p,close=p,high=p+(40 if i==252 else 1),low=p-1)
+                  for i,(c,p) in enumerate(zip(bars,closes))]
+            if not bearish:
+                bars=[replace(c,open=200-c.open,close=200-c.close,high=200-c.low,low=200-c.high) for c in bars]
+            rsi,lower,upper=indicators(bars,load_rules())
+            self.assertTrue(bars[250].high < upper[250] if bearish else bars[250].low > lower[250])
+            for provisional in (False,True):
+                found=detect(bars,load_rules(),'TEST','4h',provisional=provisional)
+                self.assertEqual(len(found),1)
+                signal=validate_signal(found[0],load_rules())
+                self.assertEqual((signal['pivot1'],signal['pivot2']),(bars[250].start,bars[252].start))
+                self.assertEqual(signal['spacing'],2)
+                self.assertNotIn('band_slope_pct',signal)
+                self.assertEqual(detect(bars,load_rules()|{'min_spacing':3},'TEST','4h',provisional=provisional),[])
+                # Maximum spacing remains inclusive.
+                self.assertEqual(len(detect(bars,load_rules()|{'max_spacing':2},'TEST','4h',provisional=provisional)),1)
+                self.assertEqual(detect(bars,load_rules()|{'max_spacing':1,'min_spacing':1},'TEST','4h',provisional=provisional),[])
 
 if __name__ == '__main__':
     unittest.main()

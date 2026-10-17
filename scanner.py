@@ -138,68 +138,51 @@ def indicators(candles, rules):
     return rsi, lower, upper
 
 
-def band_slope_pct(values, index, period):
-    """Linear-regression slope of a band, expressed as percent of its mean per candle."""
-    window = values[index - period + 1:index + 1]
-    if len(window) != period or any(value is None for value in window):
-        return None
-    mean_y = sum(window) / period
-    mean_x = (period - 1) / 2
-    denominator = sum((x - mean_x) ** 2 for x in range(period))
-    slope = sum((x - mean_x) * (value - mean_y) for x, value in enumerate(window)) / denominator
-    return slope / abs(mean_y) * 100 if mean_y else None
-
-
 def detect(candles, rules, symbol, timeframe, *, provisional=False):
     rsi, lower, upper = indicators(candles, rules)
     left, right = rules['pivot_left'], rules['pivot_right']
     signals = []
     for direction in ('bullish', 'bearish'):
-        previous = None
-        prices = [c.close if rules.get('price_source') == 'close' else (c.low if direction == 'bullish' else c.high) for c in candles]
+        references = []
+        prices = [c.close for c in candles]
         bands = lower if direction == 'bullish' else upper
+
+        def is_pivot(index, end):
+            neighbours = prices[index - left:index] + prices[index + 1:end]
+            return all(prices[index] < v for v in neighbours) if direction == 'bullish' else all(prices[index] > v for v in neighbours)
+
         for i in range(left, len(candles) if provisional else len(candles) - right):
             if provisional:
-                # Only promote a first pivot after its right-hand candles have
-                # closed. Candidate P2 never reads candles after its own close.
+                # P1 must already be confirmed at P2's close; never read ahead.
                 j = i - right
-                if j >= left:
-                    neighbours = prices[j - left:j] + prices[j + 1:i + 1]
-                    confirmed = all(prices[j] < v for v in neighbours) if direction == 'bullish' else all(prices[j] > v for v in neighbours)
-                    wick = candles[j].low if direction == 'bullish' else candles[j].high
-                    band_touch = bands[j] is not None and ((wick <= bands[j]) if direction == 'bullish' else (wick >= bands[j]))
-                    if confirmed and band_touch:
-                        previous = j
-            neighbours = prices[i - left:i] + ([] if provisional else prices[i + 1:i + right + 1])
-            pivot = all(prices[i] < v for v in neighbours) if direction == 'bullish' else all(prices[i] > v for v in neighbours)
-            if not pivot:
+                if j >= left and is_pivot(j, i + 1):
+                    references.append(j)
+            references = [j for j in references if i - j <= rules['max_spacing']]
+            if not is_pivot(i, i + 1 if provisional else i + right + 1):
                 continue
-            first = previous
             touch = candles[i].low if direction == 'bullish' else candles[i].high
-            band_touch = bands[i] is not None and ((touch <= bands[i]) if direction == 'bullish' else (touch >= bands[i]))
-            if not provisional and band_touch:
-                previous = i
-            if first is None or any(v is None for v in (rsi[first], rsi[i], bands[first], bands[i])):
-                continue
-            spacing = i - first
-            if not rules['min_spacing'] <= spacing <= rules['max_spacing']:
-                continue
-            slope = band_slope_pct(bands, i, rules['band_slope_period'])
-            valid = (prices[i] < prices[first] and rsi[i] > rsi[first] and band_touch) if direction == 'bullish' else (prices[i] > prices[first] and rsi[i] < rsi[first] and band_touch)
-            valid = valid and slope is not None and abs(slope) <= rules['max_band_slope_pct']
+            band_touch = bands[i] is not None and (touch <= bands[i] if direction == 'bullish' else touch >= bands[i])
             event_index = i if provisional else i + right
-            if not valid or event_index < minimum_history(rules) - 1:
-                continue
-            signals.append(dict(symbol=symbol, timeframe=timeframe, direction=direction,
-                                price1=prices[first], price2=prices[i], rsi1=rsi[first], rsi2=rsi[i],
-                                band1=bands[first], band2=bands[i], band_touch_price=touch, band_slope_pct=slope, pivot1=candles[first].start,
-                                pivot2=candles[i].start, confirmed_at=candles[event_index].end,
-                                spacing=spacing, rules=rules))
-            if provisional:
-                # confirmed_at is the legacy event-time storage field. Explicit
-                # timing metadata prevents presenting it as pivot confirmation.
-                signals[-1].update(signal_status='provisional', alert_timing='pivot_close',
-                                   pivot_closed_at=candles[i].end)
+            for first in references:
+                spacing = i - first
+                if not rules['min_spacing'] <= spacing <= rules['max_spacing']:
+                    continue
+                if any(v is None for v in (rsi[first], rsi[i], bands[first], bands[i])):
+                    continue
+                divergence = (prices[i] < prices[first] and rsi[i] > rsi[first]) if direction == 'bullish' else (prices[i] > prices[first] and rsi[i] < rsi[first])
+                if not divergence or not band_touch or event_index < minimum_history(rules) - 1:
+                    continue
+                signal = dict(symbol=symbol, timeframe=timeframe, direction=direction,
+                              price1=prices[first], price2=prices[i], rsi1=rsi[first], rsi2=rsi[i],
+                              band1=bands[first], band2=bands[i], band_touch_price=touch,
+                              pivot1=candles[first].start, pivot2=candles[i].start,
+                              confirmed_at=candles[event_index].end, spacing=spacing, rules=rules)
+                if provisional:
+                    signal.update(signal_status='provisional', alert_timing='pivot_close',
+                                  pivot_closed_at=candles[i].end)
+                signals.append(signal)
+            if not provisional:
+                references.append(i)
     return sorted(signals, key=lambda s: s['confirmed_at'])
 
 
@@ -277,6 +260,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     bb_rules = bb_pin_bars.load_rules()
     from kraken_feed import fetch_kraken
     from oanda_feed import fetch_oanda
+    from fmp_feed import fetch_fmp
     from tiingo_feed import fetch_tiingo
     from alpaca_feed import fetch_alpaca
     config, config_revision = effective(store, config)
@@ -300,7 +284,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
         known={a['id'] for a in config['assets']}
         for old in json.loads(prior[0]).get('coverage',[]) if prior else []:
             if old['asset'] in known or old['asset'] in ('USDCNY','DAILY_SELECTION','WEEKLY_STOCK_SCREEN'):continue
-            if old.get('provider') not in ('twelvedata','kraken','oanda','tiingo','alpaca'):continue
+            if old.get('provider') not in ('twelvedata','kraken','oanda','tiingo','alpaca','fmp'):continue
             config['assets'].append(dict(id=old['asset'],provider=old['provider'],symbol=old.get('symbol',old['asset']),
                 exchange=old.get('exchange',''),enabled=True,feed_confirmed=True,timeframes=[old['timeframe']],
                 catchup_only=True,tradingview_symbol='',market='stock' if old['asset'].startswith('STOCK-') else None))
@@ -342,7 +326,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 continue
             raw=[];candles=[]
             try:
-                if provider in ('twelvedata', 'kraken', 'oanda', 'tiingo'):
+                if provider in ('twelvedata', 'kraken', 'oanda', 'tiingo', 'fmp'):
                     spacing = (max(8, float(config.get('request_spacing_seconds', 8))) if provider == 'twelvedata'
                                else max(1, float(config.get(provider + '_request_spacing_seconds', 1))))
                     if provider in last_requests:
@@ -356,7 +340,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                         return coverage
                     last_requests[provider] = time.monotonic()
                 try:
-                    raw = {'csv': read_csv, 'twelvedata': fetch_twelve_data, 'kraken': fetch_kraken, 'oanda': fetch_oanda, 'tiingo': fetch_tiingo, 'alpaca': fetch_alpaca}[provider](asset, timeframe)
+                    raw = {'csv': read_csv, 'twelvedata': fetch_twelve_data, 'kraken': fetch_kraken, 'oanda': fetch_oanda, 'tiingo': fetch_tiingo, 'alpaca': fetch_alpaca, 'fmp': fetch_fmp}[provider](asset, timeframe)
                 except TwelveDataRateLimit:
                     from alpaca_feed import supported, fallback_asset, fetch_alpaca
                     if not config.get('alpaca_rate_limit_fallback', True) or not supported(asset):

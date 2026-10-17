@@ -193,8 +193,8 @@ def apply(store,response):
 
 
 def worker(store,stop):
-    from runtime_env import environment
-    if environment() != 'prod':return
+    from runtime_env import cloud_sync_enabled
+    if not cloud_sync_enabled():return
     url=os.environ.get('CLOUD_SYNC_URL','');token=os.environ.get('CLOUD_SYNC_TOKEN','')
     if not url or not token:return
     if not url.startswith('https://'):raise ValueError('Cloud sync requires HTTPS')

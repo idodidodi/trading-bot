@@ -75,9 +75,11 @@ def github_versions():
 def versions():
     import os
     from concurrent.futures import ThreadPoolExecutor
-    from runtime_env import environment
+    from runtime_env import environment, cloud_sync_enabled
     from windows_update import API as release_api, status
-    result = dict(environment=environment(), local=local_versions(), updates=status(), checked_at=time.time())
+    result = dict(environment=environment(), local=local_versions(), updates=status(), checked_at=time.time(),
+                  telegram_enabled=os.environ.get('DRY_RUN', 'true').lower() != 'true',
+                  cloud_sync_enabled=cloud_sync_enabled())
     urls = {'github': github_versions, 'release': lambda: get_json(release_api)}
     online_url = os.environ.get('ONLINE_DASHBOARD_URL', ONLINE_DASHBOARD_URL).rstrip('/')
     if online_url.startswith('https://'):
