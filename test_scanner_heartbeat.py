@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 import tempfile
 import threading
@@ -47,6 +48,33 @@ class ScannerHeartbeatTests(unittest.TestCase):
                     scanner_worker(store, {}, {}, threading.Event())
             self.assertEqual(len(finished_events), 1)
             self.assertTrue(finished_events[0].is_set())
+            with store.connect() as db:
+                status=json.loads(db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()[0])
+                logs=db.execute("SELECT details FROM activity_log WHERE event='Scanner failed'").fetchall()
+            self.assertEqual(status['phase'], 'failed')
+            self.assertIsNone(status['next_scan_at'])
+            self.assertEqual(len(logs), 1)
+
+    def test_database_lock_does_not_end_heartbeat(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=Store(Path(folder)/'signals.sqlite3')
+            prepare_store(store)
+            finished=Mock()
+            finished.is_set.side_effect=[False,False,True]
+            with patch.object(store,'log',side_effect=[sqlite3.OperationalError('database is locked'), None]) as write, \
+                 patch('scanner.time.time',side_effect=[899,900,931]), \
+                 patch('scanner.next_heartbeat_at',side_effect=[900,4500]), \
+                 patch('sys.stderr'):
+                scanner_heartbeat(store,finished)
+            self.assertEqual(write.call_count,2)
+            finished.wait.assert_any_call(30)
+
+    def test_linux_heartbeat_reports_current_resident_memory(self):
+        from scanner import memory_status
+        with patch('scanner.Path.read_text',return_value='Name: bot\nVmRSS:\t204800 kB\n'):
+            self.assertIn('RSS 200.0 MiB',memory_status())
+        with patch('scanner.Path.read_text',side_effect=FileNotFoundError):
+            self.assertEqual(memory_status(),'')
 
 
 if __name__ == '__main__':

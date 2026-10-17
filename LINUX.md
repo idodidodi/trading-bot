@@ -54,3 +54,11 @@ In version 1.0.6, open the gear wheel → **Connection tests** to use **Test Tel
 ## FMP update setup
 
 The S&P 500 provider needs your own `FMP_API_KEY` in the existing local credentials file described above. Updates preserve that file; do not overwrite it with `.env.example`. Restart after editing. See [changelog and secure setup instructions](CHANGELOG.md), or open **Settings → Changelog & FMP setup** in the local dashboard.
+
+## Investigating missing heartbeats or growing memory
+
+Open http://127.0.0.1:8080/logs on the Linux computer, select **All events**, and click **Refresh logs**. Heartbeats are due every hour at HH:15 Israel time, including while the scanner waits. Save the last heartbeat and the following entries, and check the launch terminal for `Exception in thread` messages. A live dashboard alone does not establish that the scanner thread is still running.
+
+In a terminal, `ps -eo pid,ppid,rss,etime,comm --sort=-rss | head -15` shows the largest processes; RSS is current resident memory in KiB. Record whether the large process is FamilyTradingBot or the browser before restarting. If launched under systemd, also inspect that service's journal for worker exceptions or out-of-memory termination.
+
+Updated source retries heartbeat writes after SQLite errors, reports scanner failures in status/logs, and includes current process RSS and thread count in Linux heartbeats. Cloud sync streams saved backtest reports one at a time to avoid a memory peak proportional to all saved runs. Standalone installations need a rebuilt executable to receive these changes.

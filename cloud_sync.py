@@ -29,6 +29,18 @@ def meta(db,key,default='0'):
     row=db.execute('SELECT value FROM cloud_meta WHERE key=?',(key,)).fetchone();return row[0] if row else default
 
 
+def backtest_reports(db):
+    """Keep only the current replay in memory, regardless of saved run count."""
+    exists=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='backtest_runs'").fetchone()
+    if exists:
+        for raw, in db.execute('SELECT report FROM backtest_runs ORDER BY id'):
+            yield json.loads(raw)
+    else:
+        report=latest_report(db,ROOT)
+        if report:
+            yield report
+
+
 def snapshot(store):
     from finding_followup import stored
     from momentum import view as momentum_view
@@ -87,14 +99,8 @@ def snapshot(store):
         control_initialize(db)
         for key,status,payload,created in db.execute('SELECT * FROM scanner_commands'):
             enqueue(db,'summary','catchup:'+key,dict(id=key,status=status,created=created,**json.loads(payload)))
-        has_runs=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='backtest_runs'").fetchone()
-        if has_runs:
-            reports=[json.loads(row[0]) for row in db.execute('SELECT report FROM backtest_runs ORDER BY id')]
-        else:
-            report=latest_report(db,ROOT)
-            reports=[report] if report else []
         latest_summary=None
-        for report in reports:
+        for report in backtest_reports(db):
             summary=[dict(asset=r['asset'],timeframe=r['timeframe'],status=r['status'],signals=len(r['signals']),note=r.get('reason',r.get('note',''))) for r in report['results']]
             findings=[signal for row in report['results'] for signal in row['signals']]
             report_key=hashlib.sha256(canonical(report).encode()).hexdigest()

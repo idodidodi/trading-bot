@@ -8,6 +8,8 @@ import json
 import math
 import os
 from pathlib import Path
+import sqlite3
+import sys
 import threading
 import time
 from zoneinfo import ZoneInfo
@@ -477,13 +479,30 @@ def scanner_heartbeat(store, finished):
     while not finished.is_set():
         now = time.time()
         if now >= target:
-            with store.connect() as db:
-                saved = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
-            phase = json.loads(saved[0]).get('phase', 'starting') if saved else 'starting'
-            stamp = datetime.fromtimestamp(now, ZoneInfo('Asia/Jerusalem')).strftime('%Y-%m-%d %H:%M:%S')
-            store.log('Scanner heartbeat', f'Scanner is running · {phase} · {stamp} (Israel time)')
+            try:
+                with store.connect() as db:
+                    saved = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
+                phase = json.loads(saved[0]).get('phase', 'starting') if saved else 'starting'
+                stamp = datetime.fromtimestamp(now, ZoneInfo('Asia/Jerusalem')).strftime('%Y-%m-%d %H:%M:%S')
+                store.log('Scanner heartbeat', f'Scanner is running · {phase} · {stamp} (Israel time)' + memory_status())
+            except sqlite3.Error as exc:
+                # A long sync transaction must not permanently kill monitoring.
+                print(f'Scanner heartbeat could not access database ({type(exc).__name__}); retrying in 30 seconds', file=sys.stderr, flush=True)
+                finished.wait(30)
+                continue
             target = next_heartbeat_at(now)
         finished.wait(min(1, max(0, target - now)))
+
+
+def memory_status():
+    """Current Linux RSS, rather than the process's all-time high-water mark."""
+    try:
+        for line in Path('/proc/self/status').read_text().splitlines():
+            if line.startswith('VmRSS:'):
+                return f' · RSS {int(line.split()[1]) / 1024:.1f} MiB · {threading.active_count()} threads'
+    except (OSError, ValueError, IndexError):
+        pass
+    return ''
 
 
 def scanner_worker(store, config, rules, stop):
@@ -493,6 +512,20 @@ def scanner_worker(store, config, rules, stop):
     heartbeat.start()
     try:
         _scanner_worker(store, config, rules, stop)
+    except Exception as exc:
+        # Preserve failure visibility even when SQLite itself is unavailable.
+        reason = f'Scanner stopped after {type(exc).__name__}; restart required'
+        print(reason, file=sys.stderr, flush=True)
+        try:
+            with store.connect() as db:
+                saved = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
+                status = json.loads(saved[0]) if saved else {}
+                status.update(phase='failed', next_scan_at=None, error=reason)
+                db.execute('INSERT OR REPLACE INTO scanner_status(id,payload) VALUES(1,?)', (json.dumps(status),))
+            store.log('Scanner failed', reason)
+        except sqlite3.Error:
+            pass
+        raise
     finally:
         finished.set()
         heartbeat.join(timeout=2)
