@@ -12,7 +12,7 @@ The app checks GitHub releases on startup and **every hour**. Overview's **Check
 
 The first release is unsigned by a Windows code-signing certificate. Windows may display its usual unknown-publisher prompt. No certificate or private provider credential is bundled.
 
-For developers: run `scripts/build-windows.ps1` on Windows. GitHub's **Windows standalone release** workflow builds, runs the Python tests, and smoke-tests the frozen app on relevant branch pushes, version tags, or manual runs. Branch builds are downloadable Actions artifacts; version tags publish the executable plus `windows-update.json`. See [executable build and release rules](EXECUTABLE_RELEASES.md). Build dependencies are in `windows-build-requirements.txt`.
+For developers: run `scripts/build-windows.ps1` on Windows. GitHub’s **Build and publish standalone update** workflow tests and builds both platforms. Relevant pushes to `main` allocate a new numeric version and publish it after both executables pass their smoke tests. Feature branches produce downloadable Actions artifacts only. See [executable build and release rules](EXECUTABLE_RELEASES.md). Release assets contain no local credentials, databases or private candle files.
 
 For an existing Ubuntu scanner: pull the updated repository, then restart `trading-bot.service`. Its one-time migration preserves existing assets and creates a database backup before adding the requested portfolio.
 

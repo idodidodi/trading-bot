@@ -103,6 +103,7 @@ class VersionTests(unittest.TestCase):
     def test_fingerprints_detect_component_changes_and_ignore_credentials_tests(self):
         original={'web/app.js':'a','scanner.py':'b','.env':'secret','test_scanner.py':'c'}
         first=versions.fingerprints(original)
+        self.assertEqual(first, versions.fingerprints(original | {'app_version.py':'ci-build-version'}))
         self.assertEqual(first,versions.fingerprints(original|{'.env':'other','test_scanner.py':'changed'}))
         self.assertNotEqual(first['ui'],versions.fingerprints(original|{'web/app.js':'new'})['ui'])
         self.assertEqual(first['scanner'],versions.fingerprints(original|{'web/app.js':'new'})['scanner'])

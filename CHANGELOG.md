@@ -2,6 +2,12 @@
 
 ## Unreleased — 2026-10-17
 
+### Automatic executable releases
+
+- Relevant scanner and local UI pushes to `main` now allocate a newer numeric version and publish an update after both Linux and Windows builds pass.
+- Both platforms publish together; failed builds leave the previous stable release available. Feature branches produce artifacts only.
+- Existing installed updaters continue using numeric release versions; commit fingerprints remain a separate source comparison. Build version changes do not alter source fingerprints.
+
 ### S&P 500 scanner and historical data
 
 - Added FMP cash-index provider for S&P 500 (`SPX`, exact symbol `^GSPC`).

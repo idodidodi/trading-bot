@@ -1,0 +1,88 @@
+name: Build and publish standalone update
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    tags: ['v*']
+    paths:
+      - '*.py'
+      - 'web/**'
+      - 'skills/**'
+      - 'scanner.json'
+      - 'stock_universe.json'
+      - 'tradingview_template.pine'
+      - '.env.example'
+      - '*requirements*.txt'
+      - 'pyproject.toml'
+      - 'poetry.lock'
+      - 'uv.lock'
+      - 'scripts/build-*.sh'
+      - 'scripts/build-*.ps1'
+      - 'scripts/*-manifest.py'
+      - 'scripts/release-version.py'
+      - 'scripts/smoke-*.py'
+      - '.github/workflows/**'
+permissions:
+  contents: read
+# Serialize releases so version allocation and publication cannot overtake one another.
+# Feature branches build independently and never publish installed-app updates.
+concurrency:
+  group: standalone-${{ github.ref_type == 'tag' && 'stable' || github.ref_name == 'main' && 'stable' || github.ref }}
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Allocate release version
+        id: version
+        run: python scripts/release-version.py prepare
+  linux:
+    needs: prepare
+    uses: ./.github/workflows/linux-release.yml
+    with:
+      release_version: ${{ needs.prepare.outputs.version }}
+  windows:
+    needs: prepare
+    uses: ./.github/workflows/windows-release.yml
+    with:
+      release_version: ${{ needs.prepare.outputs.version }}
+  publish:
+    needs: [prepare, linux, windows]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: family-trading-bot-*-${{ github.sha }}
+          merge-multiple: true
+          path: dist
+      - name: Verify complete release package
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          python scripts/release-version.py apply
+          python scripts/release-version.py verify
+      - name: Publish both platforms together
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          tag="v$RELEASE_VERSION"
+          # Keep the release invisible to updaters until all four assets are uploaded.
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --draft --target "$GITHUB_SHA" --title "Family Trading Bot $RELEASE_VERSION" --notes-file CHANGELOG.md
+          fi
+          gh release upload "$tag" dist/FamilyTradingBot-linux-x86_64 dist/linux-x86_64-update.json dist/FamilyTradingBot.exe dist/windows-update.json --clobber
+          gh release edit "$tag" --draft=false --latest

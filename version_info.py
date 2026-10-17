@@ -17,6 +17,9 @@ UI_FILES = {'web/index.html', 'web/app.js', 'web/style.css', 'web/chart.js',
 
 
 def component(path):
+    # CI assigns executable versions at build time; code fingerprints compare source.
+    if path == 'app_version.py':
+        return None
     if path in UI_FILES:
         return 'ui'
     if (('/' not in path and path.endswith('.py') and not path.startswith('test_'))

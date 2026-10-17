@@ -1,38 +1,31 @@
 # Executable build and release rules
 
-Both Windows and Linux executables contain the Python backend and scanner, the local browser UI in `web/`, and bundled configuration and strategy files. Changes to these files require rebuilding both executables.
+Windows and Linux executables contain the Python backend and scanner, the local browser UI in `web/`, and bundled configuration and strategy files. Installed apps check the latest published stable GitHub release at startup, hourly, or when **Check for app update** is selected. Updates compare numeric `X.Y.Z` versions, not commit hashes. Settings also shows code fingerprints for source comparisons; a differing commit alone does not install an update.
 
-## Automatic builds
+## Automatic releases
 
-The Windows and Linux workflows run on pushes to any branch when at least one changed file matches these paths:
+`standalone-release.yml` coordinates the reusable Linux and Windows build workflows. Relevant pushes to `main` automatically allocate a version, test and smoke-test both executables, verify their checksums and manifests, upload all four assets to a draft release, and only then publish it as latest. If either build or verification fails, no new stable release is published. Releases are serialized so an older build cannot publish after a newer one.
 
-| Changed files | Reason |
+The build version advances numerically beyond existing stable-version tags. For example, when the latest tag is `v1.0.6`, the next successful main build publishes `v1.0.7`. `app_version.py` is the source version floor; increase it deliberately for a minor or major release. Actions writes the allocated version into each temporary build checkout so both binaries, manifests and bundled version metadata agree. It does not make version-bump commits or require an additional GitHub token. Source checkouts retain their declared base version; Settings compares code fingerprints separately from executable versions.
+
+| Changed files | Effect |
 | --- | --- |
-| Root-level `*.py` files, including tests | Scanner, backend, launchers, updaters, and verification |
-| `web/**` | Bundled local dashboard, styles, scripts, and chart assets |
-| `skills/**` | Bundled strategy instructions |
-| `scanner.json`, `stock_universe.json`, `tradingview_template.pine`, `.env.example` | Bundled default configuration and templates |
-| Root-level `*requirements*.txt`, `pyproject.toml`, `poetry.lock`, `uv.lock` | Runtime and build dependencies |
-| `scripts/build-*.sh`, `scripts/build-*.ps1`, `scripts/*-manifest.py`, `scripts/smoke-*.py` | Packaging, update manifests, and executable verification |
-| `.github/workflows/**` | Build automation itself |
+| Root-level `*.py`, including tests | Rebuild scanner, backend, launchers and updater |
+| `web/**` | Rebuild local dashboard; shared hosted UI changes also affect the executable |
+| `skills/**` | Rebuild bundled strategy instructions |
+| `scanner.json`, `stock_universe.json`, `tradingview_template.pine`, `.env.example` | Rebuild bundled defaults/templates |
+| Root-level `*requirements*.txt`, `pyproject.toml`, `poetry.lock`, `uv.lock` | Rebuild dependencies |
+| `scripts/build-*.sh`, `scripts/build-*.ps1`, `scripts/*-manifest.py`, `scripts/release-version.py`, `scripts/smoke-*.py` | Rebuild packaging and verification |
+| `.github/workflows/**` | Rebuild with updated automation |
 
-Documentation-only changes and changes confined to `cloud/` do not trigger executable builds. A hosted UI change in the shared `web/` directory does trigger builds because that directory is also bundled locally. If a new bundled input is added to a build script, add it to both workflow path filters.
+Documentation-only and `cloud/`-only branch pushes do not trigger executable builds. Feature-branch pushes build downloadable Actions artifacts for 14 days and never publish installed-app updates. Linux artifact downloads may need `chmod +x` before running. Only `main` and explicit stable-version tags publish releases.
 
-Each workflow runs the Python tests, builds its executable, smoke-tests it, and saves the executable and update manifest as a GitHub Actions artifact for 14 days. Failed tests or builds prevent successful artifacts and release publication. Linux executables downloaded from an artifact may need `chmod +x` before running.
+## Manual releases and retries
 
-Manual workflow runs build the selected ref regardless of path filters. All pushed tags beginning with `v` also trigger builds regardless of changed paths. Documentation-only branch pushes skip the workflows entirely.
+Run **Build and publish standalone update** on `main` to build and publish a new patch release without another code push. A manual run on a feature branch builds artifacts only. A pushed `vX.Y.Z` tag uses that explicit version, which must not be below the source version floor. Rerun a failed workflow to retry; an automatic main retry may allocate a later patch version if other release tags appeared in the meantime. Do not move published tags or replace published executable contents with different code.
 
-## Releases delivered to installed apps
+GitHub Actions performs the platform builds; source commits alone are not installable packages. Users can select **Check for app update** once the new release is published, or wait for the hourly check. Downloaded binaries are verified against their manifests before graceful replacement. Existing credentials and data stay outside the executable.
 
-Branch builds do not publish GitHub release assets or update installed applications. To ship an executable update:
+## Changelog and local credentials
 
-1. Bump `app_version.VERSION` before tagging. Use a patch version for bug fixes and compatible UI changes, a minor version for backward-compatible features, and a major version for breaking behavior or configuration changes.
-2. Commit and push the intended release code.
-3. Push the matching `vX.Y.Z` tag. The workflows reject a tag that does not match `app_version.VERSION`.
-4. Confirm both platform workflows succeed and both executables and update manifests appear on that GitHub release.
-
-Only builds whose ref starts with `refs/tags/v` publish release assets. A manual run on a version tag can retry publication; a manual run on a branch only produces an artifact. Installed applications discover newer stable releases through their existing update checks. Use a new version for changed executable content so existing installations can recognize the update.
-
-## Changelog and local credential instructions
-
-Release publication uses `CHANGELOG.md` as its release notes. Keep the upcoming entry current before tagging. The offline guide in `web/update-notes.html` ships inside both executables and is linked from Settings. Update its pending-release label when publishing the corresponding version. Keep credentials as placeholders or empty examples only; builds include `.env.example`, never `.env`, `.env.prod`, local SQLite databases or downloaded histories. Existing credentials files are preserved by the launchers and binary updaters; adding a new provider key requires a local edit and restart.
+Publication uses `CHANGELOG.md` as release notes. Keep the upcoming entry current before shipping. `web/update-notes.html` ships offline inside both executables and is linked from Settings; its pending label is replaced with the allocated executable version during packaging. Secrets remain local: builds include the empty `.env.example`, never `.env`, `.env.prod`, local SQLite databases or downloaded histories. Updates preserve credentials files. A new provider key requires a local edit and restart.
