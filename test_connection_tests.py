@@ -22,7 +22,7 @@ class ConnectionTests(unittest.TestCase):
             send.assert_called_once()
             self.assertEqual(send.call_args.args[:2],('private-token','123'))
             self.assertIn('test message',send.call_args.args[2])
-            self.assertIn('1.0.6',send.call_args.args[2])
+            self.assertIn('Family Trading Bot '+tests.VERSION,send.call_args.args[2])
 
     def test_missing_credentials_and_remote_errors_are_safe(self):
         with patch.dict(os.environ,{},clear=True):
