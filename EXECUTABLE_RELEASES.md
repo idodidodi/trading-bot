@@ -1,6 +1,6 @@
 # Executable build and release rules
 
-Windows and Linux executables contain the Python backend and scanner, the local browser UI in `web/`, and bundled configuration and strategy files. Installed apps check the latest published stable GitHub release at startup, hourly, or when **Check for app update** is selected. Updates compare numeric `X.Y.Z` versions, not commit hashes. Settings also shows code fingerprints for source comparisons; a differing commit alone does not install an update.
+Windows and Linux executables contain the Python backend and scanner, the local browser UI in `web/`, and bundled configuration and strategy files. The Linux background process checks the latest stable GitHub release daily at 05:00 Israel time; Windows checks at startup and hourly. **Check for app update** requests an immediate background check on either platform. No browser page needs to be open for automatic updates. Updates compare numeric `X.Y.Z` versions, not commit hashes. Settings also shows code fingerprints for source comparisons; a differing commit alone does not install an update.
 
 ## Automatic releases
 

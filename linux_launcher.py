@@ -1,11 +1,67 @@
 """Standalone Linux entrypoint with persistent per-user files and one worker."""
 import os
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import threading
 import webbrowser
+
+
+class DiagnosticStream:
+    """Keep terminal output while retaining tracebacks across detached restarts."""
+    def __init__(self, original, handler):
+        self.original = original
+        self.handler = handler
+        try:
+            source = os.fstat(original.fileno())
+            destination = os.fstat(handler.stream.fileno())
+            self.echo = (source.st_dev, source.st_ino) != (destination.st_dev, destination.st_ino)
+        except (AttributeError, OSError):
+            self.echo = original is not None
+
+    def write(self, text):
+        if text:
+            record = logging.LogRecord('runtime', logging.INFO, '', 0, text, (), None)
+            self.handler.handle(record)
+            if self.echo:
+                try:
+                    self.original.write(text)
+                    self.original.flush()
+                except (BrokenPipeError, OSError):
+                    self.echo = False
+        return len(text)
+
+    def flush(self):
+        self.handler.flush()
+        if self.echo:
+            try:
+                self.original.flush()
+            except (BrokenPipeError, OSError):
+                self.echo = False
+
+    def __getattr__(self, name):
+        return getattr(self.original, name)
+
+
+def configure_verbose_logging(root):
+    if isinstance(sys.stdout, DiagnosticStream):
+        return Path(os.environ['TRADING_BOT_LOG_FILE'])
+    directory = root/'logs'
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = directory/'runtime.log'
+    descriptor = os.open(path, os.O_WRONLY|os.O_CREAT|os.O_APPEND, 0o600)
+    os.close(descriptor)
+    handler = RotatingFileHandler(path, maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
+    handler.terminator = ''
+    # Disk/logging errors must not recurse through our stderr wrapper.
+    handler.handleError = lambda record: None
+    os.environ['TRADING_BOT_LOG_FILE'] = str(path)
+    sys.stdout = DiagnosticStream(sys.stdout, handler)
+    sys.stderr = DiagnosticStream(sys.stderr, handler)
+    return path
 
 
 def app_root():
@@ -77,6 +133,9 @@ def main():
         import fcntl
         root=app_root()
         root.mkdir(parents=True,exist_ok=True,mode=0o700)
+        log_path = configure_verbose_logging(root)
+        from app_version import VERSION
+        print(f'[runtime] Starting Family Trading Bot {VERSION}; PID {os.getpid()}; log {log_path}', flush=True)
         # Hold the lock for the whole process. It is never inherited by updates.
         lock=(root/'scanner.lock').open('a')
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)

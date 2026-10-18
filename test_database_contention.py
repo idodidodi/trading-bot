@@ -13,6 +13,16 @@ import paper_trading
 
 
 class DatabaseContentionTests(unittest.TestCase):
+    def test_linux_verbose_activity_is_both_printed_and_persisted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=Store(Path(folder)/'signals.sqlite3')
+            with patch.dict('os.environ',{'TRADING_BOT_ENV':'prod','TRADING_BOT_LOG_FILE':str(Path(folder)/'runtime.log'),'TRADING_BOT_VERBOSE_LOGS':'true'}), \
+                 patch('builtins.print') as console:
+                store.log('Scan cycle completed','one market checked')
+                self.assertIn('Scan cycle completed',console.call_args.args[0])
+            with store.connect() as db:
+                self.assertEqual(db.execute('SELECT event FROM activity_log').fetchone()[0],'Scan cycle completed')
+
     def test_snapshot_releases_writer_between_candles_and_reports(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'signals.sqlite3'

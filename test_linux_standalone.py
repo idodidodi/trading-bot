@@ -102,6 +102,79 @@ class LinuxStandaloneTests(unittest.TestCase):
             with patch('windows_update.get_json',return_value=manifest),self.assertRaisesRegex(ValueError,'Untrusted'):
                 updater.download_release(root,release)
 
+    def test_installer_is_detached_before_shutdown_and_preserves_launch_settings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            staged=Path(folder)/'FamilyTradingBot.new'
+            staged.write_bytes(b'verified binary')
+            order=[]
+            env={'PYINSTALLER_RESET_ENVIRONMENT':'1','PAPER_TRADING_ENABLED':'false',
+                 'TRADING_BOT_ENV_FILE':'/external/settings.env','DATA_DIR':'/external/data'}
+            with patch('linux_launcher.external_environment',return_value=env), \
+                 patch('linux_update.subprocess.Popen',side_effect=lambda *args,**kwargs:order.append('installer')) as spawn:
+                updater.install(staged,lambda:order.append('shutdown'))
+            self.assertEqual(order,['installer','shutdown'])
+            self.assertTrue(spawn.call_args.kwargs['start_new_session'])
+            self.assertTrue(spawn.call_args.kwargs['close_fds'])
+            self.assertEqual(spawn.call_args.kwargs['stdin'],subprocess.DEVNULL)
+            self.assertEqual(spawn.call_args.kwargs['stderr'],subprocess.STDOUT)
+            self.assertTrue((staged.parent/'update.log').is_file())
+            self.assertEqual(spawn.call_args.kwargs['env'],env)
+            command=spawn.call_args.args[0]
+            self.assertEqual(command[2],str(os.getpid()))
+            self.assertEqual(command[3],sys.executable)
+            self.assertEqual(command[4],str(staged))
+            self.assertEqual(command[5],hashlib.sha256(staged.read_bytes()).hexdigest())
+
+    def test_verbose_logs_retain_stdout_stderr_and_terminal_echo(self):
+        with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,{},clear=True):
+            console=io.StringIO();errors=io.StringIO()
+            with patch('sys.stdout',console),patch('sys.stderr',errors):
+                path=launcher.configure_verbose_logging(Path(folder))
+                handler=sys.stdout.handler
+                try:
+                    print('scanner started',flush=True)
+                    print('worker traceback',file=sys.stderr,flush=True)
+                    self.assertEqual(launcher.configure_verbose_logging(Path(folder)),path)
+                    self.assertEqual(os.environ['TRADING_BOT_LOG_FILE'],str(path))
+                    self.assertIn('scanner started',path.read_text())
+                    self.assertIn('worker traceback',path.read_text())
+                    self.assertIn('scanner started',console.getvalue())
+                    self.assertIn('worker traceback',errors.getvalue())
+                finally:
+                    handler.close()
+
+    def test_verbose_logs_survive_closed_terminal_and_rotate(self):
+        with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,{},clear=True):
+            console=unittest.mock.Mock()
+            console.fileno.side_effect=OSError('no terminal')
+            console.write.side_effect=BrokenPipeError('terminal closed')
+            with patch('sys.stdout',console),patch('sys.stderr',io.StringIO()):
+                path=launcher.configure_verbose_logging(Path(folder))
+                handler=sys.stdout.handler
+                handler.maxBytes=300
+                try:
+                    for i in range(20):
+                        print(f'{i}: '+('x'*100),flush=True)
+                    self.assertIn('19: ',path.read_text())
+                    self.assertEqual(len(list(path.parent.glob('runtime.log*'))),4)
+                    self.assertFalse(sys.stdout.echo)
+                finally:
+                    handler.close()
+
+    def test_restarted_process_does_not_duplicate_redirected_log_output(self):
+        from logging.handlers import RotatingFileHandler
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'runtime.log'
+            handler=RotatingFileHandler(path,encoding='utf-8')
+            handler.terminator=''
+            try:
+                with path.open('a') as inherited:
+                    stream=launcher.DiagnosticStream(inherited,handler)
+                    stream.write('one startup\n');stream.flush()
+                self.assertEqual(path.read_text(),'one startup\n')
+            finally:
+                handler.close()
+
     @unittest.skipUnless(sys.platform=='linux','Native Linux installer needs sha256sum')
     def test_install_preserves_state_and_restarts_even_with_spaces_in_paths(self):
         with tempfile.TemporaryDirectory(prefix='family updater ') as folder:

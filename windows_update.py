@@ -1,5 +1,10 @@
-"""Hourly/manual GitHub release updates, verified before graceful replacement."""
+"""Process-owned release updates, verified before graceful replacement.
+
+Linux checks daily at 05:00 Israel time; Windows checks at startup/hourly.
+Manual requests wake this worker immediately on either platform.
+"""
 import hashlib
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -7,7 +12,9 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import urllib.request
+from zoneinfo import ZoneInfo
 
 from app_version import VERSION
 
@@ -15,7 +22,13 @@ REPOSITORY='idodidodi/trading-bot'
 API=f'https://api.github.com/repos/{REPOSITORY}/releases/latest'
 _wake=threading.Event()
 _lock=threading.Lock()
-_state={'version':VERSION,'phase':'idle','message':'Hourly update checks enabled.'}
+_state={'version':VERSION,'phase':'idle','message':'Background update checks enabled.'}
+
+
+def log_update(message):
+    if sys.platform == 'linux':
+        stamp = datetime.now(ZoneInfo('Asia/Jerusalem')).strftime('%Y-%m-%d %H:%M:%S')
+        print(f'[updater {stamp} Israel] {message}', flush=True)
 
 
 def supported():
@@ -26,7 +39,9 @@ def supported():
 
 
 def status():
-    with _lock:return dict(_state,supported=supported(),platform='Linux' if sys.platform=='linux' else 'Windows')
+    linux = sys.platform == 'linux'
+    with _lock:return dict(_state,supported=supported(),platform='Linux' if linux else 'Windows',
+                          schedule='daily at 05:00 Israel time' if linux else 'at startup and hourly')
 
 
 def request_check():
@@ -138,20 +153,40 @@ def worker(stop,shutdown):
     if not supported():return
     if sys.platform=='linux':
         from linux_launcher import app_root
+        from linux_update import next_update_at
         root=app_root()/'updates'
-    else:root=Path(os.environ['LOCALAPPDATA'])/'FamilyTradingBot'/'updates'
+        next_check = next_update_at(time.time())
+        next_deadline = next_update_at
+    else:
+        root=Path(os.environ['LOCALAPPDATA'])/'FamilyTradingBot'/'updates'
+        next_check = time.time()
+        next_deadline = lambda now: now + 3600
+    schedule = status()['schedule']
+    with _lock:
+        _state.update(next_check_at=int(next_check*1000),message='Automatic update checks '+schedule+'.')
+    log_update('Background updater ready; '+schedule+'; installed version '+VERSION)
     while not stop.is_set():
+        if not _wake.is_set() and time.time() < next_check:
+            # Re-read wall time after suspend/clock changes and stop promptly.
+            _wake.wait(min(60, max(0, next_check-time.time())))
+            continue
+        manual = _wake.is_set()
+        _wake.clear()
         try:
+            log_update(('Manual' if manual else 'Scheduled')+' executable update check started')
             with _lock:_state.update(phase='checking',message='Checking for updates…')
             release=get_json(API)
             with _lock:_state.update(phase='downloading',message='Checking release package…')
             staged=download_release(root,release)
             if staged:
+                log_update('Executable verified; launching detached installer and requesting graceful shutdown')
                 with _lock:_state.update(phase='installing',message='Update verified. Installing and restarting…')
                 install(staged,shutdown)
                 return
             with _lock:_state.update(phase='idle',message='The standalone app is up to date.')
-        except Exception:
+            log_update('No newer executable to install; app continues running')
+        except Exception as exc:
+            log_update('Update failed ('+type(exc).__name__+'); installed executable retained')
             with _lock:_state.update(phase='error',message='Update check failed. The installed app continues running; retry with Check for updates.')
-        _wake.wait(3600)
-        _wake.clear()
+        next_check = next_deadline(time.time())
+        with _lock:_state.update(next_check_at=int(next_check*1000))

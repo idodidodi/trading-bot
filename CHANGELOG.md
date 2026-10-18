@@ -2,6 +2,14 @@
 
 ## Unreleased — 2026-10-18
 
+### Daily Linux executable updates
+
+- The Linux app's background process checks for stable executable updates daily at 05:00 Asia/Jerusalem, including daylight-saving changes. No browser page needs to be open. If the running app resumes after missing the deadline, it checks once on resume.
+- A newer verified package uses the existing graceful shutdown, detached installer, executable replacement and restart. External credentials, data locations and launch settings are preserved. Failed checks keep the installed app running.
+- Manual **Check for updates** still wakes the process immediately. Windows retains startup and hourly checks. The dashboard now displays the platform's actual schedule.
+- Linux temporarily enables verbose production activity output and retains stdout/stderr in `logs/runtime.log` under the application directory. Logs rotate at 5 MiB with three backups. Update download progress, checksum verification, installer actions and restarted-process startup are recorded there.
+- The detached Linux installer redirects standard input away from the terminal and stdout/stderr to the persistent log before stopping the old process. Terminal-launched updates keep working if the terminal or its `tee` pipeline closes. Existing launch settings, including disabled paper trading, carry into the restarted process.
+
 ### Scanner database contention
 
 - Cloud sync serializes records outside write transactions and queues them in batches of at most 100 records, keeping the SQLite writer available between batches. Candle/report reads use a separate read-only connection.

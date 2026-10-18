@@ -172,6 +172,10 @@ class Store:
             stamp = datetime.now(ZoneInfo('Asia/Jerusalem')).strftime('%Y-%m-%d %H:%M:%S %z')
             print(f'[DEV {stamp}] {event}: {details}', flush=True)
             return
+        verbose_default = 'true' if os.environ.get('TRADING_BOT_LOG_FILE') else 'false'
+        if os.environ.get('TRADING_BOT_VERBOSE_LOGS', verbose_default).lower() in ('true', '1'):
+            stamp = datetime.now(ZoneInfo('Asia/Jerusalem')).strftime('%Y-%m-%d %H:%M:%S %z')
+            print(f'[PROD {stamp}] {event}: {details}', flush=True)
         try:
             with self.connect() as db:
                 db.execute("CREATE TABLE IF NOT EXISTS activity_log(id INTEGER PRIMARY KEY, occurred REAL, event TEXT, details TEXT)")
@@ -528,7 +532,7 @@ def main():
     def update_shutdown():
         stop.set()
         server.shutdown()
-    update_thread=threading.Thread(target=update_worker,args=(stop,update_shutdown),daemon=True)
+    update_thread=threading.Thread(target=update_worker,args=(stop,update_shutdown),name='app-updater',daemon=True)
     update_thread.start()
     webhook_server = None
     if legacy_webhook:

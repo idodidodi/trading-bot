@@ -297,7 +297,7 @@ async function openFollowup(source,r,mode='recovery'){
 $('close-followup').onclick=()=>$('followup-dialog').close();
 
 async function requestCatchup(){try{const result=await request('/api/catchup',{action:'request'});message(result.status==='pending'?'Catch-up queued. The scanner will process missed closed candles and send a Telegram summary when online.':`Catch-up ${result.status}${result.reason?': '+result.reason:''}`);watchCatchup(result.id);}catch(e){message(e.message,true);}}
-async function loadUpdateControls(actions){try{const value=await request('/api/updates');if(!value.supported)return;const label=node('span',`${value.platform||'Windows'} app ${value.version} · hourly updates enabled`);actions.append(label,button('Check for updates',async()=>{try{const result=await request('/api/updates',{action:'check'});message(result.message||'Checking for updates…');}catch(e){message(e.message,true);}}));}catch{}}
+async function loadUpdateControls(actions){try{const value=await request('/api/updates');if(!value.supported)return;const label=node('span',`${value.platform||'Windows'} app ${value.version} · automatic updates ${value.schedule||'enabled'}`);actions.append(label,button('Check for updates',async()=>{try{const result=await request('/api/updates',{action:'check'});message(result.message||'Checking for updates…');}catch(e){message(e.message,true);}}));}catch{}}
 
 function connectionTestControls(panel){
  if(online)return;
