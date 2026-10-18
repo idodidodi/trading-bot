@@ -51,6 +51,7 @@ def load_rules():
     text = SKILL.read_text(encoding='utf-8')
     patterns = {
         'rsi_period': r'- RSI: (\d+) periods, Wilder smoothing, close prices\.',
+        'rsi_tolerance': r'- RSI tolerance: ([\d.]+) points, inclusive, in both directions\.',
         'bb_period': r'- Bollinger Bands: (\d+)-period',
         'bb_multiplier': r'plus/minus ([\d.]+) population standard deviations',
         'pivot_left': r'- Pivot confirmation: (\d+) candles to the left',
@@ -63,7 +64,7 @@ def load_rules():
         match = re.search(pattern, text)
         if not match:
             raise ValueError(f'Cannot read {key} from {SKILL}; update the parser explicitly.')
-        rules[key] = float(match[1]) if key == 'bb_multiplier' else int(match[1])
+        rules[key] = float(match[1]) if key in ('bb_multiplier', 'rsi_tolerance') else int(match[1])
     if any(v <= 0 for v in rules.values()) or rules['min_spacing'] > rules['max_spacing']:
         raise ValueError('Invalid indicator or pivot settings in skill.')
     source = re.search(r'- Divergence price source: (close)\.', text)
@@ -72,6 +73,11 @@ def load_rules():
     rules['price_source'] = source[1]
     rules['skill_hash'] = hashlib.sha256(text.encode()).hexdigest()[:16]
     return rules
+
+
+def rsi_divergence_matches(first, second, direction, tolerance=0):
+    improvement = second - first if direction == 'bullish' else first - second
+    return improvement > 0 or (tolerance > 0 and improvement >= -tolerance)
 
 
 def validate_signal(body, rules):
@@ -105,9 +111,9 @@ def validate_signal(body, rules):
     if (body['direction'] == 'bullish' and touch > body['price2']) or (body['direction'] == 'bearish' and touch < body['price2']):
         raise ValueError('Band touch inconsistent with pivot price')
     if body['direction'] == 'bullish':
-        valid = body['price2'] < body['price1'] and body['rsi2'] > body['rsi1'] and touch <= body['band2']
+        valid = body['price2'] < body['price1'] and rsi_divergence_matches(body['rsi1'], body['rsi2'], 'bullish', rules.get('rsi_tolerance', 0)) and touch <= body['band2']
     else:
-        valid = body['price2'] > body['price1'] and body['rsi2'] < body['rsi1'] and touch >= body['band2']
+        valid = body['price2'] > body['price1'] and rsi_divergence_matches(body['rsi1'], body['rsi2'], 'bearish', rules.get('rsi_tolerance', 0)) and touch >= body['band2']
     if not valid:
         raise ValueError('Divergence or band-touch rule failed')
     # Store only known fields; never persist the webhook authentication secret.
@@ -224,7 +230,9 @@ def quiet_hours(now=None):
     return minute>=23*60+30 or minute<6*60+30
 
 
-def send_telegram(token, chat_id, text, silent=False):
+def send_telegram(token, chat_id, text, silent=False, source_identity=None):
+    from telegram_delivery import footer, source
+    text = footer(text, source_identity or source())
     data = json.dumps({'chat_id': chat_id, 'text': text, 'disable_notification': silent}).encode()
     req = urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage', data=data,
                                  headers={'Content-Type': 'application/json'})
@@ -233,6 +241,7 @@ def send_telegram(token, chat_id, text, silent=False):
             result = json.load(response)
         if not result.get('ok'):
             raise RuntimeError('Telegram rejected message')
+        return result.get('result', {}).get('message_id')
     except urllib.error.HTTPError as exc:
         # Do not log exception URLs: Telegram URLs contain the bot token.
         raise RuntimeError(f'Telegram HTTP {exc.code}') from None
@@ -242,6 +251,7 @@ def send_telegram(token, chat_id, text, silent=False):
 
 def delivery_worker(store, token, chat_id, dry_run, stop):
     from local_settings import delivery_dry_run
+    from telegram_delivery import deliver
     from scanner_control import initialize as control_initialize
     with store.connect() as db:control_initialize(db)
     while not stop.is_set():
@@ -251,10 +261,12 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
         if note:
             key,text,attempts=note
             try:
-                if not current_dry_run:send_telegram(token,chat_id,text,silent=quiet_hours())
-                with store.connect() as db:db.execute('UPDATE notification_queue SET status=? WHERE id=?',('dry-run' if current_dry_run else 'sent',key))
-                store.log('Queued notification delivered','dry-run' if current_dry_run else 'sent')
-            except Exception:
+                outcome = 'dry-run' if current_dry_run else deliver(store, token, chat_id, text, 'notification:' + key, send_telegram, silent=quiet_hours())
+                with store.connect() as db:db.execute('UPDATE notification_queue SET status=? WHERE id=?',(outcome,key))
+                store.log('Queued notification delivered',outcome)
+            except Exception as exc:
+                from telegram_delivery import DeliveryPending
+                store.log('Queued notification delayed', str(exc) if isinstance(exc, DeliveryPending) else 'Delivery failed')
                 with store.connect() as db:db.execute('UPDATE notification_queue SET attempts=?,next_attempt=? WHERE id=?',(attempts+1,time.time()+min(300,2**min(attempts+1,9)),key))
             continue
         with store.connect() as db:
@@ -271,12 +283,11 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             continue
         store.log('Delivery attempt', f'{key} · attempt {attempts + 1}')
         try:
-            if not current_dry_run:
-                send_telegram(token, chat_id, message(json.loads(raw)))
+            outcome = 'dry-run' if current_dry_run else deliver(store, token, chat_id, message(json.loads(raw)), 'signal:' + key, send_telegram)
             with store.connect() as db:
                 db.execute('UPDATE signals SET status=?,attempts=?,error=NULL WHERE id=?',
-                           ('dry-run' if current_dry_run else 'sent', attempts + 1, key))
-            store.log('Delivery completed', 'dry-run' if current_dry_run else 'sent')
+                           (outcome, attempts + 1, key))
+            store.log('Delivery completed', outcome)
         except Exception as exc:
             # Persist a sanitized classification only, never arbitrary exception text.
             error = str(exc) if isinstance(exc, RuntimeError) else 'Delivery failed'
@@ -530,6 +541,9 @@ def main():
     stop = threading.Event()
     worker = threading.Thread(target=delivery_worker, args=(store, token, chat_id, dry_run, stop), daemon=True)
     worker.start()
+    from market_summary import worker as summary_worker
+    summary_thread = threading.Thread(target=summary_worker, args=(store, stop), name='market-summary', daemon=True)
+    summary_thread.start()
     from cloud_sync import worker as sync_worker
     sync_thread = threading.Thread(target=sync_worker, args=(store, stop), daemon=True)
     sync_thread.start()
@@ -572,6 +586,7 @@ def main():
             webhook_server.server_close()
         stop.set()
         worker.join(timeout=20)
+        summary_thread.join(timeout=12)
         sync_thread.join(timeout=12)
         paper_thread.join(timeout=16)
         if scanner_thread:

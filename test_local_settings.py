@@ -106,7 +106,10 @@ class LocalSettingsTests(unittest.TestCase):
                 if statuses == expected:return
                 time.sleep(.02)
             self.fail(f'Expected {expected}, got {statuses}')
-        with patch('platform_app.send_telegram') as send:
+        def coordinate(payload):
+            return {'status': {'acquire': 'acquired', 'renew': 'acquired', 'complete': 'completed'}[payload['action']]}
+        with patch('telegram_delivery.coordinator', side_effect=coordinate), \
+             patch('platform_app.send_telegram', return_value=42) as send:
             thread.start()
             try:
                 await_status(['dry-run'])

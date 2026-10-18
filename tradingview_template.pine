@@ -3,6 +3,7 @@ indicator("RSI divergence + BB · local Telegram", overlay=true, max_bars_back=5
 // Generated from skills/rsi-divergence/SKILL.md. Regenerate and recreate alerts after rule changes.
 string webhookSecret = input.string("", "Webhook secret", tooltip="Use WEBHOOK_SECRET from your local .env. Do not enter your Telegram token here.")
 int rsiPeriod = __RSI_PERIOD__
+float rsiTolerance = __RSI_TOLERANCE__
 int bbPeriod = __BB_PERIOD__
 float bbMultiplier = __BB_MULTIPLIER__
 int leftBars = __PIVOT_LEFT__
@@ -65,7 +66,7 @@ if barstate.isconfirmed and supportedChart
                     int spacing = pivotIndex - array.get(references, k)
                     int offset = rightBars + spacing
                     float firstBand = isLow ? lower[offset] : upper[offset]
-                    bool divergence = isLow ? close[rightBars] < close[offset] and rsi[rightBars] > rsi[offset] : close[rightBars] > close[offset] and rsi[rightBars] < rsi[offset]
+                    bool divergence = isLow ? close[rightBars] < close[offset] and rsi[rightBars] >= rsi[offset] - rsiTolerance : close[rightBars] > close[offset] and rsi[rightBars] <= rsi[offset] + rsiTolerance
                     if spacing >= minSpacing and spacing <= maxSpacing and not na(firstBand) and divergence
                         bullish := bullish or isLow
                         bearish := bearish or not isLow

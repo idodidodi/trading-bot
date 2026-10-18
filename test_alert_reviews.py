@@ -18,7 +18,9 @@ class ReviewRetirementTests(unittest.TestCase):
             store.insert(setup)
             stop = Mock()
             stop.is_set.side_effect = [False, False, True]
-            with patch('platform_app.send_telegram') as send:
+            def coordinate(payload):
+                return {'status': 'completed' if payload['action']=='complete' else 'acquired'}
+            with patch('telegram_delivery.coordinator', side_effect=coordinate), patch('platform_app.send_telegram', return_value=42) as send:
                 delivery_worker(store, 'test-token', '123', False, stop)
             send.assert_called_once()
             self.assertCountEqual([row[1] for row in store.rows()], ['cancelled', 'sent'])

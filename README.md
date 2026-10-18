@@ -6,7 +6,7 @@ The standalone executable always runs as **production** with its existing per-us
 
 In the local production dashboard, **Settings & versions → Paper trading** controls Alpaca paper automation. The choice is saved in the installation’s local database, takes precedence over `PAPER_TRADING_ENABLED`, and applies without restarting. Credentials remain in `.env`; restart after changing credentials. Disabling stops local automation without cancelling existing simulated orders or closing positions at Alpaca. An in-progress cycle may finish. Development paper trading remains disabled.
 
-In the local development dashboard, open **Settings & versions → Development overrides** to enable **Send Telegram alerts from development** and **Sync development data to cloud** while production is stopped. Save applies changes to subsequent delivery and sync requests without restarting; an in-progress request may finish. Close the browser and the scanner continues using the saved preferences. Settings persist in the development SQLite database and are never synced to cloud or applied to production. Disable both when production resumes.
+In the local development dashboard, open **Settings & versions → Development overrides** to enable **Send Telegram alerts from development** and **Sync development data to cloud**. Updated dev and production senders compete through the shared Telegram coordinator; the first sender delivers each event. Save applies changes to subsequent delivery and sync requests without restarting; an in-progress request may finish. Close the browser and the scanner continues using the saved preferences. Settings persist in the development SQLite database and are never synced to cloud or applied to production. Disable these overrides when development delivery or syncing is no longer needed.
 
 Telegram requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`; cloud sync requires an HTTPS `CLOUD_SYNC_URL` and `CLOUD_SYNC_TOKEN`. Keep credentials in the local `.env` and restart after changing credentials. Existing `DEV_TELEGRAM_ENABLED` and `DEV_CLOUD_SYNC_ENABLED` environment values provide initial defaults until settings are saved; saved preferences take precedence. Development keeps separate data and does not enable persistent activity logs or paper orders. Previously processed dry-run alerts are never resent. These controls are available only in the local development dashboard, not the online dashboard. Production continues using `DRY_RUN` and its configured cloud connection.
 
@@ -20,7 +20,7 @@ Executable and cloud UI builds generate `web/version.json` automatically. Rebuil
 
 **Market-data provider → our candle scanner → local dashboard + Telegram.** TradingView is not required. Python 3.10+; no third-party Python dependencies. The computer running the app must stay online for live polling and Telegram delivery.
 
-The scanner reads numeric defaults from [the Markdown skill](skills/rsi-divergence/SKILL.md): RSI **3 on closes**, Wilder smoothing; Bollinger Bands **20 / 2**, population deviation; strict **two-left/one-right pivots**; pivot spacing **2–60** (at least one intervening candle), comparing all eligible earlier pivots. Only the second pivot must touch its relevant band; the first need not. Band slope is ignored. Each qualifying pivot pair is a separate finding. It calculates indicators from OHLC data locally. Bullish divergence requires a lower closing price, higher RSI, and a lower-band touch at the second low; bearish is reversed. Pivots and divergence comparisons use closes; wicks still count for Bollinger Band touches. Live alerts wait for **one following candle to close** and confirm the second pivot. The band touch and RSI divergence are evaluated at the pivot itself; the following candle must have a strictly lower close (bearish) or higher close (bullish). Backtests and newly generated Pine use the same rule; saved historical findings retain their original rules. Signals only, with no order execution or trade levels.
+The scanner reads numeric defaults from [the Markdown skill](skills/rsi-divergence/SKILL.md): RSI **3 on closes**, Wilder smoothing; Bollinger Bands **20 / 2**, population deviation; strict **two-left/one-right pivots**; pivot spacing **2–60** (at least one intervening candle), comparing all eligible earlier pivots. Only the second pivot must touch its relevant band; the first need not. Band slope is ignored. Each qualifying pivot pair is a separate finding. It calculates indicators from OHLC data locally. Bullish divergence requires a lower closing price, RSI no more than 1 point below the first pivot, and a lower-band touch at the second low; bearish requires a higher closing price and RSI no more than 1 point above the first pivot. The 1-point RSI tolerance is inclusive in both directions. Pivots and divergence comparisons use closes; wicks still count for Bollinger Band touches. Live alerts wait for **one following candle to close** and confirm the second pivot. The band touch and RSI divergence are evaluated at the pivot itself; the following candle must have a strictly lower close (bearish) or higher close (bullish). Backtests and newly generated Pine use the same rule; saved historical findings retain their original rules. Signals only, with no order execution or trade levels.
 
 ## Data-provider recommendation
 
@@ -105,6 +105,29 @@ This evaluates the configured files/providers once and prints coverage, without 
 
 ## Telegram bot and destination
 
+The running app queues a **morning market summary every calendar day at 10:30 in
+Asia/Jerusalem**, automatically following Israel's daylight-saving changes. It
+reports S&P 500 and DAX cash indices, Bitcoin in USD, gold futures in USD per troy
+ounce, WTI crude oil futures in USD per barrel, and EUR/USD. This is part of the
+program and uses its configured Telegram bot and destination. It runs independently
+of candle scanning, so a long scan does not delay the scheduled quote fetch.
+
+Summary quotes come from Yahoo Finance's chart service (`^GSPC`, `^GDAXI`,
+`BTC-USD`, `GC=F`, `CL=F`, `EURUSD=X`); no additional key is needed. Gold and oil
+are Yahoo-selected futures contracts, not spot prices or ETFs. Prices may be
+delayed. Each line includes the provider's quote time in Israel time; quotes over
+one hour old are marked **older quote**, including last available closed-market
+prices. Individual failed quotes appear as unavailable; if every quote fails,
+the app retries once per minute. The chart service can change or rate-limit requests.
+
+Keep the app online for delivery. Starting after 10:30 queues today's summary;
+missed earlier days are not generated. Daily queue identities survive restarts,
+and Telegram retries and dry-run mode use the existing notification queue. As
+with other notifications, a crash after Telegram accepts delivery but before the
+database records success can repeat a message. A pending message from before an
+outage retains its original timestamp when delivery resumes. Restart the app
+after installing this change.
+
 1. Open verified **@BotFather**: https://t.me/BotFather. Send `/newbot`, choose a name and unique username ending in `bot`.
 2. Put its bot token in local `.env` as `TELEGRAM_BOT_TOKEN`. Keep it private; revoke an exposed token through BotFather.
 3. Open your new bot and press **Start**. For a group, create one, add the bot, and send `/start@YourBotUsername` inside it. Allow the bot to send messages. For a channel, make the bot an administrator allowed to post.
@@ -121,6 +144,10 @@ If Telegram reports a TLS certificate verification failure, check which interpre
 The first successful scan of a feed/timeframe establishes a baseline and does **not** send historical signals. Subsequent scans emit signals confirmed after the last observed candle; overlapping polls and restarts do not repeat the same pivot pair. Changing the provider identity, skill, or live alert timing establishes a new baseline. Telegram reports the actual confirmation close in Israel time and the number of following candles required. Existing provisional findings retain their original labels. The worker wakes 15 seconds after the next known candle close (or sooner for its configured polling interval), with a 30-second minimum wait between scans. Delivery occurs on the next successful provider poll after that close, subject to provider availability, request pacing, and Telegram retries. Candle history should ideally have 250+ bars. The minimum with current rules is 64; smaller datasets are insufficient, and 64–249 bars are labeled limited history. This avoids requiring more than 20 years of monthly data for recently listed instruments.
 
 SQLite state and the delivery queue live in `data/signals.sqlite3`. Offline catch-up is limited to the history available from your provider (up to 500 bars); a gap exceeding that window is reported as unavailable and requires backfill. Telegram failures retry up to once every five minutes and survive restarts. One app process per database. Delivery is at-least-once: a crash after Telegram accepts a message but before recording success may repeat a message. `DRY_RUN=true` records delivery as simulated and never sends those signals later.
+
+Every Telegram message includes its device label, dev/prod environment, and short persistent sender ID. Set `TELEGRAM_DEVICE_LABEL` to a readable machine name; the default is the hostname. Sender identity is saved in `telegram-sender.sqlite3` beside the environment's data. Automatic alerts require the shared Supabase coordinator: configure `CLOUD_SYNC_URL` and `CLOUD_SYNC_TOKEN`, or override the endpoint with `TELEGRAM_COORDINATION_URL`. Coordination works even when development dashboard sync is disabled. Without a working coordinator, automatic alerts remain pending. Manual connection tests still send directly and include the source footer.
+
+The first dev/prod sender to claim an event for the same bot/chat sends it. Successful shared claims suppress repeats for a rolling 24 hours; a device's existing sent queue remains durable beyond that window. Suppressed local rows are marked `suppressed`. Source labels and message formatting do not change event identity. Cloud attempts retain source, body/event/destination hashes, result/reason and Telegram message ID for diagnosis, with daily cleanup on the first coordinator request after 24 hours. A local accepted-send record lets cloud confirmation retry without resending. Telegram timeouts and crashes before that record remain ambiguous and retry automatically, so occasional repeats remain possible. Deploy the coordinator before updating senders; see `cloud/README.md`.
 
 ```sh
 python3 -m unittest -v

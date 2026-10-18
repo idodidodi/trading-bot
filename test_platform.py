@@ -106,7 +106,9 @@ class ReceiverTests(unittest.TestCase):
     def test_delivery_retries_and_recovers(self):
         self.store.insert(validate_signal(example(), load_rules()))
         stop = threading.Event()
-        with patch('platform_app.send_telegram', side_effect=[RuntimeError('Telegram connection failed'), None]) as send:
+        def coordinate(payload):
+            return {'status': {'acquire':'acquired', 'renew':'acquired', 'complete':'completed', 'release':'released'}[payload['action']]}
+        with patch('telegram_delivery.coordinator', side_effect=coordinate), patch('platform_app.send_telegram', side_effect=[RuntimeError('Telegram connection failed'), None]) as send:
             worker = threading.Thread(target=delivery_worker, args=(self.store, 'test-token', '123', False, stop))
             worker.start()
             try:

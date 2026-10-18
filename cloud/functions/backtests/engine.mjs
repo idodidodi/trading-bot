@@ -35,7 +35,10 @@ export function detect(candles,rules,symbol,timeframe,provisional=false){
    if([rsi[first],rsi[i],bands[first],bands[i]].some(v=>v===undefined))continue;
    const spacing=i-first,event=provisional?i:i+right;
    if(spacing<rules.min_spacing||spacing>rules.max_spacing||event<minimum-1)continue;
-   const divergence=direction==='bullish'?prices[i]<prices[first]&&rsi[i]>rsi[first]:prices[i]>prices[first]&&rsi[i]<rsi[first];
+   const tolerance=rules.rsi_tolerance??0;
+   const improvement=direction==='bullish'?rsi[i]-rsi[first]:rsi[first]-rsi[i];
+   const rsiMatch=improvement>0||(tolerance>0&&improvement>=-tolerance);
+   const divergence=direction==='bullish'?prices[i]<prices[first]&&rsiMatch:prices[i]>prices[first]&&rsiMatch;
    if(!divergence||!bandTouch)continue;
    const s={symbol,timeframe,direction,price1:prices[first],price2:prices[i],rsi1:rsi[first],rsi2:rsi[i],band1:bands[first],band2:bands[i],band_touch_price:touch,pivot1:candles[first].start,pivot2:candles[i].start,confirmed_at:candles[event].end,spacing,rules};
    if(provisional)Object.assign(s,{signal_status:'provisional',alert_timing:'pivot_close',pivot_closed_at:candles[i].end});

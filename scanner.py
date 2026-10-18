@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 
-from platform_app import ROOT, Store, database_busy, load_env, load_rules, validate_signal
+from platform_app import ROOT, Store, database_busy, load_env, load_rules, validate_signal, rsi_divergence_matches
 
 TIMEFRAMES = {'1h': '1h', '4h': '4h', 'daily': '1day', 'weekly': '1week', 'monthly': '1month'}
 
@@ -171,7 +171,9 @@ def detect(candles, rules, symbol, timeframe, *, provisional=False):
                     continue
                 if any(v is None for v in (rsi[first], rsi[i], bands[first], bands[i])):
                     continue
-                divergence = (prices[i] < prices[first] and rsi[i] > rsi[first]) if direction == 'bullish' else (prices[i] > prices[first] and rsi[i] < rsi[first])
+                price_divergence = prices[i] < prices[first] if direction == 'bullish' else prices[i] > prices[first]
+                divergence = price_divergence and rsi_divergence_matches(
+                    rsi[first], rsi[i], direction, rules.get('rsi_tolerance', 0))
                 if not divergence or not band_touch or event_index < minimum_history(rules) - 1:
                     continue
                 signal = dict(symbol=symbol, timeframe=timeframe, direction=direction,

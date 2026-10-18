@@ -28,6 +28,20 @@ The static-only deployment bundle is ready at `data/cloudflare-pages/`, with thi
 
 For a bounded manual catch-up without starting scanning or Telegram delivery, run `python3 cloud/sync_once.py`. The durable local queue retains unacknowledged records if the command is interrupted.
 
+## Shared Telegram delivery
+
+Apply `telegram-delivery.sql` after `schema.sql`, then deploy `functions/telegram-delivery` with the existing project's `SYNC_TOKEN` and `INSTALLATION_ID` secrets. For the Supabase CLI: `supabase functions deploy telegram-delivery --project-ref YOUR_PROJECT_REF --no-verify-jwt`. The handler validates the private machine token itself, just like `sync`; it derives installation scope from its secret and exposes no browser API. Reapplying this additive migration is safe and does not replace existing dashboard dispatchers or change Auth settings.
+
+For the configured project, `.venv/bin/python scripts/deploy-telegram.py` applies only this migration, deploys the new endpoint through the existing Supabase CLI login or `SUPABASE_ACCESS_TOKEN`, and verifies unauthorized rejection plus an isolated claim/release. It sends no Telegram messages and does not restart any scanners.
+
+On 18 October 2026, the migration and `telegram-delivery` endpoint were deployed to the configured project. Live verification confirmed HTTP 401 for unauthorized calls and authenticated acquire/release using an isolated diagnostic event. No Telegram message was sent. Scanner installations must load the updated sender code to participate.
+
+Deploy the migration and endpoint before updating/restarting all scanner installations. Devices using the same installation credentials coordinate independently of dashboard syncing; automatic delivery waits if coordination is missing or unavailable. Older scanners cannot participate until updated. Set an optional `TELEGRAM_COORDINATION_URL` if the endpoint is not beside the configured sync URL. Telegram credentials stay local.
+
+Claims are atomic, use server time and 90-second leases, and retain successful sends for a rolling 24 hours. The first authenticated coordinator request after a day runs cleanup of expired claims and old diagnostic attempts. Machine-only `telegram_delivery_attempts` stores each attempt's sender, device, environment, hashes, outcome/reason and Telegram message ID. Local development logs still go to stdout. Back up each data directory's `telegram-sender.sqlite3` to preserve its source identity; cloned data directories should remove this identity file to get a distinct ID.
+
+Validate with `python3 -m unittest test_telegram_delivery test_telegram test_platform test_market_summary test_runtime_versions`, `node cloud/test_telegram_delivery.mjs`, and `cloud/test_telegram_delivery.sql` after the test Auth stub, schema and migration in a disposable PostgreSQL database. Also run `python3 cloud/test_telegram_concurrency.py --dsn YOUR_DISPOSABLE_DATABASE_DSN` for real concurrent claims. No live Telegram messages are needed.
+
 ## GitHub-connected Cloudflare Worker
 
 The `family-trading-bot` Worker builds automatically from `main` in `idodidodi/trading-bot`. Set its root directory to `/`, build command to `node cloud/build.mjs`, and deploy command to `npx wrangler@4.147.0 deploy`. The checked-in Wrangler configuration serves only `dist/`, with a single-page fallback for dashboard routes.

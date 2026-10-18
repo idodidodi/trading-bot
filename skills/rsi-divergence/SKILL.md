@@ -14,6 +14,7 @@ Report signals only, following the user's preference. Do not include entry, stop
 - Assets: required; resolve each name to an exact instrument, exchange, and data-provider symbol.
 - Timeframes: required; accept monthly/1mo, weekly/1w, daily/1d, and 4h/4 hours. `1mo` is a calendar month, not 30 days. Never interpret monthly as one minute.
 - RSI: 3 periods, Wilder smoothing, close prices.
+- RSI tolerance: 1.0 points, inclusive, in both directions.
 - Bollinger Bands: 20-period simple moving average of closes, plus/minus 2 population standard deviations (`ddof=0`).
 - Band slope: ignored; it does not filter divergence signals.
 - Divergence price source: close.
@@ -46,7 +47,7 @@ For a pair of confirmed pivot lows `P1` and `P2`, a **bullish divergence / long 
 
 1. Pivot spacing satisfies the configured range.
 2. `close[P2] < close[P1]` (price makes a lower closing low).
-3. `RSI[P2] > RSI[P1]` (RSI at those same price pivots makes a higher low).
+3. `RSI[P2] >= RSI[P1] - 1.0` (higher RSI low, or up to 1 RSI point lower).
 4. `low[P2] <= lower_band[P2]` (only the second pivot must touch or cross its own lower Bollinger Band).
 5. Both pivots have valid RSI and band values.
 
@@ -55,7 +56,7 @@ For a pair of confirmed pivot highs `P1` and `P2`, a **bearish divergence / shor
 
 1. Pivot spacing satisfies the configured range.
 2. `close[P2] > close[P1]` (price makes a higher closing high).
-3. `RSI[P2] < RSI[P1]` (RSI at those same price pivots makes a lower high).
+3. `RSI[P2] <= RSI[P1] + 1.0` (lower RSI high, or up to 1 RSI point higher).
 4. `high[P2] >= upper_band[P2]` (only the second pivot must touch or cross its own upper Bollinger Band).
 5. Both pivots have valid RSI and band values.
 
