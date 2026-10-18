@@ -48,6 +48,8 @@ class ReleaseVersionTests(unittest.TestCase):
         def windows_open(path, mode='r', buffering=-1, encoding=None, errors=None, newline=None):
             if 'b' not in mode and encoding in (None, 'locale'):
                 encoding = 'cp1252'
+            if 'b' not in mode and any(flag in mode for flag in 'wax') and newline is None:
+                newline = '\r\n'
             return original_open(path, mode, buffering, encoding, errors, newline)
 
         with tempfile.TemporaryDirectory() as directory:
@@ -63,10 +65,10 @@ class ReleaseVersionTests(unittest.TestCase):
             with patch.object(Path, 'open', windows_open):
                 release.apply(root, '1.0.7')
                 self.assertEqual(release.base_version(root), '1.0.7')
-            self.assertEqual(guide.read_bytes(), notes.replace(
-                'Pending executable release', 'Executable version 1.0.7').encode('utf-8'))
-            self.assertEqual(changelog.read_bytes(), changes.replace(
-                '## Unreleased', '## 1.0.7').encode('utf-8'))
+            self.assertEqual(guide.read_text(encoding='utf-8'), notes.replace(
+                'Pending executable release', 'Executable version 1.0.7'))
+            self.assertEqual(changelog.read_text(encoding='utf-8'), changes.replace(
+                '## Unreleased', '## 1.0.7'))
 
     def test_both_platforms_required_with_matching_version_and_checksums(self):
         with tempfile.TemporaryDirectory() as directory:
