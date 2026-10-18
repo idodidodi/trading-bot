@@ -3,6 +3,8 @@ import csv
 import hashlib
 import json
 import os
+import sqlite3
+import sys
 from pathlib import Path
 import time
 import urllib.request
@@ -41,8 +43,55 @@ def backtest_reports(db):
             yield report
 
 
+class SnapshotQueue:
+    """Serialize outside SQLite; hold its single writer only for small batches.
+
+    Snapshot cursors use a separate read-only connection so concurrent scanner
+    writes cannot invalidate a read-to-write transaction upgrade.
+    """
+    def __init__(self, store):
+        self.store = store
+        self.records = []
+        self.size = 0
+
+    def add(self, kind, key, payload):
+        raw = canonical(payload)
+        event = hashlib.sha256((kind+'\0'+key+'\0'+raw).encode()).hexdigest()
+        if self.records and (len(self.records) >= 100 or self.size+len(raw) > 250000):
+            self.flush()
+        self.records.append((kind, key, event, raw))
+        self.size += len(raw)
+
+    def flush(self, metadata=None):
+        if not self.records and not metadata:
+            return
+        with self.store.connect() as writer:
+            # Acquire before reading cloud_seen; never upgrade a stale snapshot.
+            writer.execute('BEGIN IMMEDIATE')
+            for kind, key, event, raw in self.records:
+                seen = writer.execute('SELECT event_id FROM cloud_seen WHERE kind=? AND key=?', (kind,key)).fetchone()
+                if seen and seen[0] == event:
+                    continue
+                writer.execute('INSERT OR REPLACE INTO cloud_pending VALUES(?,?,?,?)', (kind,key,event,raw))
+                writer.execute('INSERT OR REPLACE INTO cloud_seen VALUES(?,?,?)', (kind,key,event))
+            for key, value in (metadata or {}).items():
+                writer.execute('INSERT OR REPLACE INTO cloud_meta VALUES(?,?)', (key,value))
+        self.records.clear()
+        self.size = 0
+
+
 def snapshot(store):
-    from finding_followup import stored
+    from finding_followup import initialize as initialize_followup
+    from scanner_control import initialize as control_initialize
+    queue = SnapshotQueue(store)
+    with store.connect() as setup:
+        initialize(setup)
+        initialize_followup(setup)
+        control_initialize(setup)
+
+    def stored(db, key):
+        row = db.execute('SELECT results FROM finding_followup WHERE finding_id=?', (key,)).fetchone()
+        return json.loads(row[0]) if row else None
     from momentum import view as momentum_view
     from pin_bars import view as pin_bar_view
     pin_live=pin_bar_view(store,page_size=500)
@@ -57,48 +106,46 @@ def snapshot(store):
     momentum_live=momentum_view(store)
     momentum_backtest=momentum_view(store,'backtest')
     with store.connect() as db:
-        initialize(db)
-        enqueue(db,'summary','pin-bars-live',pin_live)
-        enqueue(db,'summary','bb-pin-bars-live',bb_live)
-        enqueue(db,'summary','momentum-live',momentum_live)
-        enqueue(db,'summary','momentum-backtest',momentum_backtest)
+        db.execute('PRAGMA query_only=ON')
+        queue.add('summary','pin-bars-live',pin_live)
+        queue.add('summary','bb-pin-bars-live',bb_live)
+        queue.add('summary','momentum-live',momentum_live)
+        queue.add('summary','momentum-backtest',momentum_backtest)
         config=db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
         if config:
-            enqueue(db,'config','current',dict(revision=config[0],applied_revision=config[1],config=json.loads(config[2])))
+            queue.add('config','current',dict(revision=config[0],applied_revision=config[1],config=json.loads(config[2])))
         for raw,status,attempts,error in db.execute('SELECT payload,status,attempts,error FROM signals'):
-            signal=json.loads(raw);followups=stored(db,finding_id('live',signal));enqueue(db,'live',finding_id('live',signal),dict(id=finding_id('live',signal),signal=signal,followups=followups,status=status,attempts=attempts,error=error))
+            signal=json.loads(raw);followups=stored(db,finding_id('live',signal));queue.add('live',finding_id('live',signal),dict(id=finding_id('live',signal),signal=signal,followups=followups,status=status,attempts=attempts,error=error))
         exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='activity_log'").fetchone()
         if exists:
             cutoff=int(meta(db,'log_snapshot'))
             last=cutoff
             for id,t,event,details in db.execute('SELECT id,occurred,event,details FROM activity_log WHERE id>? ORDER BY id LIMIT 1000',(cutoff,)):
-                enqueue(db,'log',str(id),dict(occurred=t,event=event,details=details));last=id
-            db.execute('INSERT OR REPLACE INTO cloud_meta VALUES(?,?)',('log_snapshot',str(last)))
+                queue.add('log',str(id),dict(occurred=t,event=event,details=details));last=id
+            queue.flush({'log_snapshot': str(last)})
         for feed,asset,tf,start,end,op,high,low,close in db.execute('SELECT * FROM candle_cache'):
-            enqueue(db,'candle',f'live:{feed}:{tf}:{start}',dict(source='live',symbol=feed,asset=asset,timeframe=tf,start=start,end=end,open=op,high=high,low=low,close=close))
+            queue.add('candle',f'live:{feed}:{tf}:{start}',dict(source='live',symbol=feed,asset=asset,timeframe=tf,start=start,end=end,open=op,high=high,low=low,close=close))
         for key,status,revision,updated in db.execute('SELECT * FROM finding_state'):
-            enqueue(db,'finding_state',key,dict(finding_id=key,status=status,revision=revision,updated_at=updated))
+            queue.add('finding_state',key,dict(finding_id=key,status=status,revision=revision,updated_at=updated))
         for key,source,evidence,rating,comment,revision,updated in db.execute('SELECT * FROM finding_feedback'):
-            enqueue(db,'feedback',key,dict(finding_id=key,source=source,evidence=json.loads(evidence),rating=rating,comment=comment,revision=revision,updated_at=updated))
+            queue.add('feedback',key,dict(finding_id=key,source=source,evidence=json.loads(evidence),rating=rating,comment=comment,revision=revision,updated_at=updated))
         for seq,key,source,evidence,rating,comment,revision,updated in db.execute('SELECT * FROM feedback_history'):
-            enqueue(db,'feedback_history',f'{key}:{revision}',dict(finding_id=key,source=source,evidence=json.loads(evidence),rating=rating,comment=comment,revision=revision,updated_at=updated))
+            queue.add('feedback_history',f'{key}:{revision}',dict(finding_id=key,source=source,evidence=json.loads(evidence),rating=rating,comment=comment,revision=revision,updated_at=updated))
         status_exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='scanner_status'").fetchone()
         scan=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone() if status_exists else None
         if scan:
-            enqueue(db,'summary','live',json.loads(scan[0]).get('coverage',[]))
+            queue.add('summary','live',json.loads(scan[0]).get('coverage',[]))
             from version_info import local_versions
             from runtime_env import environment
-            enqueue(db,'summary','scanner',json.loads(scan[0]) | dict(versions=local_versions(),environment=environment()))
+            queue.add('summary','scanner',json.loads(scan[0]) | dict(versions=local_versions(),environment=environment()))
         selections={}
         for table,field,order in [('daily_universe','daily_selection','session'),('weekly_stock_screen','weekly_stock_selection','day')]:
             if db.execute("SELECT 1 FROM sqlite_master WHERE name=?",(table,)).fetchone():
                 selected=db.execute(f'SELECT payload FROM {table} ORDER BY {order} DESC LIMIT 1').fetchone()
                 if selected:selections[field]=json.loads(selected[0])
-        enqueue(db,'summary','selections',selections)
-        from scanner_control import initialize as control_initialize
-        control_initialize(db)
+        queue.add('summary','selections',selections)
         for key,status,payload,created in db.execute('SELECT * FROM scanner_commands'):
-            enqueue(db,'summary','catchup:'+key,dict(id=key,status=status,created=created,**json.loads(payload)))
+            queue.add('summary','catchup:'+key,dict(id=key,status=status,created=created,**json.loads(payload)))
         latest_summary=None
         for report in backtest_reports(db):
             summary=[dict(asset=r['asset'],timeframe=r['timeframe'],status=r['status'],signals=len(r['signals']),note=r.get('reason',r.get('note',''))) for r in report['results']]
@@ -106,12 +153,13 @@ def snapshot(store):
             report_key=hashlib.sha256(canonical(report).encode()).hexdigest()
             for r in report['results']:
                 for signal in r['signals']:
-                    key=finding_id('backtest',signal);enqueue(db,'backtest',key,dict(id=key,signal=signal,followups=r.get('followups',{}).get(key) or stored(db,key)))
-            enqueue(db,'backtest_run',report_key,dict(year=report.get('year'),start_at=report.get('start_at'),end_at=report.get('end_at'),generated_at=report.get('generated_at') or report.get('end_at',0)/1000,rules=report.get('rules'),sources=report.get('sources'),results=[{k:v for k,v in r.items() if k not in ('signals','followups')} for r in report['results']],summary=summary,finding_ids=[finding_id('backtest',signal) for signal in findings]))
+                    key=finding_id('backtest',signal);queue.add('backtest',key,dict(id=key,signal=signal,followups=r.get('followups',{}).get(key) or stored(db,key)))
+            queue.add('backtest_run',report_key,dict(year=report.get('year'),start_at=report.get('start_at'),end_at=report.get('end_at'),generated_at=report.get('generated_at') or report.get('end_at',0)/1000,rules=report.get('rules'),sources=report.get('sources'),results=[{k:v for k,v in r.items() if k not in ('signals','followups')} for r in report['results']],summary=summary,finding_ids=[finding_id('backtest',signal) for signal in findings]))
             latest_summary=summary
         if latest_summary is not None:
-            enqueue(db,'summary','backtest',latest_summary)
-        enqueue(db,'heartbeat','current',dict(observed_at=time.time()))
+            queue.add('summary','backtest',latest_summary)
+        queue.add('heartbeat','current',dict(observed_at=time.time()))
+    queue.flush()
     # Stream historical CSVs into the durable queue; import only changed files.
     from scanner import timestamp
     for path in (ROOT/'data/historical-2020').glob('*.csv'):
@@ -124,12 +172,10 @@ def snapshot(store):
             for r in csv.DictReader(source):
                 start=timestamp(r['timestamp']);batch.append((f'backtest:{asset}:{tf}:{start}',dict(source='backtest',symbol=asset,timeframe=tf,start=start,end=timestamp(r['closed_at']),**{k:float(r[k]) for k in ('open','high','low','close')})))
                 if len(batch)>=100:
-                    with store.connect() as db:
-                        for key,value in batch:enqueue(db,'candle',key,value)
+                    for key,value in batch:queue.add('candle',key,value)
                     batch=[]
-        with store.connect() as db:
-            for key,value in batch:enqueue(db,'candle',key,value)
-            db.execute('INSERT OR REPLACE INTO cloud_meta VALUES(?,?)',('import:'+path.name,signature))
+        for key,value in batch:queue.add('candle',key,value)
+        queue.flush({'import:'+path.name: signature})
 
 
 def batch(store):
@@ -213,7 +259,10 @@ def worker(store,stop):
             with urllib.request.urlopen(req,timeout=10) as response:result=json.load(response)
             apply(store,result);delay=1 if outgoing['records'] else 30
         except Exception:
-            with store.connect() as db:
-                initialize(db);db.execute('INSERT OR REPLACE INTO cloud_meta VALUES(?,?)',('error','Cloud sync failed; check credentials, connection and schema. Pending data retained.'))
+            try:
+                with store.connect() as db:
+                    initialize(db);db.execute('INSERT OR REPLACE INTO cloud_meta VALUES(?,?)',('error','Cloud sync failed; check credentials, connection and schema. Pending data retained.'))
+            except sqlite3.Error:
+                print('Cloud sync could not record failure; retrying with pending data retained', file=sys.stderr, flush=True)
             delay=min(300,max(5,delay*2))
         stop.wait(delay)

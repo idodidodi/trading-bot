@@ -62,3 +62,7 @@ Open http://127.0.0.1:8080/logs on the Linux computer, select **All events**, an
 In a terminal, `ps -eo pid,ppid,rss,etime,comm --sort=-rss | head -15` shows the largest processes; RSS is current resident memory in KiB. Record whether the large process is FamilyTradingBot or the browser before restarting. If launched under systemd, also inspect that service's journal for worker exceptions or out-of-memory termination.
 
 Updated source retries heartbeat writes after SQLite errors, reports scanner failures in status/logs, and includes current process RSS and thread count in Linux heartbeats. Cloud sync streams saved backtest reports one at a time to avoid a memory peak proportional to all saved runs. Standalone installations need a rebuilt executable to receive these changes.
+
+If a terminal traceback reports `sqlite3.OperationalError: database is locked`, use the executable update with bounded sync transactions and scanner retries. A browser dashboard can remain accessible after an older scanner worker exits. Do not delete the database, its WAL file, or scan state as a workaround.
+
+To pause the paper executor, set `PAPER_TRADING_ENABLED=false` in the existing local `.env` file and restart the app. This stops paper-trading actions; it does not cancel existing broker orders or close positions. Updated executables also stop the disabled paper worker's database polling.

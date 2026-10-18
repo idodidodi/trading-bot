@@ -69,6 +69,18 @@ class ScannerHeartbeatTests(unittest.TestCase):
             self.assertEqual(write.call_count,2)
             finished.wait.assert_any_call(30)
 
+    def test_scanner_retries_busy_database_without_replacing_heartbeat(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=Store(Path(folder)/'signals.sqlite3')
+            stop=Mock()
+            stop.wait.return_value=False
+            with patch('scanner._scanner_worker',side_effect=[sqlite3.OperationalError('database is locked'),None]) as scan, \
+                 patch('scanner.scanner_heartbeat') as heartbeat, patch('sys.stderr'):
+                scanner_worker(store,{}, {},stop)
+            self.assertEqual(scan.call_count,2)
+            self.assertEqual(heartbeat.call_count,1)
+            stop.wait.assert_called_once_with(5)
+
     def test_linux_heartbeat_reports_current_resident_memory(self):
         from scanner import memory_status
         with patch('scanner.Path.read_text',return_value='Name: bot\nVmRSS:\t204800 kB\n'):

@@ -3,6 +3,8 @@ import hashlib
 import json
 import math
 import os
+import sqlite3
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -403,7 +405,15 @@ def check_and_log(store):
 
 def worker(store, stop):
     while not stop.is_set():
-        check_and_log(store)
+        if os.environ.get('PAPER_TRADING_ENABLED','false').lower() != 'true':
+            return
+        try:
+            check_and_log(store)
+        except sqlite3.OperationalError as exc:
+            from platform_app import database_busy
+            if not database_busy(exc):
+                raise
+            print('Paper trading database busy; retrying on next check', file=sys.stderr, flush=True)
         stop.wait(15)
 
 

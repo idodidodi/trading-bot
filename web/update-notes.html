@@ -9,8 +9,9 @@
 </head>
 <body>
 <h1>Scanner changelog &amp; FMP setup</h1>
-<p>Source update · October 17, 2026 · Pending executable release</p>
+<p>Source update · October 18, 2026 · Pending executable release</p>
 <h2>What changed</h2>
+<p>Fixed SQLite write contention that could stop scanner and paper-trading workers with “database is locked.” Cloud sync now queues small batches without holding the writer while reading and serializing all saved history. Scanner workers retry temporary locks, and activity logging can fall back to the launch terminal. Disabled paper trading stops its background polling loop.</p>
 <p>Scanner and local UI updates on the main branch now publish a new executable version automatically after both platform builds pass. Installed apps compare release version numbers; source commit fingerprints are shown separately in Settings. Use Check for app update after publication, or wait for the hourly check.</p>
 <ul>
 <li>S&amp;P 500 cash index: FMP symbol <code>^GSPC</code>, scanner asset <code>SPX</code>.</li>

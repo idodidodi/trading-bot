@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — 2026-10-18
+
+### Scanner database contention
+
+- Cloud sync serializes records outside write transactions and queues them in batches of at most 100 records, keeping the SQLite writer available between batches. Candle/report reads use a separate read-only connection.
+- Scanner workers retry temporary database locks without stopping their heartbeat. Persisted scan state and catch-up requests are reused.
+- Activity logging falls back to the launch terminal when SQLite is busy, preventing an error-reporting failure from killing another worker. Cloud and paper workers also survive temporary locks while reporting failures.
+- Disabled paper trading no longer runs a background database polling loop. Set `PAPER_TRADING_ENABLED=false` in the existing local credentials file and restart. Existing broker orders and positions are unchanged.
+
 ## Unreleased — 2026-10-17
 
 ### Automatic executable releases

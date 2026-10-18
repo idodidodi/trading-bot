@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 
-from platform_app import ROOT, Store, load_env, load_rules, validate_signal
+from platform_app import ROOT, Store, database_busy, load_env, load_rules, validate_signal
 
 TIMEFRAMES = {'1h': '1h', '4h': '4h', 'daily': '1day', 'weekly': '1week', 'monthly': '1month'}
 
@@ -506,12 +506,23 @@ def memory_status():
 
 
 def scanner_worker(store, config, rules, stop):
-    prepare_store(store)
     finished = threading.Event()
     heartbeat = threading.Thread(target=scanner_heartbeat, args=(store, finished), daemon=True)
     heartbeat.start()
     try:
-        _scanner_worker(store, config, rules, stop)
+        while True:
+            try:
+                prepare_store(store)
+                _scanner_worker(store, config, rules, stop)
+                break
+            except sqlite3.OperationalError as exc:
+                if not database_busy(exc):
+                    raise
+                print('Scanner database busy; retrying in 5 seconds', file=sys.stderr, flush=True)
+                # Persisted candle/signal state and catch-up commands are reused.
+                # Keep the same heartbeat thread alive throughout contention.
+                if stop.wait(5):
+                    break
     except Exception as exc:
         # Preserve failure visibility even when SQLite itself is unavailable.
         reason = f'Scanner stopped after {type(exc).__name__}; restart required'

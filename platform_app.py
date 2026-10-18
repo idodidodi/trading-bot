@@ -13,6 +13,7 @@ import re
 import sqlite3
 import signal
 import ssl
+import sys
 import threading
 import time
 import urllib.error
@@ -121,6 +122,12 @@ def validate_signal(body, rules):
     return clean
 
 
+def database_busy(exc):
+    return (isinstance(exc, sqlite3.OperationalError) and
+            (getattr(exc, 'sqlite_errorcode', 0) & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+             or 'locked' in str(exc).lower() or 'busy' in str(exc).lower()))
+
+
 class Store:
     def __init__(self, path):
         self.path = path
@@ -165,9 +172,15 @@ class Store:
             stamp = datetime.now(ZoneInfo('Asia/Jerusalem')).strftime('%Y-%m-%d %H:%M:%S %z')
             print(f'[DEV {stamp}] {event}: {details}', flush=True)
             return
-        with self.connect() as db:
-            db.execute("CREATE TABLE IF NOT EXISTS activity_log(id INTEGER PRIMARY KEY, occurred REAL, event TEXT, details TEXT)")
-            db.execute("INSERT INTO activity_log(occurred,event,details) VALUES(?,?,?)", (time.time(), event, details))
+        try:
+            with self.connect() as db:
+                db.execute("CREATE TABLE IF NOT EXISTS activity_log(id INTEGER PRIMARY KEY, occurred REAL, event TEXT, details TEXT)")
+                db.execute("INSERT INTO activity_log(occurred,event,details) VALUES(?,?,?)", (time.time(), event, details))
+        except sqlite3.OperationalError as exc:
+            if not database_busy(exc):
+                raise
+            # Failure reporting must not kill a worker when SQLite is busy.
+            print(f'{event}: {details} (activity database busy)', file=sys.stderr, flush=True)
 
     def rows(self):
         with self.connect() as db:
