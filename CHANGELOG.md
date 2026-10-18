@@ -2,6 +2,11 @@
 
 ## Unreleased — 2026-10-18
 
+### Forex weekend alerts
+
+- Forex scans pause from Friday 17:00 until Sunday 17:00 New York time across all candle timeframes, including catch-up scans. The schedule follows New York daylight-saving changes.
+- Provider candles wholly inside the weekend closure are excluded before caching and signal detection, including after reopening. Partial session candles remain eligible.
+
 ### Daily Linux executable updates
 
 - The Linux app's background process checks for stable executable updates daily at 05:00 Asia/Jerusalem, including daylight-saving changes. No browser page needs to be open. If the running app resumes after missing the deadline, it checks once on resume.

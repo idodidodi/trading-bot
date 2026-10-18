@@ -289,7 +289,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
             if old.get('provider') not in ('twelvedata','kraken','oanda','tiingo','alpaca','fmp'):continue
             config['assets'].append(dict(id=old['asset'],provider=old['provider'],symbol=old.get('symbol',old['asset']),
                 exchange=old.get('exchange',''),enabled=True,feed_confirmed=True,timeframes=[old['timeframe']],
-                catchup_only=True,tradingview_symbol='',market='stock' if old['asset'].startswith('STOCK-') else None))
+                catchup_only=True,tradingview_symbol='',market=old.get('market') or ('stock' if old['asset'].startswith('STOCK-') else None)))
             # Another timeframe from the same old feed must be appended too.
         merged={}
         for a in config['assets']:
@@ -314,8 +314,14 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
             strategies = configured_asset.get('scan_strategies', ['rsi', 'pin-bars'])
             provider = asset['provider']
             row = dict(asset=asset['id'], timeframe=timeframe, provider=provider,
-                       exchange=asset.get('exchange', ''), symbol=asset.get('symbol', asset['id']), scan_strategies=strategies)
-            from market_calendar import is_stock
+                       exchange=asset.get('exchange', ''), symbol=asset.get('symbol', asset['id']),
+                       market=asset.get('market'), scan_strategies=strategies)
+            from market_calendar import is_stock, is_forex, forex_market_open, next_forex_open
+            if is_forex(asset) and not forex_market_open(now):
+                coverage.append(row | dict(status='market closed', check_state='waiting for forex market open',
+                                          reason='Forex scans paused until Sunday 17:00 New York time',
+                                          checked_at=now, next_close_at=next_forex_open(now), new_signals=0))
+                continue
             from stock_policy import scan_day, next_scan, MIN_PRICE
             if is_stock(asset) and not scan_day(now):
                 coverage.append(row|dict(status='weekday only',reason='Stock scans paused Saturday/Sunday',checked_at=now,next_close_at=next_scan(now)))
@@ -356,6 +362,16 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 if getattr(raw, 'notes', None):
                     row['data_notes'] = '; '.join(raw.notes)
                 candles = check_candles(raw, now)
+                if is_forex(asset):
+                    # Ignore provider bars wholly inside the weekend closure,
+                    # including when they are returned after Sunday reopening.
+                    # Keep partial Friday bars and daily/weekly buckets that
+                    # contain any part of a trading session.
+                    trading = [c for c in candles if forex_market_open(c.start) or next_forex_open(c.start) < c.end]
+                    if len(trading) != len(candles):
+                        row['data_notes'] = '; '.join(filter(None, [row.get('data_notes'),
+                            f'{len(candles) - len(trading)} closed-session forex candle(s) excluded']))
+                    candles = trading
                 if getattr(raw, 'next_close_at', None) and raw.next_close_at > now:
                     row['next_close_at'] = raw.next_close_at
                 future_closes = [c.end for c in raw if c.end > now]

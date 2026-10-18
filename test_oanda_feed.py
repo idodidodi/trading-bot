@@ -103,7 +103,8 @@ class OandaTests(unittest.TestCase):
             store = Store(Path(folder) / 'db.sqlite3'); prepare_store(store)
             raw = fixture()
             from dataclasses import replace
-            bars = [replace(c, start=raw[0].start+i*3600000, end=raw[0].start+(i+1)*3600000) for i,c in enumerate(raw)]
+            # End this live-scan fixture on Monday, inside the forex week.
+            bars = [replace(c, start=raw[0].start+(i+48)*3600000, end=raw[0].start+(i+49)*3600000) for i,c in enumerate(raw)]
             with patch.dict('os.environ', {'OANDA_ENVIRONMENT': 'practice'}), patch('oanda_feed.fetch_oanda', return_value=bars):
                 result = scan_once(store, dict(assets=[self.asset], timeframes=['1h']), load_rules(), bars[-1].end)
             self.assertEqual(result[0]['status'], 'baseline set')

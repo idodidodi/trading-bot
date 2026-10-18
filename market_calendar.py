@@ -81,6 +81,26 @@ def is_stock(asset):
     return asset.get('market') in ('stock','stocks','equity','equities','etf') or asset.get('exchange') in ('NASDAQ','NYSE','AMEX','NYSE ARCA') or asset.get('provider')=='alpaca'
 
 
+def is_forex(asset):
+    return asset.get('market') == 'forex' or asset.get('provider') in ('tiingo', 'oanda')
+
+
+def forex_market_open(value):
+    """The forex week runs Sunday 17:00 through Friday 17:00 New York time."""
+    local = datetime.fromtimestamp(value / 1000, NY)
+    return (local.weekday() < 4 or
+            local.weekday() == 4 and local.time() < time(17) or
+            local.weekday() == 6 and local.time() >= time(17))
+
+
+def next_forex_open(value):
+    if forex_market_open(value):
+        return value
+    local = datetime.fromtimestamp(value / 1000, NY)
+    day = local.date() + timedelta(days=(6 - local.weekday()) % 7)
+    return int(datetime.combine(day, time(17), NY).timestamp() * 1000)
+
+
 def next_market_time(asset, value):
     """Move an intraday poll out of closed sessions; allow delayed closing data."""
     local=datetime.fromtimestamp(value/1000,NY)
@@ -94,7 +114,7 @@ def next_market_time(asset, value):
         while not stock_trading_day(day):
             day+=timedelta(days=1)
         return int(datetime.combine(day,time(9,30),NY).timestamp()*1000)
-    if asset.get('market')=='forex':
+    if is_forex(asset):
         if local.weekday()==5 or local.weekday()==4 and local.time()>=time(17,20) or local.weekday()==6 and local.time()<time(17):
             day=local.date()+timedelta(days=(6-local.weekday()) % 7)
             return int(datetime.combine(day,time(17),NY).timestamp()*1000)
