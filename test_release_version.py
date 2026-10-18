@@ -42,6 +42,32 @@ class ReleaseVersionTests(unittest.TestCase):
             release.apply(root,'1.0.7')
             self.assertEqual(release.base_version(root),'1.0.7')
 
+    def test_apply_preserves_utf8_with_windows_default_encoding(self):
+        original_open = Path.open
+
+        def windows_open(path, mode='r', buffering=-1, encoding=None, errors=None, newline=None):
+            if 'b' not in mode and encoding in (None, 'locale'):
+                encoding = 'cp1252'
+            return original_open(path, mode, buffering, encoding, errors, newline)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root/'web').mkdir()
+            (root/'app_version.py').write_bytes("# גרסה\nVERSION = '1.0.6'\n".encode('utf-8'))
+            guide = root/'web/update-notes.html'
+            notes = 'Pending executable release · “database is locked” · עברית\n'
+            guide.write_bytes(notes.encode('utf-8'))
+            changelog = root/'CHANGELOG.md'
+            changes = '## Unreleased — תיקון\n“database is locked”\n'
+            changelog.write_bytes(changes.encode('utf-8'))
+            with patch.object(Path, 'open', windows_open):
+                release.apply(root, '1.0.7')
+                self.assertEqual(release.base_version(root), '1.0.7')
+            self.assertEqual(guide.read_bytes(), notes.replace(
+                'Pending executable release', 'Executable version 1.0.7').encode('utf-8'))
+            self.assertEqual(changelog.read_bytes(), changes.replace(
+                '## Unreleased', '## 1.0.7').encode('utf-8'))
+
     def test_both_platforms_required_with_matching_version_and_checksums(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);dist=root/'dist';dist.mkdir()

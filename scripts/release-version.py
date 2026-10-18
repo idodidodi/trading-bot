@@ -38,7 +38,7 @@ def allocate(base, tags):
 
 
 def base_version(root):
-    tree = ast.parse((root/'app_version.py').read_text())
+    tree = ast.parse((root/'app_version.py').read_text(encoding='utf-8'))
     return next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
                 and any(isinstance(t, ast.Name) and t.id == 'VERSION' for t in n.targets))
 
@@ -55,7 +55,7 @@ def prepare(root, env):
         version = allocate(base, tags)
     else:
         version = base
-    with Path(env['GITHUB_OUTPUT']).open('a') as output:
+    with Path(env['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
         output.write(f'version={version}\npublish={str(publish).lower()}\n')
     return version
 
@@ -64,22 +64,22 @@ def apply(root, version):
     parts(version)
     if parts(version) < parts(base_version(root)):
         raise ValueError('Build version cannot go backwards')
-    (root/'app_version.py').write_text(f"VERSION = '{version.lstrip('v')}'\n")
+    (root/'app_version.py').write_text(f"VERSION = '{version.lstrip('v')}'\n", encoding='utf-8')
     # This label is bundled with each executable, so it must match that build.
     guide = root/'web/update-notes.html'
     if guide.exists():
-        text = guide.read_text().replace('Pending executable release', 'Executable version '+version.lstrip('v'))
-        guide.write_text(text)
+        text = guide.read_text(encoding='utf-8').replace('Pending executable release', 'Executable version '+version.lstrip('v'))
+        guide.write_text(text, encoding='utf-8')
     changelog = root/'CHANGELOG.md'
     if changelog.exists():
-        changelog.write_text(changelog.read_text().replace('## Unreleased', '## '+version.lstrip('v'), 1))
+        changelog.write_text(changelog.read_text(encoding='utf-8').replace('## Unreleased', '## '+version.lstrip('v'), 1), encoding='utf-8')
 
 
 def verify(root, version):
     parts(version)
     for manifest, binary, platform in [('windows-update.json','FamilyTradingBot.exe',None),
                                        ('linux-x86_64-update.json','FamilyTradingBot-linux-x86_64','linux-x86_64')]:
-        metadata = json.loads((root/'dist'/manifest).read_text())
+        metadata = json.loads((root/'dist'/manifest).read_text(encoding='utf-8'))
         raw = (root/'dist'/binary).read_bytes()
         if metadata['version'] != version or metadata['size'] != len(raw) or metadata['sha256'] != hashlib.sha256(raw).hexdigest():
             raise ValueError('Release packages must share the allocated version and valid checksums')
