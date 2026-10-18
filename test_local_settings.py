@@ -122,6 +122,74 @@ class LocalSettingsTests(unittest.TestCase):
                 thread.join(4)
             self.assertFalse(thread.is_alive())
 
+    def test_paper_preference_overrides_env_survives_restart_and_preserves_dev_isolation(self):
+        with patch.dict(os.environ, {'TRADING_BOT_ENV': 'prod', 'PAPER_TRADING_ENABLED': 'true',
+                                     'ALPACA_API_KEY': 'dummy', 'ALPACA_SECRET_KEY': 'dummy'}):
+            self.assertTrue(local_settings.paper_trading_enabled(self.store))
+            local_settings.save(self.store, {'paper_trading_enabled': False})
+            self.assertFalse(local_settings.paper_trading_enabled(Store(self.path)))
+            local_settings.save(self.store, {'paper_trading_enabled': True})
+            self.assertTrue(local_settings.paper_trading_enabled(Store(self.path)))
+            with patch.dict(os.environ, {'TRADING_BOT_ENV': 'dev'}):
+                self.assertFalse(local_settings.paper_trading_enabled(self.store))
+                with self.assertRaises(ValueError):local_settings.save(self.store, {'paper_trading_enabled': True})
+        with patch.dict(os.environ, {'TRADING_BOT_ENV': 'prod'}):
+            with self.assertRaises(ValueError):local_settings.save(self.store, {'paper_trading_enabled': True})
+            self.assertTrue(local_settings.paper_trading_enabled(self.store))
+
+    def test_disabled_saved_paper_setting_prevents_broker_calls_and_keeps_existing_trades(self):
+        import paper_trading
+        from unittest.mock import Mock
+        with patch.dict(os.environ, {'TRADING_BOT_ENV': 'prod', 'PAPER_TRADING_ENABLED': 'true'}):
+            local_settings.save(self.store, {'paper_trading_enabled': False})
+            with self.store.connect() as db:
+                paper_trading.initialize(db)
+                db.execute('INSERT INTO paper_trades VALUES(?,?)', ('existing', json.dumps({'id': 'existing', 'state': 'open', 'signal': {}})))
+            broker = Mock()
+            result = paper_trading.tick(self.store, broker)
+            self.assertFalse(result['enabled'])
+            self.assertEqual(result['trades'][0]['state'], 'open')
+            broker.request.assert_not_called()
+
+    def test_paper_worker_can_enable_and_disable_without_restart(self):
+        import paper_trading
+        with patch.dict(os.environ, {'TRADING_BOT_ENV': 'prod', 'ALPACA_API_KEY': 'dummy', 'ALPACA_SECRET_KEY': 'dummy'}):
+            local_settings.save(self.store, {'paper_trading_enabled': False})
+            stop = threading.Event()
+            waits = []
+            def wait(_):
+                waits.append(True)
+                if len(waits) == 1:local_settings.save(self.store, {'paper_trading_enabled': True})
+                if len(waits) == 3:stop.set()
+                return stop.is_set()
+            with patch.object(stop, 'wait', side_effect=wait), \
+                 patch('paper_trading.check_and_log', side_effect=lambda _: local_settings.save(self.store, {'paper_trading_enabled': False})) as check:
+                paper_trading.worker(self.store, stop)
+            check.assert_called_once_with(self.store)
+            self.assertFalse(local_settings.paper_trading_enabled(self.store))
+
+    def test_production_paper_setting_api_is_local_and_accepts_only_booleans(self):
+        with patch.dict(os.environ, {'TRADING_BOT_ENV': 'prod', 'ALPACA_API_KEY': 'dummy', 'ALPACA_SECRET_KEY': 'dummy'}):
+            server = ThreadingHTTPServer(('127.0.0.1', 0), handler_factory(self.store, load_rules(), 's' * 32, True, dashboard=True))
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            url = f'http://127.0.0.1:{server.server_port}'
+            try:
+                request = urllib.request.Request(url + '/api/local-settings', data=b'{"paper_trading_enabled":true}',
+                    headers={'Content-Type': 'application/json', 'Origin': url})
+                with urllib.request.urlopen(request) as response:
+                    value = json.load(response)
+                    self.assertTrue(value['paper_trading_enabled'])
+                    self.assertTrue(value['paper_trading_editable'])
+                    self.assertFalse(value['editable'])
+                self.assertNotIn('dummy', json.dumps(value))
+                with urllib.request.urlopen(url + '/api/local-settings') as response:
+                    self.assertTrue(json.load(response)['paper_trading_enabled'])
+            finally:
+                server.shutdown()
+                thread.join()
+                server.server_close()
+
     def test_local_api_requires_same_origin_and_is_not_available_on_webhook_port(self):
         for dashboard in (True, False):
             server = ThreadingHTTPServer(('127.0.0.1', 0), handler_factory(self.store, load_rules(), 's' * 32, True, dashboard=dashboard))

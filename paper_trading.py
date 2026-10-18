@@ -14,6 +14,8 @@ from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from local_settings import paper_trading_enabled
+
 PAPER_HOST = 'https://paper-api.alpaca.markets'
 DATA_HOST = 'https://data.alpaca.markets'
 TERMINAL = {'filled','canceled','expired','rejected'}
@@ -104,7 +106,7 @@ def view(store):
             d=1 if record['signal']['direction']=='buy' else -1
             record['gross_pnl']=d*(proceeds-price*exited)
             record['gross_return_pct']=d*(proceeds/exited/price-1)*100
-    return dict(enabled=os.environ.get('PAPER_TRADING_ENABLED','false').lower()=='true',
+    return dict(enabled=paper_trading_enabled(store),
                 broker='Alpaca paper',risk_pct=float(os.environ.get('PAPER_RISK_PCT','1')),
                 max_notional=float(os.environ.get('PAPER_MAX_NOTIONAL','10000')),
                 status=json.loads(row[0]) if row else {},trades=trades)
@@ -279,7 +281,7 @@ def tick(store, broker=None, now=None):
     from momentum import view as signals_view
     now=int(time.time()*1000) if now is None else now
     broker=broker or AlpacaPaper()
-    if os.environ.get('PAPER_TRADING_ENABLED','false').lower()!='true':return view(store)
+    if not paper_trading_enabled(store):return view(store)
     records={r['id']:r for r in view(store)['trades']}
     signals=signals_view(store)['signals']
     for signal in signals:
@@ -405,9 +407,10 @@ def check_and_log(store):
 
 def worker(store, stop):
     while not stop.is_set():
-        if os.environ.get('PAPER_TRADING_ENABLED','false').lower() != 'true':
-            return
         try:
+            if not paper_trading_enabled(store):
+                stop.wait(1)
+                continue
             check_and_log(store)
         except sqlite3.OperationalError as exc:
             from platform_app import database_busy

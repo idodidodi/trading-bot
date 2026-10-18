@@ -320,7 +320,20 @@ async function developmentSettingsControls(panel,isCurrent){
  if(online)return;
  const section=node('section'),result=node('p');section.className='development-settings';
  try{
-  const value=await request('/api/local-settings');if(!isCurrent()||!value.editable)return;panel.append(section);
+  const value=await request('/api/local-settings');if(!isCurrent())return;
+  const paper=node('section'),paperResult=node('p'),paperRow=node('label'),paperInput=node('input');paper.className='development-settings';paperInput.type='checkbox';paperInput.checked=value.paper_trading_enabled;paperInput.disabled=!value.paper_trading_editable;
+  paperRow.append(paperInput,document.createTextNode(' Enable Alpaca paper trading'));
+  paper.append(node('h3','Paper trading'),paperRow,node('p',value.paper_trading_editable?'Saved on this computer and applied without restarting. Disabling stops local automation; existing simulated orders and positions remain at Alpaca. An in-progress cycle may finish.':'Paper trading is disabled in development. Configure this setting in the local production app.'));
+  if(value.paper_trading_editable){
+   const savePaper=button('Save paper trading setting',async()=>{
+    savePaper.disabled=true;paperResult.textContent='Saving…';paperResult.className='';
+    try{await request('/api/local-settings',{paper_trading_enabled:paperInput.checked});await openVersions();}
+    catch(e){paperResult.className='error';paperResult.textContent=e.message;}
+    finally{savePaper.disabled=false;}
+   });
+   paperResult.setAttribute('role','status');paper.append(savePaper,paperResult);
+  }
+  panel.append(paper);if(!value.editable)return;panel.append(section);
   section.append(node('h3','Development overrides'),node('p','Use while production is stopped. Saved on this computer and applied to new deliveries and sync requests without restarting. An in-progress request may finish.'));
   const inputs={};
   for(const [key,label] of [['telegram_enabled','Send Telegram alerts from development'],['cloud_sync_enabled','Sync development data to cloud']]){
@@ -333,7 +346,7 @@ async function developmentSettingsControls(panel,isCurrent){
    finally{save.disabled=false;}
   });
   result.setAttribute('role','status');section.append(save,result,node('p','Development keeps separate data; activity logging and paper orders remain disabled. Previously processed dry-run alerts are not resent.'));
- }catch(e){if(isCurrent())panel.append(node('p','Development settings unavailable: '+e.message));}
+ }catch(e){if(isCurrent())panel.append(node('p','Local settings unavailable: '+e.message));}
 }
 let versionRequest=0;
 function versionMatch(current,latest){return !current||!latest?'Comparison unavailable':current===latest?'Matches GitHub':'Differs from GitHub';}

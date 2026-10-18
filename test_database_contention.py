@@ -74,15 +74,17 @@ class DatabaseContentionTests(unittest.TestCase):
                     store.log('Paper trading check failed','OperationalError')
                 self.assertIn('activity database busy',''.join(call.args[0] for call in output.write.call_args_list))
 
-    def test_disabled_paper_worker_does_no_database_or_broker_work(self):
+    def test_disabled_paper_worker_does_no_broker_work(self):
+        stop=Mock()
+        stop.is_set.side_effect=[False,True]
         with patch.dict('os.environ',{'PAPER_TRADING_ENABLED':'false'}), patch('paper_trading.check_and_log') as check:
-            paper_trading.worker(None,threading.Event())
+            paper_trading.worker(None,stop)
         check.assert_not_called()
 
     def test_paper_worker_retries_database_errors_from_recovery_logging(self):
         stop=Mock()
         stop.is_set.side_effect=[False,False,True]
-        with patch.dict('os.environ',{'PAPER_TRADING_ENABLED':'true'}), \
+        with patch.dict('os.environ',{'PAPER_TRADING_ENABLED':'true','TRADING_BOT_ENV':'prod'}), \
              patch('paper_trading.check_and_log',side_effect=[sqlite3.OperationalError('database is locked'),None]) as check, \
              patch('sys.stderr'):
             paper_trading.worker(None,stop)

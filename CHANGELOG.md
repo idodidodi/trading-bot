@@ -2,6 +2,11 @@
 
 ## Unreleased — 2026-10-18
 
+### Paper trading setting
+
+- The local production Settings menu now saves the paper trading toggle in the installation database, with legacy environment values as initial defaults. Development paper trading remains disabled.
+- The worker can enable or disable automation without restarting. Disabling preserves existing simulated orders and positions at Alpaca; an in-progress cycle may finish. Credentials stay local and settings are excluded from cloud sync.
+
 ### Local development settings
 
 - Settings & versions now saves development Telegram delivery and cloud sync overrides locally, independently of browser storage and cloud settings.
