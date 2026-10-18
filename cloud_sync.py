@@ -246,12 +246,15 @@ def apply(store,response):
 
 def worker(store,stop):
     from runtime_env import cloud_sync_enabled
-    if not cloud_sync_enabled():return
+    # A disabled development worker stays alive so Settings can enable it.
     url=os.environ.get('CLOUD_SYNC_URL','');token=os.environ.get('CLOUD_SYNC_TOKEN','')
     if not url or not token:return
     if not url.startswith('https://'):raise ValueError('Cloud sync requires HTTPS')
     delay=5;snapshot_at=0
     while not stop.is_set():
+        if not cloud_sync_enabled(store):
+            stop.wait(1)
+            continue
         try:
             if time.monotonic()-snapshot_at>=30:snapshot(store);snapshot_at=time.monotonic()
             outgoing=batch(store)
@@ -265,4 +268,5 @@ def worker(store,stop):
             except sqlite3.Error:
                 print('Cloud sync could not record failure; retrying with pending data retained', file=sys.stderr, flush=True)
             delay=min(300,max(5,delay*2))
-        stop.wait(delay)
+        for _ in range(delay):
+            if stop.wait(1) or not cloud_sync_enabled(store):break

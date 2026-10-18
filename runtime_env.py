@@ -19,8 +19,11 @@ def data_directory(root):
     return Path(os.environ.get('DATA_DIR', str(Path(root) / 'data')))
 
 
-def cloud_sync_enabled():
-    return environment() == 'prod' or os.environ.get('DEV_CLOUD_SYNC_ENABLED', 'false').lower() == 'true'
+def cloud_sync_enabled(store=None):
+    if environment() == 'prod':
+        return True
+    from local_settings import read
+    return read(store)['cloud_sync_enabled']
 
 
 def configure(root):

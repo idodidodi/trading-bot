@@ -102,6 +102,7 @@ class ReceiverTests(unittest.TestCase):
             urllib.request.urlopen(self.url + '/')
         self.assertEqual(caught.exception.code, 404)
 
+    @patch.dict(os.environ, {'DEV_TELEGRAM_ENABLED': 'true'}, clear=True)
     def test_delivery_retries_and_recovers(self):
         self.store.insert(validate_signal(example(), load_rules()))
         stop = threading.Event()

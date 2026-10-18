@@ -2,6 +2,12 @@
 
 ## Unreleased — 2026-10-18
 
+### Local development settings
+
+- Settings & versions now saves development Telegram delivery and cloud sync overrides locally, independently of browser storage and cloud settings.
+- Changes apply to subsequent worker requests without restarting. Saved preferences take precedence over legacy environment defaults and survive browser closure and app restarts.
+- Development isolation, credential storage, production behavior and previously processed dry-run alerts are preserved.
+
 ### Forex weekend alerts
 
 - Forex scans pause from Friday 17:00 until Sunday 17:00 New York time across all candle timeframes, including catch-up scans. The schedule follows New York daylight-saving changes.

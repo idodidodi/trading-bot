@@ -316,6 +316,25 @@ function connectionTestControls(panel){
  }
  section.append(actions,result);panel.append(section);
 }
+async function developmentSettingsControls(panel,isCurrent){
+ if(online)return;
+ const section=node('section'),result=node('p');section.className='development-settings';
+ try{
+  const value=await request('/api/local-settings');if(!isCurrent()||!value.editable)return;panel.append(section);
+  section.append(node('h3','Development overrides'),node('p','Use while production is stopped. Saved on this computer and applied to new deliveries and sync requests without restarting. An in-progress request may finish.'));
+  const inputs={};
+  for(const [key,label] of [['telegram_enabled','Send Telegram alerts from development'],['cloud_sync_enabled','Sync development data to cloud']]){
+   const row=node('label'),input=node('input');input.type='checkbox';input.checked=value[key];inputs[key]=input;row.append(input,document.createTextNode(' '+label));section.append(row);
+  }
+  const save=button('Save development settings',async()=>{
+   save.disabled=true;result.className='';result.textContent='Saving…';
+   try{await request('/api/local-settings',Object.fromEntries(Object.entries(inputs).map(([key,input])=>[key,input.checked])));await openVersions();}
+   catch(e){result.className='error';result.textContent=e.message;}
+   finally{save.disabled=false;}
+  });
+  result.setAttribute('role','status');section.append(save,result,node('p','Development keeps separate data; activity logging and paper orders remain disabled. Previously processed dry-run alerts are not resent.'));
+ }catch(e){if(isCurrent())panel.append(node('p','Development settings unavailable: '+e.message));}
+}
 let versionRequest=0;
 function versionMatch(current,latest){return !current||!latest?'Comparison unavailable':current===latest?'Matches GitHub':'Differs from GitHub';}
 async function openVersions(){
@@ -331,6 +350,8 @@ async function openVersions(){
   const local=value.local||{},github=value.github||{},remote=value.online_ui||{};
   panel.replaceChildren(node('p',`Environment: ${value.environment}`));
   if(!online){panel.append(node('p',value.environment==='prod'?'Production activity logs enabled.':'Development uses separate data; persistent activity logging and paper orders disabled.'));panel.append(node('p',`Telegram delivery: ${value.telegram_enabled?'enabled':'disabled (dry run)'}.`));panel.append(node('p',`Cloud sync: ${value.cloud_sync_enabled?'enabled (requires configured connection)':'disabled'}.`));}
+  await developmentSettingsControls(panel,()=>id===versionRequest&&dialog.open);
+  if(id!==versionRequest||!dialog.open)return;
   const rows=[['Local UI',local.ui||'Unavailable',versionMatch(local.ui,github.ui)],['Online UI',remote.ui||'Unavailable',versionMatch(remote.ui,github.ui)],['Local scanner',local.scanner||'Unavailable',versionMatch(local.scanner,github.scanner)],['GitHub UI',github.ui||'Unavailable','Latest default branch'],['GitHub scanner',github.scanner||'Unavailable','Latest default branch'],['Installed app',local.version||'Unavailable','Running version'],['Latest executable release',value.release?.version||'Unavailable','GitHub release']];
   panel.append(table(['Component','Version','Status'],rows));
   if(github.commit)panel.append(node('p','GitHub commit: '+github.commit.slice(0,12)));

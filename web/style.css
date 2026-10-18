@@ -29,3 +29,5 @@
 
 #asset-dialog{max-width:560px}#asset-content p{line-height:1.6;color:#a1b4cb}#asset-content .error{color:#fca5a5}#asset-content fieldset label{min-width:100px;padding:8px}.asset-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
 .header-settings{display:flex;align-items:center;gap:12px}#settings{font-size:24px;line-height:1;min-width:44px;min-height:44px}#settings-dialog{width:min(760px,90vw)}#version-content p{line-height:1.6;color:#a1b4cb}#version-content td:nth-child(2){font-family:monospace}
+
+.development-settings{border:1px solid #2a3d55;border-radius:12px;padding:16px;margin:20px 0}.development-settings label{display:flex;margin:12px 0}.development-settings h3{margin-top:0}

@@ -9,6 +9,7 @@ from test_platform import example
 
 
 class ReviewRetirementTests(unittest.TestCase):
+    @patch.dict('os.environ', {'DEV_TELEGRAM_ENABLED': 'true'}, clear=True)
     def test_cancel_clock_review_but_deliver_candle_event(self):
         with tempfile.TemporaryDirectory() as folder:
             store = Store(Path(folder) / 'test.sqlite3')

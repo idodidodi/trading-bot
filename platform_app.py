@@ -143,6 +143,8 @@ class Store:
             initialize_assets(db)
             from cloud_sync import initialize as initialize_sync
             initialize_sync(db)
+            from local_settings import initialize as initialize_settings
+            initialize_settings(db)
 
     @contextmanager
     def connect(self):
@@ -239,17 +241,19 @@ def send_telegram(token, chat_id, text, silent=False):
 
 
 def delivery_worker(store, token, chat_id, dry_run, stop):
+    from local_settings import delivery_dry_run
     from scanner_control import initialize as control_initialize
     with store.connect() as db:control_initialize(db)
     while not stop.is_set():
+        current_dry_run = delivery_dry_run(store, dry_run)
         with store.connect() as db:
             note=db.execute("SELECT id,text,attempts FROM notification_queue WHERE status='pending' AND next_attempt<=? ORDER BY rowid LIMIT 1",(time.time(),)).fetchone()
         if note:
             key,text,attempts=note
             try:
-                if not dry_run:send_telegram(token,chat_id,text,silent=quiet_hours())
-                with store.connect() as db:db.execute('UPDATE notification_queue SET status=? WHERE id=?',('dry-run' if dry_run else 'sent',key))
-                store.log('Queued notification delivered','dry-run' if dry_run else 'sent')
+                if not current_dry_run:send_telegram(token,chat_id,text,silent=quiet_hours())
+                with store.connect() as db:db.execute('UPDATE notification_queue SET status=? WHERE id=?',('dry-run' if current_dry_run else 'sent',key))
+                store.log('Queued notification delivered','dry-run' if current_dry_run else 'sent')
             except Exception:
                 with store.connect() as db:db.execute('UPDATE notification_queue SET attempts=?,next_attempt=? WHERE id=?',(attempts+1,time.time()+min(300,2**min(attempts+1,9)),key))
             continue
@@ -267,12 +271,12 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             continue
         store.log('Delivery attempt', f'{key} · attempt {attempts + 1}')
         try:
-            if not dry_run:
+            if not current_dry_run:
                 send_telegram(token, chat_id, message(json.loads(raw)))
             with store.connect() as db:
                 db.execute('UPDATE signals SET status=?,attempts=?,error=NULL WHERE id=?',
-                           ('dry-run' if dry_run else 'sent', attempts + 1, key))
-            store.log('Delivery completed', 'dry-run' if dry_run else 'sent')
+                           ('dry-run' if current_dry_run else 'sent', attempts + 1, key))
+            store.log('Delivery completed', 'dry-run' if current_dry_run else 'sent')
         except Exception as exc:
             # Persist a sanitized classification only, never arbitrary exception text.
             error = str(exc) if isinstance(exc, RuntimeError) else 'Delivery failed'
@@ -284,6 +288,7 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
 
 
 def handler_factory(store, rules, secret, dry_run, dashboard=False):
+    from local_settings import delivery_dry_run
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
@@ -323,6 +328,10 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 else:
                     self.respond(404, {'error':'Not found'})
                 return
+            if route == '/api/local-settings':
+                from local_settings import read
+                self.respond(200, read(store))
+                return
             if route in ('/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/bb-pin-bars', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions'):
                 from dashboard_api import read
                 try:
@@ -333,7 +342,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     self.respond(400, {'error':'Invalid dashboard request'})
                 return
             if self.path == '/health':
-                self.respond(200, {'ok': True, 'dry_run': dry_run, 'rules': rules})
+                self.respond(200, {'ok': True, 'dry_run': delivery_dry_run(store, dry_run), 'rules': rules})
             elif self.path == '/api/feedback/export':
                 from finding_feedback import export
                 self.respond(200, export(store))
@@ -383,7 +392,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 self.respond(404, {'error': 'Not found'})
 
         def do_POST(self):
-            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state','/api/catchup','/api/updates','/api/csv-backtests','/api/connection-test'):
+            if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state','/api/catchup','/api/updates','/api/csv-backtests','/api/connection-test','/api/local-settings'):
                 from finding_feedback import save
                 host = self.headers.get('Host')
                 allowed = (f'localhost:{self.server.server_port}', f'127.0.0.1:{self.server.server_port}')
@@ -399,7 +408,13 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     body = json.loads(self.rfile.read(size))
                     if not isinstance(body, dict):
                         raise ValueError('Expected JSON object')
-                    if self.path=='/api/connection-test':
+                    if self.path=='/api/local-settings':
+                        from local_settings import save as save_settings
+                        try:
+                            self.respond(200, save_settings(store, body))
+                        except ValueError as exc:
+                            self.respond(400, {'error': str(exc)})
+                    elif self.path=='/api/connection-test':
                         from connection_tests import run, ConnectionTestError
                         try:
                             self.respond(200,run(body.get('action'),rules))
@@ -498,11 +513,13 @@ def main():
     legacy_webhook = os.environ.get('MODE', 'scanner') == 'webhook'
     if legacy_webhook and len(secret) < 32:
         raise SystemExit('Set WEBHOOK_SECRET to a random value of at least 32 characters in .env.')
-    if not dry_run and (not token or not chat_id):
-        raise SystemExit('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID, or DRY_RUN=true.')
     data = Path(os.environ.get('DATA_DIR', str(ROOT / 'data')))
     data.mkdir(parents=True, exist_ok=True)
     store = Store(data / 'signals.sqlite3')
+    from local_settings import delivery_dry_run
+    dry_run = delivery_dry_run(store, dry_run)
+    if not dry_run and (not token or not chat_id):
+        raise SystemExit('Configure Telegram credentials locally or disable Telegram delivery in local settings.')
     if not legacy_webhook:
         from scanner import load_config
         from managed_assets import ensure

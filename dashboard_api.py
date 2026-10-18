@@ -16,7 +16,7 @@ def read(store, path):
     param=lambda key,default='':query.get(key,[default])[0]
     if url.path=='/api/versions':
         from version_info import versions
-        return versions()
+        return versions(store)
     if url.path=='/api/csv-backtests':
         from csv_backtests import view
         page=int(param('page','0'))
