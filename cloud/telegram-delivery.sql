@@ -15,11 +15,17 @@ create table if not exists public.telegram_delivery_attempts(
  primary key(installation,owner)
 );
 create table if not exists public.telegram_delivery_cleanup(singleton boolean primary key default true check(singleton), last_run timestamptz not null);
+create table if not exists public.telegram_sound_slots(
+ installation uuid not null references public.dashboard_installations(id),
+ destination_hash text not null, minute timestamptz not null,
+ primary key(installation,destination_hash)
+);
 insert into public.telegram_delivery_cleanup values(true,'epoch') on conflict do nothing;
 alter table public.telegram_delivery_claims enable row level security;
 alter table public.telegram_delivery_attempts enable row level security;
 alter table public.telegram_delivery_cleanup enable row level security;
-revoke all on public.telegram_delivery_claims,public.telegram_delivery_attempts,public.telegram_delivery_cleanup from public,anon,authenticated;
+alter table public.telegram_sound_slots enable row level security;
+revoke all on public.telegram_delivery_claims,public.telegram_delivery_attempts,public.telegram_delivery_cleanup,public.telegram_sound_slots from public,anon,authenticated;
 create index if not exists telegram_claim_expiry on public.telegram_delivery_claims(expires_at);
 create index if not exists telegram_attempt_age on public.telegram_delivery_attempts(updated_at);
 
@@ -30,17 +36,19 @@ declare
  inst uuid:=installation; action text:=input->>'action'; dest text:=input->>'destination_hash'; event text:=input->>'event_hash';
  body text:=input->>'body_hash'; token uuid:=(input->>'owner')::uuid; sender uuid:=(input->>'sender_id')::uuid;
  stamp timestamptz:=clock_timestamp(); claim public.telegram_delivery_claims%rowtype;
- result text; why text;
+ result text; why text; silent boolean:=true;
 begin
  if inst is null or token is null or sender is null or action is null or action not in ('acquire','renew','complete','release')
   or dest is null or dest !~ '^[a-f0-9]{64}$' or event is null or event !~ '^[a-f0-9]{64}$'
   or body is null or body !~ '^[a-f0-9]{64}$' or coalesce(input->>'environment','') not in ('dev','prod')
-  or coalesce(length(input->>'device'),0) not between 1 and 80 then raise exception 'Invalid coordination request';end if;
+  or coalesce(length(input->>'device'),0) not between 1 and 80
+  or (input ? 'silent' and jsonb_typeof(input->'silent')<>'boolean') then raise exception 'Invalid coordination request';end if;
  -- Lazy daily maintenance: first authenticated operation of the day cleans up.
  update telegram_delivery_cleanup set last_run=stamp where singleton and last_run<=stamp-interval '1 day';
  if found then
   delete from telegram_delivery_claims where expires_at<=stamp;
   delete from telegram_delivery_attempts where updated_at<=stamp-interval '1 day';
+  delete from telegram_sound_slots where minute<stamp-interval '1 day';
  end if;
  perform pg_advisory_xact_lock(hashtextextended(inst::text||dest||event,0));
  stamp:=clock_timestamp();
@@ -70,6 +78,14 @@ begin
    update telegram_delivery_claims c set lease_until=stamp+interval '90 seconds',expires_at=stamp+interval '1 day'
     where c.installation=inst and c.destination_hash=dest and c.event_hash=event;
    result:='acquired';
+   if not coalesce((input->>'silent')::boolean,false) then
+    -- Reserve immediately before sending, atomically across distinct events
+    -- and devices. Keep the slot on failure: Telegram timeouts are ambiguous.
+    insert into telegram_sound_slots as slots values(inst,dest,date_trunc('minute',stamp))
+    on conflict on constraint telegram_sound_slots_pkey do update set minute=excluded.minute
+     where slots.minute<excluded.minute;
+    silent:=not found;
+   end if;
   elsif action='release' then
    update telegram_delivery_claims c set lease_until=stamp where c.installation=inst and c.destination_hash=dest and c.event_hash=event;
    result:='released';why:='Send failed or delivery uncertain; automatic retry enabled';
@@ -78,7 +94,7 @@ begin
  insert into telegram_delivery_attempts values(inst,token,dest,event,body,sender,input->>'device',input->>'environment',result,why,(input->>'message_id')::bigint,stamp)
  on conflict on constraint telegram_delivery_attempts_pkey do update set outcome=excluded.outcome,reason=excluded.reason,
   message_id=coalesce(excluded.message_id,telegram_delivery_attempts.message_id),updated_at=excluded.updated_at;
- return jsonb_build_object('status',result,'reason',why,'sender_id',claim.sender_id,'device',claim.device,'environment',claim.environment);
+ return jsonb_build_object('status',result,'reason',why,'sender_id',claim.sender_id,'device',claim.device,'environment',claim.environment,'silent',silent);
 end;
 $$;
 revoke all on function public.telegram_coordinate(uuid,jsonb) from public,anon,authenticated;

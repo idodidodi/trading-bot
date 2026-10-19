@@ -40,6 +40,8 @@ Deploy the migration and endpoint before updating/restarting all scanner install
 
 Claims are atomic, use server time and 90-second leases, and retain successful sends for a rolling 24 hours. The first authenticated coordinator request after a day runs cleanup of expired claims and old diagnostic attempts. Machine-only `telegram_delivery_attempts` stores each attempt's sender, device, environment, hashes, outcome/reason and Telegram message ID. Local development logs still go to stdout. Back up each data directory's `telegram-sender.sqlite3` to preserve its source identity; cloned data directories should remove this identity file to get a distinct ID.
 
+Sound is allocated atomically at lease renewal: one automatic alert per installation/bot/chat per clock minute may request sound, across all devices and environments. Further alerts are silent. Explicit quiet sends skip allocation, and failed or ambiguous sends retain their slot. The additive `telegram_sound_slots` table keeps only the latest minute per destination, with old rows removed by daily cleanup. Reapply `telegram-delivery.sql` and redeploy the endpoint to accept/return the `silent` flag, then restart updated scanner installations. Updated senders default to silent when an older coordinator omits that flag.
+
 Validate with `python3 -m unittest test_telegram_delivery test_telegram test_platform test_market_summary test_runtime_versions`, `node cloud/test_telegram_delivery.mjs`, and `cloud/test_telegram_delivery.sql` after the test Auth stub, schema and migration in a disposable PostgreSQL database. Also run `python3 cloud/test_telegram_concurrency.py --dsn YOUR_DISPOSABLE_DATABASE_DSN` for real concurrent claims. No live Telegram messages are needed.
 
 ## GitHub-connected Cloudflare Worker

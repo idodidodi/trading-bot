@@ -13,9 +13,10 @@ Deno.serve(async request=>{
    ||['destination_hash','event_hash','body_hash'].some(k=>typeof input[k]!=='string'||! /^[a-f0-9]{64}$/.test(input[k]))
    ||['owner','sender_id'].some(k=>typeof input[k]!=='string'||! /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(input[k]))
    ||!['dev','prod'].includes(input.environment)||typeof input.device!=='string'||!input.device.length||input.device.length>80
+   ||('silent' in input&&typeof input.silent!=='boolean')
    ||(input.message_id!=null&&(!Number.isSafeInteger(input.message_id)||input.message_id<0)))throw Error();
   // Whitelist fields; installation is always derived from the function secret.
-  input=Object.fromEntries(['action','destination_hash','event_hash','body_hash','owner','sender_id','environment','device','message_id'].filter(k=>k in input).map(k=>[k,input[k]]));
+  input=Object.fromEntries(['action','destination_hash','event_hash','body_hash','owner','sender_id','environment','device','message_id','silent'].filter(k=>k in input).map(k=>[k,input[k]]));
  }catch{return new Response('Invalid coordination request',{status:400});}
  try{
   const response=await fetch(url+'/rest/v1/rpc/telegram_coordinate',{method:'POST',headers:{apikey:key,Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify({installation,input}),signal:AbortSignal.timeout(8000)});

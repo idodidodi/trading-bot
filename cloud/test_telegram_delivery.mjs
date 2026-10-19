@@ -11,7 +11,7 @@ const base={action:'acquire',destination_hash:'a'.repeat(64),event_hash:'b'.repe
 const request=(body=base,token='machine-secret',method='POST')=>new Request('https://example.invalid',{method,headers:{Authorization:'Bearer '+token},...(method==='POST'?{body:typeof body==='string'?body:JSON.stringify(body)}:{})});
 assert.equal((await handler(request(base,'wrong'))).status,401);
 assert.equal((await handler(request(base,'machine-secret','GET'))).status,405);
-for(const body of [null,{},'{', 'x'.repeat(4097), {...base,action:'delete'}, {...base,owner:'bad'}, {...base,event_hash:'bad'}, {...base,environment:'other'}, {...base,device:'x'.repeat(81)}, {...base,message_id:-1}]){
+for(const body of [null,{},'{', 'x'.repeat(4097), {...base,action:'delete'}, {...base,owner:'bad'}, {...base,event_hash:'bad'}, {...base,environment:'other'}, {...base,device:'x'.repeat(81)}, {...base,message_id:-1}, {...base,silent:'false'}, {...base,silent:null}]){
  assert.ok([400,413].includes((await handler(request(body))).status));
 }
 assert.equal(calls.length,0);
@@ -19,6 +19,10 @@ for(const action of ['acquire','renew','complete','release'])assert.equal((await
 const sent=JSON.parse(calls[0].options.body);
 assert.equal(sent.installation,'server-installation');assert.equal(sent.input.installation,undefined);assert.equal(sent.input.token,undefined);
 assert.equal(calls[0].options.headers.Authorization,'Bearer service-secret');
+for(const silent of [false,true]){
+ assert.equal((await handler(request({...base,action:'renew',silent}))).status,200);
+ assert.equal(JSON.parse(calls.at(-1).options.body).input.silent,silent);
+}
 fail=true;const unavailable=await handler(request());assert.equal(unavailable.status,503);assert.equal(await unavailable.text(),'Coordination unavailable');
 settings.INSTALLATION_ID='';assert.equal((await handler(request())).status,503);
 console.log('Telegram endpoint checks passed: auth, validation, server scope, field whitelist, and sanitized failures.');

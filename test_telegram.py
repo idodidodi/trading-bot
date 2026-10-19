@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 import ssl
 import unittest
@@ -52,6 +53,13 @@ class TelegramTests(unittest.TestCase):
             request.return_value.__enter__.return_value.read.return_value = b'{"ok": true}'
             send_telegram('private-token', '123', 'Test')
             request.assert_called_once()
+
+    def test_notification_sound_flag_is_sent_to_telegram(self):
+        for silent in (False, True):
+            with patch('platform_app.urllib.request.urlopen', return_value=io.StringIO('{"ok":true}')) as request:
+                send_telegram('private-token', '123', 'Test', silent=silent,
+                              source_identity={'device':'test', 'environment':'dev', 'sender_id':'12345678'})
+            self.assertIs(json.loads(request.call_args.args[0].data)['disable_notification'], silent)
 
 
 if __name__ == '__main__':

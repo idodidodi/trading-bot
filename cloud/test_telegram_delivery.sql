@@ -56,4 +56,36 @@ begin
  assert telegram_coordinate(inst,p)->>'status'='already_sent';
 end;
 $$;
+do $$
+declare
+ inst uuid:='20000000-0000-0000-0000-000000000001';
+ p jsonb:=jsonb_build_object('action','acquire','destination_hash',repeat('9',64),'event_hash',repeat('8',64),'body_hash',repeat('7',64),
+  'owner','30000000-0000-0000-0000-000000000009','sender_id','40000000-0000-0000-0000-000000000009','device','sound-test','environment','dev');
+ q jsonb;
+begin
+ assert telegram_coordinate(inst,p)->>'status'='acquired';
+ -- Quiet notifications must not consume the minute's audible slot.
+ assert telegram_coordinate(inst,p||'{"action":"renew","silent":true}')->>'silent'='true';
+ assert not exists(select 1 from telegram_sound_slots where destination_hash=repeat('9',64));
+ assert telegram_coordinate(inst,p||'{"action":"renew","silent":false}')->>'silent'='false';
+ -- A different event/device/environment shares the same slot, including retries.
+ q:=p||jsonb_build_object('event_hash',repeat('6',64),'owner','30000000-0000-0000-0000-000000000008','environment','prod');
+ assert telegram_coordinate(inst,q)->>'status'='acquired';
+ assert telegram_coordinate(inst,q||'{"action":"renew"}')->>'silent'='true';
+ assert telegram_coordinate(inst,p||'{"action":"release"}')->>'status'='released';
+ assert telegram_coordinate(inst,p)->>'status'='acquired';
+ assert telegram_coordinate(inst,p||'{"action":"renew"}')->>'silent'='true';
+ -- Simulate a prior minute: the first new reservation can sound again.
+ update telegram_sound_slots set minute=date_trunc('minute',clock_timestamp())-interval '1 minute' where installation=inst;
+ assert telegram_coordinate(inst,q||'{"action":"renew"}')->>'silent'='false';
+ -- Separate destinations and installations each get their own slot.
+ q:=q||jsonb_build_object('destination_hash',repeat('5',64));
+ assert telegram_coordinate(inst,q)->>'status'='acquired';
+ assert telegram_coordinate(inst,q||'{"action":"renew"}')->>'silent'='false';
+ assert telegram_coordinate('20000000-0000-0000-0000-000000000002',q)->>'status'='acquired';
+ assert telegram_coordinate('20000000-0000-0000-0000-000000000002',q||'{"action":"renew"}')->>'silent'='false';
+ assert not has_table_privilege('authenticated','telegram_sound_slots','select');
+ assert not has_table_privilege('anon','telegram_sound_slots','select');
+end;
+$$;
 rollback;

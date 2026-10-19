@@ -115,8 +115,12 @@ def deliver(store, token, chat, text, event_id, send, silent=False):
             return finish('suppressed')
         if status != 'acquired':
             raise DeliveryPending('Telegram delivery claimed by another sender')
-        if call('renew') != 'acquired':
+        renewal = coordinator(dict(payload, action='renew', silent=silent))
+        if renewal['status'] != 'acquired':
             raise DeliveryPending('Telegram delivery lease lost')
+        # Older coordinators cannot allocate sound slots; default to silent
+        # until their migration is applied. Explicit quiet sends stay quiet.
+        silent = silent or renewal.get('silent', True) is not False
         try:
             message_id = send(token, chat, text, silent=silent, source_identity=identity)
         except Exception:

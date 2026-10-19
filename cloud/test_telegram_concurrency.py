@@ -28,8 +28,20 @@ def main():
         assert results.count('acquired')==1, results
         assert results.count('busy')==7, results
         print('Concurrent PostgreSQL claims passed: one acquired, seven busy.')
+        def reserve_sound(index):
+            payload=dict(action='acquire',destination_hash='d'*64,event_hash=f'{index:064x}',body_hash='c'*64,
+                         owner=str(uuid.uuid4()),sender_id=str(uuid.uuid4()),device=f'device-{index}',environment='prod')
+            assert sql(f"SELECT telegram_coordinate('{inst}','{json.dumps(payload)}'::jsonb)->>'status'")=='acquired'
+            payload.update(action='renew',silent=False)
+            barrier.wait(timeout=10)
+            return sql(f"SELECT telegram_coordinate('{inst}','{json.dumps(payload)}'::jsonb)->>'silent'")
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results=list(pool.map(reserve_sound,range(8)))
+        assert results.count('false')==1, results
+        assert results.count('true')==7, results
+        print('Concurrent sound reservations passed: one audible, seven silent.')
     finally:
-        sql(f"DELETE FROM telegram_delivery_attempts WHERE installation='{inst}'; DELETE FROM telegram_delivery_claims WHERE installation='{inst}'; DELETE FROM dashboard_installations WHERE id='{inst}'; DELETE FROM auth.users WHERE id='{owner}';")
+        sql(f"DELETE FROM telegram_delivery_attempts WHERE installation='{inst}'; DELETE FROM telegram_delivery_claims WHERE installation='{inst}'; DELETE FROM telegram_sound_slots WHERE installation='{inst}'; DELETE FROM dashboard_installations WHERE id='{inst}'; DELETE FROM auth.users WHERE id='{owner}';")
 
 
 if __name__=='__main__':main()

@@ -53,6 +53,28 @@ class DeliveryTests(unittest.TestCase):
             with self.assertRaises(delivery.DeliveryPending): self.send()
         self.sender.assert_not_called()
 
+    def test_shared_sound_decision_is_used_for_each_alert(self):
+        self.sender = Mock(return_value=42)
+        for index, silent in enumerate([False, True, True, False]):
+            with patch('telegram_delivery.coordinator', side_effect=[
+                {'status': 'acquired'}, {'status': 'acquired', 'silent': silent},
+                {'status': 'completed'},
+            ]) as cloud:
+                self.send(event=f'signal:{index}')
+            self.assertEqual(self.sender.call_args.kwargs['silent'], silent)
+            self.assertEqual(cloud.call_args_list[1].args[0]['silent'], False)
+
+    def test_quiet_send_stays_silent_and_old_coordinator_defaults_silent(self):
+        for index, renewal in enumerate([{'status': 'acquired', 'silent': False}, {'status': 'acquired'}]):
+            sender = Mock(return_value=42)
+            with patch('telegram_delivery.coordinator', side_effect=[
+                {'status': 'acquired'}, renewal, {'status': 'completed'},
+            ]) as cloud:
+                delivery.deliver(self.store, '123:secret', '123', 'quiet',
+                                 f'notification:{index}', sender, silent=index == 0)
+            self.assertTrue(sender.call_args.kwargs['silent'])
+            self.assertEqual(cloud.call_args_list[1].args[0]['silent'], index == 0)
+
     def test_timeout_releases_and_retries_with_new_owner(self):
         self.sender = Mock(side_effect=[RuntimeError('Telegram connection timed out'), 10])
         with patch('telegram_delivery.coordinator', side_effect=[{'status':'acquired'}, {'status':'acquired'}, {'status':'released'}, {'status':'acquired'}, {'status':'acquired'}, {'status':'completed'}]) as cloud:
