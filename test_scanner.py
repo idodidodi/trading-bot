@@ -126,14 +126,22 @@ class EngineTests(unittest.TestCase):
 
     def test_worker_uses_managed_poll_interval(self):
         from managed_assets import ensure
-        with tempfile.TemporaryDirectory() as folder:
-            store = Store(Path(folder) / 'db.sqlite3')
-            config = dict(assets=[], timeframes=['4h'], poll_seconds=3600)
-            ensure(store, config)
-            stop = Mock(); stop.is_set.side_effect = [False, False, True]
-            with patch('scanner.wait_for_command',return_value=None) as waiting, patch('scanner.scan_once', return_value=[]):
-                scanner_worker(store, config | {'poll_seconds': 300}, load_rules(), stop)
-            waiting.assert_called_once_with(store,stop,3600)
+        # The 08:00 Israel momentum deadline may shorten the managed interval.
+        # Fix the clock well before and just before that deadline, independent of CI time.
+        for clock, delay in [('2026-10-20T03:00:00+00:00', 3600),
+                             ('2026-10-20T04:58:00+00:00', 120)]:
+            with self.subTest(clock=clock), tempfile.TemporaryDirectory() as folder:
+                now = datetime.fromisoformat(clock).timestamp()
+                store = Store(Path(folder) / 'db.sqlite3')
+                config = dict(assets=[], timeframes=['4h'], poll_seconds=3600)
+                ensure(store, config)
+                stop = Mock(); stop.is_set.side_effect = [False, False, True]
+                with patch('scanner.time.time', return_value=now), patch('scanner.wait_for_command',return_value=None) as waiting, patch('scanner.scan_once', return_value=[]):
+                    scanner_worker(store, config | {'poll_seconds': 300}, load_rules(), stop)
+                waiting.assert_called_once_with(store,stop,delay)
+                with store.connect() as db:
+                    schedule = json.loads(db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()[0])
+                self.assertEqual(schedule['next_scan_at'], int((now + delay) * 1000))
 
     def test_worker_wakes_after_next_candle_close(self):
         with tempfile.TemporaryDirectory() as folder:
