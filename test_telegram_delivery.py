@@ -149,6 +149,35 @@ class DeliveryTests(unittest.TestCase):
             with self.assertRaisesRegex(delivery.DeliveryPending, '^Telegram coordination unavailable$'): delivery.coordinator({})
 
     @patch.dict(os.environ, {'TRADING_BOT_ENV': 'prod'})
+    def test_pin_bar_alerts_bypass_quiet_hours_but_summaries_stay_quiet(self):
+        from scanner_control import initialize
+
+        def coordinate(payload):
+            action = payload['action']
+            return {'status': 'completed' if action == 'complete' else 'acquired',
+                    'silent': payload.get('silent', False)}
+
+        for overnight in (True, False):
+            for prefix in ('pin-bars:', 'bb-pin-bars:', 'market-summary:', 'catchup:'):
+                with self.subTest(overnight=overnight, prefix=prefix):
+                    key = prefix + str(overnight)
+                    with self.store.connect() as db:
+                        initialize(db)
+                        db.execute('INSERT INTO notification_queue(id,text) VALUES(?,?)', (key, 'alert'))
+                    stop = Mock()
+                    stop.is_set.side_effect = [False, True]
+                    with patch('platform_app.quiet_hours', return_value=overnight), \
+                         patch('telegram_delivery.coordinator', side_effect=coordinate), \
+                         patch('platform_app.send_telegram', return_value=42) as send:
+                        delivery_worker(self.store, '123:secret', '123', False, stop)
+                    send.assert_called_once()
+                    self.assertEqual(send.call_args.kwargs['silent'],
+                                     overnight and prefix in ('market-summary:', 'catchup:'))
+                    with self.store.connect() as db:
+                        self.assertEqual(db.execute('SELECT status FROM notification_queue WHERE id=?',
+                                                    (key,)).fetchone()[0], 'sent')
+
+    @patch.dict(os.environ, {'TRADING_BOT_ENV': 'prod'})
     def test_worker_dry_run_does_not_contact_coordinator_and_suppression_is_explicit(self):
         from scanner_control import initialize
         with self.store.connect() as db:

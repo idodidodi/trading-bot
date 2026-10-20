@@ -290,7 +290,9 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
         if note:
             key,text,attempts=note
             try:
-                outcome = 'dry-run' if current_dry_run else deliver(store, token, chat_id, text, 'notification:' + key, send_telegram, silent=quiet_hours())
+                # Strategy alerts share RSI's sound policy, even overnight.
+                is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:'))
+                outcome = 'dry-run' if current_dry_run else deliver(store, token, chat_id, text, 'notification:' + key, send_telegram, silent=not is_signal and quiet_hours())
                 with store.connect() as db:db.execute('UPDATE notification_queue SET status=? WHERE id=?',(outcome,key))
                 store.log('Queued notification delivered',outcome)
             except Exception as exc:
