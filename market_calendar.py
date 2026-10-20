@@ -82,6 +82,8 @@ def is_stock(asset):
 
 
 def is_forex(asset):
+    if asset.get('market') in ('commodity', 'commodities', 'futures'):
+        return False
     return asset.get('market') == 'forex' or asset.get('provider') in ('tiingo', 'oanda')
 
 

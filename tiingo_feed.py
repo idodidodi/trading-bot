@@ -1,4 +1,4 @@
-"""Read-only Tiingo forex OHLC; exact pairs, explicit UTC calendar aggregation."""
+"""Read-only Tiingo FX and verified WTI-derived OHLC with UTC aggregation."""
 from datetime import datetime, timedelta, timezone
 import json
 import hashlib
@@ -15,8 +15,13 @@ FRAMES = {'1h': '1hour', '4h': '4hour', 'daily': '1day', 'weekly': '1day', 'mont
 
 
 def validate_feed(asset, timeframe):
-    if timeframe not in FRAMES or not re.fullmatch(r'[A-Z]{3}/[A-Z]{3}', asset.get('symbol', '')):
+    oil = asset.get('symbol') == 'USOIL/USD' and asset.get('market') == 'commodity'
+    if timeframe not in FRAMES or (not oil and not re.fullmatch(r'[A-Z]{3}/[A-Z]{3}', asset.get('symbol', ''))):
         raise ValueError('Tiingo requires an exact forex BASE/QUOTE pair and supported timeframe')
+    if asset.get('market') in ('commodity', 'commodities', 'futures') and not oil:
+        raise ValueError('Only the verified Tiingo USOIL/USD commodity series is supported')
+    if oil and asset.get('tradingview_symbol'):
+        raise ValueError('Tiingo derived WTI has no verified TradingView chart mapping')
     if asset.get('exchange') not in ('Tiingo', 'Tiingo-UTC') or asset.get('feed_confirmed') is not True:
         raise ValueError('Confirm the exact Tiingo forex feed in Assets')
 
@@ -133,6 +138,8 @@ def fetch_tiingo(asset, timeframe, *, start=None, end=None):
     closed = check_candles(bars, cutoff)
     if timeframe in ('weekly','monthly'):
         closed = aggregate_daily(closed,timeframe,cutoff)
-    result = ProviderCandles(closed, ['Tiingo forex OHLC; UTC boundaries' +
+    label = ('Tiingo tokenized derived US oil price (WTI); separate from FOREXCOM:USOIL'
+             if asset.get('symbol') == 'USOIL/USD' else 'Tiingo forex OHLC')
+    result = ProviderCandles(closed, [label + '; UTC boundaries' +
         ('; aggregated from daily OHLC, complete calendar periods only' if timeframe in ('weekly','monthly') else '; native '+FRAMES[timeframe])])
     return result

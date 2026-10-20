@@ -468,6 +468,26 @@
       "scan_strategies": [
         "rsi"
       ]
+    },
+    {
+      "id": "USOIL",
+      "name": "WTI oil \u2014 Tiingo tokenized derived price",
+      "symbol": "USOIL/USD",
+      "exchange": "Tiingo",
+      "market": "commodity",
+      "provider": "tiingo",
+      "enabled": true,
+      "timeframes": [
+        "monthly",
+        "weekly",
+        "daily",
+        "4h"
+      ],
+      "path": "data/candles/{asset}-{timeframe}.csv",
+      "tradingview_symbol": "",
+      "portfolio": true,
+      "feed_confirmed": true,
+      "timeframe_providers": {}
     }
   ],
   "request_spacing_seconds": 8,

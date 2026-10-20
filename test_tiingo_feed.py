@@ -68,6 +68,25 @@ class TiingoTests(unittest.TestCase):
         with patch('tiingo_feed.request_json',return_value=self.data('2026-09-01T01:00:00Z')),self.assertRaisesRegex(ValueError,'midnight'):
             fetch_tiingo(self.asset,'weekly')
 
+    def test_derived_wti_requires_exact_identity_and_avoids_forex_calendar(self):
+        from market_calendar import is_forex
+        oil = self.asset | dict(id='USOIL', symbol='USOIL/USD', market='commodity', tradingview_symbol='')
+        validate_asset(oil)
+        self.assertFalse(is_forex(oil))
+        self.assertTrue(is_forex(self.asset))
+        with patch('tiingo_feed.request_json',return_value=self.data(ticker='usoilusd')) as request:
+            bars = fetch_tiingo(oil,'daily',end='2026-10-06T00:00:00Z')
+            self.assertEqual(request.call_args.args[0],'USOIL/USD')
+            self.assertEqual(len(bars),1)
+            self.assertIn('derived US oil',bars.notes[0])
+        for change in [dict(market='forex'), dict(symbol='USOILF/USD'), dict(symbol='WTI/USD'),
+                       dict(tradingview_symbol='FOREXCOM:USOIL')]:
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                validate_asset(oil | change)
+        with patch('tiingo_feed.request_json',return_value=self.data(ticker='usoilfusd')):
+            with self.assertRaisesRegex(ValueError,'different'):
+                fetch_tiingo(oil,'daily')
+
     def test_errors_sanitized_and_auth_classified(self):
         for code,body,expected in [(403,b'{"detail":"Invalid token. private"}','token'),(403,b'private','access'),(429,b'private','quota')]:
             with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,dict(DATA_DIR=folder,TIINGO_API_KEY='secret')):
