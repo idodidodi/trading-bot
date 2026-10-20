@@ -199,6 +199,31 @@ class Store:
             return db.execute('SELECT payload,status,attempts,error FROM signals ORDER BY received DESC LIMIT 100').fetchall()
 
 
+def signal_alert_identity(payload):
+    """Telegram groups reference pivots; dashboard findings keep their pair IDs."""
+    return [payload[k] for k in ('symbol', 'timeframe', 'direction', 'pivot2')] + [
+        'provisional' if payload.get('signal_status') == 'provisional' else 'confirmed']
+
+
+def signal_alert_event(payload):
+    return 'divergence:' + hashlib.sha256(json.dumps(signal_alert_identity(payload)).encode()).hexdigest()
+
+
+def signal_alert_delivered(store, payload):
+    # Include pre-grouping deliveries so upgrading does not repeat an alert
+    # when another reference pivot for an already delivered candle arrives.
+    with store.connect() as db:
+        return db.execute('''SELECT 1 FROM signals
+            WHERE status IN ('sent','suppressed')
+            AND json_extract(payload,'$.symbol')=?
+            AND json_extract(payload,'$.timeframe')=?
+            AND json_extract(payload,'$.direction')=?
+            AND json_extract(payload,'$.pivot2')=?
+            AND CASE WHEN json_extract(payload,'$.signal_status')='provisional'
+                THEN 'provisional' ELSE 'confirmed' END=? LIMIT 1''',
+            signal_alert_identity(payload)).fetchone() is not None
+
+
 def message(payload):
     provisional = payload.get('signal_status') == 'provisional'
     timestamp = payload['pivot_closed_at'] if provisional else payload['confirmed_at']
@@ -210,7 +235,8 @@ def message(payload):
             f"Price: {payload['price1']:g} → {payload['price2']:g}\n"
             f"RSI({payload['rules']['rsi_period']}): {payload['rsi1']:.2f} → {payload['rsi2']:.2f}\n"
             f"{'Lower' if payload['direction'] == 'bullish' else 'Upper'} BB touch: {payload['band2']:g}\n"
-            f"{timing}\n{payload.get('stage_description', 'Warm-up / potential divergence; awaiting pivot confirmation.' if provisional else 'Confirmed divergence / structural pivot confirmation after the next candle.')}\n{footer}")
+            f"{timing}\n{payload.get('stage_description', 'Warm-up / potential divergence; awaiting pivot confirmation.' if provisional else 'Confirmed divergence / structural pivot confirmation after the next candle.')}\n"
+            f"One alert per pivot candle and stage; see Signals for all reference-pivot comparisons.\n{footer}")
 
 
 def telegram_connection_error(exc):
@@ -275,7 +301,8 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             stop.wait(1)
             continue
         key, raw, attempts = row
-        if json.loads(raw).get('review_slot'):
+        payload = json.loads(raw)
+        if payload.get('review_slot'):
             # Retire queued clock reviews from older versions without resending
             # cached setups after the move to candle-driven alerts.
             with store.connect() as db:
@@ -283,7 +310,12 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             continue
         store.log('Delivery attempt', f'{key} · attempt {attempts + 1}')
         try:
-            outcome = 'dry-run' if current_dry_run else deliver(store, token, chat_id, message(json.loads(raw)), 'signal:' + key, send_telegram)
+            if current_dry_run:
+                outcome = 'dry-run'
+            elif signal_alert_delivered(store, payload):
+                outcome = 'suppressed'
+            else:
+                outcome = deliver(store, token, chat_id, message(payload), signal_alert_event(payload), send_telegram)
             with store.connect() as db:
                 db.execute('UPDATE signals SET status=?,attempts=?,error=NULL WHERE id=?',
                            (outcome, attempts + 1, key))
