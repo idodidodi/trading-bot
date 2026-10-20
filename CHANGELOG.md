@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — 2026-10-20
+
+### Telegram readability
+
+- All Telegram messages now use bold headings and market/signal details, italic timestamps and footnotes, and space between sections. Quote timestamps remain beside their prices.
+- Wording, prices, units, timestamps, source labels, and delivery identities are preserved. Native formatting entities keep special characters literal and handle emoji correctly.
+
 ## Unreleased — 2026-10-18
 
 ### Paper trading setting

@@ -258,8 +258,11 @@ def quiet_hours(now=None):
 
 def send_telegram(token, chat_id, text, silent=False, source_identity=None):
     from telegram_delivery import footer, source
+    from telegram_formatting import presentation
     text = footer(text, source_identity or source())
-    data = json.dumps({'chat_id': chat_id, 'text': text, 'disable_notification': silent}).encode()
+    text, entities = presentation(text)
+    data = json.dumps({'chat_id': chat_id, 'text': text, 'entities': entities,
+                       'disable_notification': silent}).encode()
     req = urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage', data=data,
                                  headers={'Content-Type': 'application/json'})
     try:
