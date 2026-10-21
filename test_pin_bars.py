@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 import pin_bars
+import bb_pin_bars
 from platform_app import Store, load_rules
 from scanner import Candle, prepare_store, scan_once
 from dashboard_api import read
@@ -36,9 +37,42 @@ class PinBarTests(unittest.TestCase):
         self.assertIsNone(pin_bars.direction(bearish,101,102,2))
         self.assertEqual(pin_bars.direction(replace(bearish,open=90),93,95,2),'bearish')
 
-    def test_marked_eurusd_candle_is_bullish_despite_red_body_and_downtrend(self):
+    def test_marked_eurusd_rejected_but_short_nose_preserves_bullish_override(self):
         b = Candle(1000,2000,1.11885,1.119349,1.1175,1.11876)
-        self.assertEqual(pin_bars.direction(b,1.1180955746596948,1.1192357959604202,2),'bullish')
+        self.assertIsNone(pin_bars.direction(b,1.1180955746596948,1.1192357959604202,2))
+        self.assertEqual(pin_bars.direction(replace(b,high=1.119),1.1180955746596948,1.1192357959604202,2),'bullish')
+
+    def test_short_wick_boundaries_both_strategies_and_directions(self):
+        for engine in (pin_bars, bb_pin_bars):
+            for mirror in (False, True):
+                def classify(b):
+                    if mirror:
+                        b = replace(b, open=200-b.open, high=200-b.low,
+                                    low=200-b.high, close=200-b.close)
+                    levels = (90, 95) if mirror else (110, 115)
+                    if engine is bb_pin_bars:
+                        levels = (70, 100) if mirror else (100, 130)
+                    return engine.direction(b, *levels, 2)
+                expected = 'bearish' if mirror else 'bullish'
+                for nose in (0, 1, 2, 2.001):
+                    with self.subTest(engine=engine.STRATEGY, mirror=mirror, nose=nose):
+                        b = Candle(1000, 2000, 110, 111+nose, 100, 111)
+                        self.assertEqual(classify(b), expected if nose <= 2 else None)
+                # Twice the body is insufficient; a zero-body long wick remains valid.
+                self.assertIsNone(classify(Candle(1000, 2000, 110, 115, 100, 115)))
+                self.assertEqual(classify(Candle(1000, 2000, 110, 112, 100, 110)), expected)
+                self.assertIsNone(classify(Candle(1000, 2000, 110, 110, 110, 110)))
+
+    def test_usdjpy_large_opposing_wicks_are_rejected(self):
+        samples = [
+            # 2026-10-21 07:00 and 2026-10-19 23:00, UTC+3.
+            Candle(1792555200000, 1792569600000, 158.1195, 158.2095, 158.0295, 158.131),
+            Candle(1792440000000, 1792454400000, 158.5465, 158.6005, 158.469, 158.5285),
+        ]
+        for b in samples:
+            for engine in (pin_bars, bb_pin_bars):
+                # Satisfy location conditions so rejection tests candle shape.
+                self.assertIsNone(engine.direction(b, b.low, b.high, 2))
 
     def test_ema_seed_and_confirmation_without_future_candles(self):
         self.assertEqual(pin_bars.ema([10,20,30],3),[10,15,22.5])

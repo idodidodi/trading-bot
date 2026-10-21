@@ -11,8 +11,8 @@ export function detectPinBars(bars,rules,source,symbol,timeframe){
   // User override: allow bullish pin bars below the slow EMA or in a downtrend.
   // fast > slow
   // b.close > slow
-  const bullish=lower>body*rules.ratio&&lower>upper&&(b.low<=fast||b.low<=slow);
-  const bearish=fast<slow&&b.close<slow&&upper>body*rules.ratio&&upper>lower&&(b.high>=fast||b.high>=slow);
+  const bullish=lower>body*rules.ratio&&lower>upper&&upper<=lower*rules.max_short_wick_ratio&&(b.low<=fast||b.low<=slow);
+  const bearish=fast<slow&&b.close<slow&&upper>body*rules.ratio&&upper>lower&&lower<=upper*rules.max_short_wick_ratio&&(b.high>=fast||b.high>=slow);
   if(bullish||bearish)signals.push({strategy:'pin-bars',version:rules.version,source,symbol,timeframe,direction:bullish?'bullish':'bearish',candle_at:b.start,confirmed_at:b.end,open:b.open,high:b.high,low:b.low,close:b.close,fast_ema:fast,slow_ema:slow,body,lower_wick:lower,upper_wick:upper,rules});
  }return signals;
 }

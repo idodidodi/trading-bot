@@ -9,7 +9,7 @@ COVERAGE_KEY = 'bb_pin_bars'
 
 
 def load_rules():
-    rules = dict(bb_period=20, bb_multiplier=2.0, ratio=2.0,
+    rules = dict(bb_period=20, bb_multiplier=2.0, ratio=2.0, max_short_wick_ratio=0.20,
                  seed='20-close SMA and population deviation; includes signal close')
     rules['version'] = 'bb-pin-bars-v1-' + hashlib.sha256(json.dumps(rules, sort_keys=True).encode()).hexdigest()[:16]
     return rules
@@ -39,14 +39,14 @@ def bollinger(closes, period, multiplier):
     return result
 
 
-def direction(bar, lower_bb, upper_bb, ratio):
+def direction(bar, lower_bb, upper_bb, ratio, max_short_wick_ratio=0.20):
     body = abs(bar.open-bar.close)
     lower = min(bar.open,bar.close)-bar.low
     upper = bar.high-max(bar.open,bar.close)
     # Body color is irrelevant; a matching BB touch is the sole location filter.
-    if lower > body*ratio and lower > upper and bar.low <= lower_bb:
+    if lower > body*ratio and lower > upper and upper <= lower * max_short_wick_ratio and bar.low <= lower_bb:
         return 'bullish'
-    if upper > body*ratio and upper > lower and bar.high >= upper_bb:
+    if upper > body*ratio and upper > lower and lower <= upper * max_short_wick_ratio and bar.high >= upper_bb:
         return 'bearish'
 
 
@@ -56,7 +56,7 @@ def detect(candles, rules, source, symbol, timeframe):
     for i in range(minimum_history(rules)-1, len(candles)):
         b = candles[i]
         lower, upper = bands[i]
-        bias = direction(b, lower, upper, rules['ratio'])
+        bias = direction(b, lower, upper, rules['ratio'], rules['max_short_wick_ratio'])
         if bias:
             signals.append(dict(strategy=STRATEGY, version=rules['version'], source=source,
                 symbol=symbol, timeframe=timeframe, direction=bias, candle_at=b.start,

@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {execFileSync} from 'node:child_process';
+import {defaults} from './functions/csv-backtests/rules.mjs';
+import {detectBBPinBars} from './functions/csv-backtests/bb-engine.mjs';
 import {detectPinBars,parseCSV,replayCSV} from './functions/csv-backtests/engine.mjs';
-// The marked red-bodied EURUSD candle is bullish even below EMA 21 in a downtrend.
+// The marked EURUSD candle now fails the nose limit; a shorter nose preserves the bullish override.
 const marked={start:22*14400000,end:23*14400000,open:1.11885,high:1.119349,low:1.1175,close:1.11876};
 const downtrend=Array.from({length:22},(_,i)=>({start:i*14400000,end:(i+1)*14400000,open:1.122-i*.0001,high:1.122-i*.0001,low:1.122-i*.0001,close:1.122-i*.0001}));
-const markedSignals=detectPinBars([...downtrend,marked],{fast:8,slow:21,ratio:2},'test','EURUSD','4h');
-assert.equal(markedSignals.at(-1).direction,'bullish');
-assert.ok(markedSignals.at(-1).fast_ema<markedSignals.at(-1).slow_ema);
-assert.ok(marked.close<markedSignals.at(-1).slow_ema);
+const markedSignals=detectPinBars([...downtrend,marked],defaults['pin-bars'],'test','EURUSD','4h');
+assert.equal(markedSignals.length,0);
+const qualifiedSignals=detectPinBars([...downtrend,{...marked,high:1.119}],defaults['pin-bars'],'test','EURUSD','4h');
+assert.equal(qualifiedSignals.at(-1).direction,'bullish');
+assert.ok(qualifiedSignals.at(-1).fast_ema<qualifiedSignals.at(-1).slow_ema);
+assert.ok(marked.close<qualifiedSignals.at(-1).slow_ema);
 const start=1700000000000,bars=Array.from({length:70},(_,i)=>({start:start+i*14400000,open:100+i,high:101+i,low:99+i,close:100+i}));bars.at(-1).open=168;bars.at(-1).high=169.1;bars.at(-1).low=149;
 const csv='time,open,high,low,close,EMA,EMA\n'+bars.map(b=>`${b.start},${b.open},${b.high},${b.low},${b.close},999,999`).join('\n');
 const body={csv,symbol:'TEST',timeframe:'4h',strategy:'pin-bars'},now=bars.at(-1).start+14400000;
@@ -41,3 +45,33 @@ for(const mirror of [false,true]){
  assert.notEqual(ema.id,actual.id);
 }
 console.log('BB Pin-Bars checks passed: independent direction, reports, warm-up and local/cloud parity.');
+
+// Mirrored shape boundaries and zero-body candles must match local Python replay.
+for(const strategy of ['pin-bars','bb-pin-bars']){
+ for(const mirror of [false,true]){
+  for(const nose of [0,1,2,2.001]){
+   for(const zeroBody of [false,true]){
+    const sample=Array.from({length:22},(_,i)=>({start:start+i*14400000,open:109,high:109,low:109,close:109}));
+    sample.push({start:start+22*14400000,open:110,high:(zeroBody?110:111)+nose,low:100,close:zeroBody?110:111});
+    const candles=mirror?sample.map(b=>({...b,open:200-b.open,high:200-b.low,low:200-b.high,close:200-b.close})):sample;
+    const input={...body,strategy,csv:'time,open,high,low,close\n'+candles.map(b=>`${b.start},${b.open},${b.high},${b.low},${b.close}`).join('\n')};
+    const actual=await replayCSV(input,now);
+    assert.equal(actual.signal_count,nose<=2?1:0,`${strategy}, mirror=${mirror}, nose=${nose}, zeroBody=${zeroBody}`);
+    if(actual.signal_count)assert.equal(actual.signals[0].direction,mirror?'bearish':'bullish');
+    const expected=JSON.parse(execFileSync('python3',['-c',`import sys,json;from csv_backtests import run;print(json.dumps(run(json.load(sys.stdin),${now})))`],{input:JSON.stringify(input),encoding:'utf8'}));
+    assert.deepEqual(actual.signals,expected.signals);
+    assert.deepEqual(actual.rules,expected.rules);
+   }
+  }
+ }
+}
+for(const candle of [
+ {open:158.1195,high:158.2095,low:158.0295,close:158.131},
+ {open:158.5465,high:158.6005,low:158.469,close:158.5285},
+]){
+ const history=Array.from({length:22},(_,i)=>({start:start+i*14400000,end:start+(i+1)*14400000,open:candle.open,high:candle.open,low:candle.open,close:candle.open}));
+ history.push({...candle,start:start+22*14400000,end:start+23*14400000});
+ assert.equal(detectPinBars(history,defaults['pin-bars'],'test','USDJPY','4h').length,0);
+ assert.equal(detectBBPinBars(history,defaults['bb-pin-bars'],'test','USDJPY','4h').length,0);
+}
+console.log('20% short-wick boundaries and USDJPY regressions passed for both strategies, with Python parity.');

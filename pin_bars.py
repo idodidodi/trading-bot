@@ -13,12 +13,14 @@ def load_rules():
         ('fast', r'- Fast EMA: (\d+),', int),
         ('slow', r'- Slow EMA: (\d+),', int),
         ('ratio', r'- Pin-Bar ratio: ([\d.]+)\.', float),
+        ('max_short_wick_ratio', r'- Maximum short-wick ratio: ([\d.]+)\.', float),
     ):
         match = re.search(pattern, text)
         if not match:
             raise ValueError(f'Cannot read Pin-Bars {key} from skill')
         rules[key] = cast(match[1])
-    if not (0 < rules['fast'] < rules['slow'] and math.isfinite(rules['ratio']) and rules['ratio'] > 0):
+    if not (0 < rules['fast'] < rules['slow'] and math.isfinite(rules['ratio']) and rules['ratio'] > 0
+            and math.isfinite(rules['max_short_wick_ratio']) and 0 <= rules['max_short_wick_ratio'] < 1):
         raise ValueError('Invalid Pin-Bars parameters')
     rules['seed'] = 'first close; exclude first slow-period candles'
     rules['version'] = 'pin-bars-v1-' + hashlib.sha256(text.encode()).hexdigest()[:16]
@@ -35,7 +37,7 @@ def ema(closes, period):
     return result
 
 
-def direction(bar, fast, slow, ratio):
+def direction(bar, fast, slow, ratio, max_short_wick_ratio=0.20):
     body = abs(bar.open - bar.close)
     lower = min(bar.open, bar.close) - bar.low
     upper = bar.high - max(bar.open, bar.close)
@@ -44,10 +46,10 @@ def direction(bar, fast, slow, ratio):
     # fast > slow
     # bar.close > slow
     if (lower > body * ratio
-            and lower > upper and (bar.low <= fast or bar.low <= slow)):
+            and lower > upper and upper <= lower * max_short_wick_ratio and (bar.low <= fast or bar.low <= slow)):
         return 'bullish'
     if (fast < slow and bar.close < slow and upper > body * ratio
-            and upper > lower and (bar.high >= fast or bar.high >= slow)):
+            and upper > lower and lower <= upper * max_short_wick_ratio and (bar.high >= fast or bar.high >= slow)):
         return 'bearish'
 
 
@@ -57,7 +59,7 @@ def detect(candles, rules, source, symbol, timeframe):
     signals = []
     for i in range(rules['slow'], len(candles)):
         b = candles[i]
-        bias = direction(b, fast[i], slow[i], rules['ratio'])
+        bias = direction(b, fast[i], slow[i], rules['ratio'], rules['max_short_wick_ratio'])
         if bias:
             signals.append(dict(strategy='pin-bars', version=rules['version'], source=source,
                 symbol=symbol, timeframe=timeframe, direction=bias, candle_at=b.start,

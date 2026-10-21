@@ -422,7 +422,8 @@ async function pinBarFindings(strategy='pin-bars'){
  content.replaceChildren(node('h2',`Loading ${title}…`),strategySelector('live'));
  const data=await request('/api/'+strategy+'?page='+page);if(strategyViews.live!==strategy)return;
  content.replaceChildren(node('h2',`${title} signals`),strategySelector('live'));
- content.append(node('p',bb?`BB ${data.rules.bb_period}/${data.rules.bb_multiplier} · wick > ${data.rules.ratio} × body · bullish lower-BB touch or bearish upper-BB touch · no EMA filters.`:`EMA ${data.rules.fast}/${data.rules.slow} · wick > ${data.rules.ratio} × body · touch either EMA · confirmed at the signal candle close.`));
+ const wickLimit=Number.isFinite(data.rules.max_short_wick_ratio)?` · short wick ≤ ${data.rules.max_short_wick_ratio*100}% of long wick`:'';
+ content.append(node('p',bb?`BB ${data.rules.bb_period}/${data.rules.bb_multiplier} · wick > ${data.rules.ratio} × body${wickLimit} · bullish lower-BB touch or bearish upper-BB touch · no EMA filters.`:`EMA ${data.rules.fast}/${data.rules.slow} · wick > ${data.rules.ratio} × body${wickLimit} · touch either EMA · confirmed at the signal candle close.`));
  content.append(node('p',data.scanned_at?'Latest scan: '+displayTime(data.scanned_at):'Awaiting the first scan.'));
  if(online)content.append(node('p',`Hosted results show up to the latest ${data.mirror_limit??500} synced signals.`));
  const rows=data.signals.map(s=>{const evidence=node('details');evidence.append(node('summary','Candle evidence'),node('p',`OHLC: ${s.open} / ${s.high} / ${s.low} / ${s.close}`),node('p',pinBarEvidence(s)),node('p',`Source: ${s.source} · candle: ${displayTime(s.candle_at)} · ${s.rules.seed}`));return [s.symbol,s.timeframe,s.direction.toUpperCase(),displayTime(s.confirmed_at),evidence,manageAssetButton(s)];});
@@ -471,5 +472,5 @@ function candleDrawing(s){
 
 function pinBarEvidence(s){
  const location=s.strategy==='bb-pin-bars'?`Lower BB: ${s.lower_bb} · upper BB: ${s.upper_bb}`:`Fast EMA: ${s.fast_ema} · slow EMA: ${s.slow_ema}`;
- return `${location} · body: ${s.body} · lower wick: ${s.lower_wick} · upper wick: ${s.upper_wick}`;
+ return `${location} · body: ${s.body} · lower wick: ${s.lower_wick} · upper wick: ${s.upper_wick}${Number.isFinite(s.rules?.max_short_wick_ratio)?` · short wick limit: ${s.rules.max_short_wick_ratio*100}% of long wick`:""}`;
 }
