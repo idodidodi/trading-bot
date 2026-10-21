@@ -113,3 +113,41 @@ Apply `bb-pin-bars.sql` after CSV backtests and asset strategies. Deploy the upd
 Every strategy's signal rows, including historical results, include **Manage asset**. The dialog saves scanner enablement and selected candle timeframes through the existing revision-checked Assets API without leaving the results page. Momentum continues to use daily candles. Historical signals without a current feed mapping link to Assets for explicit feed configuration.
 
 Saving a rotating selection promotes its exact observed feed to permanent assets. Reapply `providers.sql` before publishing this UI so hosted saves retain its market classification, then update the local worker. Managed stock entries take precedence over rotating weekly picks, including disabled entries and edited timeframes. If registration succeeds but feed validation fails, a disabled draft remains in Assets and the dialog reports it.
+
+## Telegram routing settings
+
+Apply `telegram-routing.sql` **after the currently installed dashboard migrations**,
+then redeploy `functions/sync` using the existing `SYNC_TOKEN` and
+`INSTALLATION_ID` secrets and the existing private-token authentication setup:
+
+```sh
+.venv/bin/python scripts/deploy-telegram-routing.py --group-map telegram-group-map.json
+node cloud/build.mjs
+```
+
+The deployment script uses the existing Supabase CLI login, verifies the group map
+and bot identity without sending messages, applies only this migration, saves the
+routes, and stages the current `cloud/functions/sync` source in a temporary CLI
+workspace. This avoids deploying an older generated `supabase/functions/sync` copy.
+It checks that unauthorized requests are rejected and authenticated routing reads
+return the saved map. Publish the built UI through the existing Cloudflare pipeline
+and restart all scanner installations. No bot tokens belong in Supabase routing records or web
+assets. The migration preserves the existing dashboard dispatcher chain; rerun
+only this feature migration when needed, rather than older API migrations.
+
+`/api/telegram-routing` supports owner-only reads with `{}` and saves with
+`{"action":"save","revision":0,"routes":{"general":"-100123","forex.rsi":"-100456"}}`.
+The remaining keys are `{forex,crypto,stocks,other}.{rsi,pin-bars}`. Values are
+numeric strings or empty strings; omitted keys behave as blank destinations.
+Concurrent edits require reloading the latest revision. Members cannot read or
+change routes, regardless of their asset-editor role. Direct table access and
+browser execution of the machine read RPC are denied.
+
+The sync function returns `telegram_routing` in normal replies and supports a
+read-only `{"routing_only":true}` request. Installation scope comes from its
+secret, never caller input. Disabled development uploads use this request without
+ingesting records, changing asset configuration, or consuming scanner commands.
+
+Scratch SQL checks: apply `test_auth_stub.sql`, `schema.sql`,
+`telegram-routing.sql` twice, then `test_telegram_routing.sql` to an isolated
+PostgreSQL database. Never use the auth stub or test data against production.

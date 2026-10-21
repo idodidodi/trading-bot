@@ -9,14 +9,51 @@ from platform_app import load_env, send_telegram, telegram_connection_error
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['chats', 'test'])
+    parser.add_argument('command', choices=['chats', 'test', 'routes'])
+    from telegram_routing import ROUTES
+    targets = parser.add_mutually_exclusive_group()
+    targets.add_argument('--route', choices=ROUTES)
+    targets.add_argument('--all', action='store_true')
     args = parser.parse_args()
+    if args.command != 'test' and (args.route or args.all):
+        parser.error('--route and --all require test')
     load_env()
+    if args.command == 'routes' or (args.command == 'test' and (args.route or args.all)):
+        from platform_app import ROOT, Store
+        from runtime_env import data_directory
+        from telegram_routing import read, refresh
+        store = Store(data_directory(ROOT) / 'signals.sqlite3')
+        try:
+            refresh(store)
+        except (RuntimeError, ValueError):
+            print('Cloud routing unavailable; using cached destinations.')
+        routing = read(store)
+        routes = routing['routes']
+        general = routes['general'] or os.environ.get('TELEGRAM_CHAT_ID', '')
+        if args.command == 'routes':
+            print('Routing revision:', routing['revision'])
+            for route in ROUTES:
+                print(f'{route}: {routes[route] or general or "not configured"}' + (' (General fallback)' if route != 'general' and not routes[route] else ''))
+            return
     token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
     if not token:
         raise SystemExit('Add TELEGRAM_BOT_TOKEN to .env first.')
+    if args.command == 'test' and (args.route or args.all):
+        for route in ROUTES if args.all else [args.route]:
+            chat = routes[route] or general
+            if not chat:
+                raise SystemExit(f'No destination configured for {route}.')
+            try:
+                send_telegram(token, chat, f'Trading signal platform: Telegram connection test ({route}).')
+            except RuntimeError as exc:
+                raise SystemExit(f'{route}: {exc}') from None
+            print(f'{route}: Telegram test message sent.')
+        return
     if args.command == 'test':
-        chat_id = os.environ.get('TELEGRAM_CHAT_ID', '')
+        from platform_app import ROOT, Store
+        from runtime_env import data_directory
+        from telegram_routing import read
+        chat_id = read(Store(data_directory(ROOT) / 'signals.sqlite3'))['routes']['general'] or os.environ.get('TELEGRAM_CHAT_ID', '')
         if not chat_id:
             raise SystemExit('Add TELEGRAM_CHAT_ID to .env first.')
         try:

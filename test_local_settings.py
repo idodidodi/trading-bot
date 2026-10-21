@@ -91,7 +91,9 @@ class LocalSettingsTests(unittest.TestCase):
              patch('cloud_sync.apply', side_effect=apply):
             cloud_sync.worker(self.store, stop)
         self.assertEqual(transitions, ['enabled', 'disabled'])
-        send.assert_called_once()
+        self.assertEqual(send.call_count, 2)
+        self.assertEqual(json.loads(send.call_args_list[0].args[0].data), {'routing_only': True})
+        self.assertEqual(json.loads(send.call_args_list[1].args[0].data), {'records': []})
 
     def test_delivery_changes_live_and_does_not_resend_processed_dry_runs(self):
         self.save()

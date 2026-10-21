@@ -3,10 +3,12 @@ import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 let handler;
+const rpcCalls=[];
 const settings={SUPABASE_URL:'https://example.invalid',SUPABASE_SERVICE_ROLE_KEY:'test-service',SYNC_TOKEN:'test-machine',INSTALLATION_ID:'test-installation'};
 const ids=new Set(),published=[];
 const context={Deno:{env:{get:k=>settings[k]},serve:fn=>handler=fn},Request,Response,URL,URLSearchParams,JSON,Number,Date,Set,fetch:async(url,options={})=>{
- const parsed=new URL(url);
+ const parsed=new URL(url);rpcCalls.push({path:parsed.pathname,body:options.body&&JSON.parse(options.body)});
+ if(parsed.pathname.endsWith('/rpc/telegram_read_routes'))return Response.json({revision:1,routes:{general:'-100123'}});
  if(parsed.pathname.endsWith('/rpc/dashboard_ingest')){const body=JSON.parse(options.body);for(const record of body.records)if(record.kind==='backtest')ids.add(record.key);return Response.json({ack:['event'],conflicts:[],config:null});}
  if(parsed.pathname.endsWith('/dashboard_records')){const values=parsed.searchParams.get('key')?.match(/\((.*)\)/)?.[1]?.split(',')||[];return Response.json(values.filter(value=>ids.has(value)).map(key=>({key})));}
  if(parsed.pathname.endsWith('/dashboard_backtest_jobs')&&options.method==='POST'){published.push(JSON.parse(options.body)[0]);return new Response(null,{status:201});}
@@ -25,3 +27,8 @@ const reportResponse=await handler(request({records:[{kind:'backtest',key:findin
 assert.equal(reportResponse.status,200);const publication=await reportResponse.json();assert.deepEqual(publication.backtest_publications.map(x=>x.status),['published','published']);assert.equal(published.length,2);assert.equal(published[0].status,'completed');assert.deepEqual(published[0].finding_ids,[findingId]);assert.deepEqual(published[1].finding_ids,[secondFindingId]);
 assert.equal((await handler(request({records:[],cursor:0,state_cursor:-1}))).status,400);
 console.log('Edge function checks passed: machine auth, batch validation, acknowledgement, and publishing every fully synced local report.');
+
+const routing=await handler(request({routing_only:true}));assert.equal(routing.status,200);assert.deepEqual(await routing.json(),{telegram_routing:{revision:1,routes:{general:'-100123'}}});
+assert.deepEqual(result.telegram_routing,{revision:1,routes:{general:'-100123'}});
+
+rpcCalls.length=0;await handler(request({routing_only:true,installation:'attacker'}));assert.equal(rpcCalls.length,1);assert.equal(rpcCalls[0].path,'/rest/v1/rpc/telegram_read_routes');assert.deepEqual(rpcCalls[0].body,{installation:'test-installation'});

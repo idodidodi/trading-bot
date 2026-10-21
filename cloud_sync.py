@@ -194,6 +194,9 @@ def batch(store):
 
 
 def apply(store,response):
+    if response.get('telegram_routing') is not None:
+        from telegram_routing import apply as apply_routes
+        apply_routes(store, response['telegram_routing'])
     from scanner_control import request as catchup_request
     for command in response.get('commands',[]):
         catchup_request(store,command['id'])
@@ -253,7 +256,14 @@ def worker(store,stop):
     delay=5;snapshot_at=0
     while not stop.is_set():
         if not cloud_sync_enabled(store):
-            stop.wait(1)
+            try:
+                from telegram_routing import refresh
+                refresh(store)
+            except (RuntimeError, ValueError):
+                pass
+            for _ in range(30):
+                if stop.wait(1) or cloud_sync_enabled(store):
+                    break
             continue
         try:
             if time.monotonic()-snapshot_at>=30:snapshot(store);snapshot_at=time.monotonic()

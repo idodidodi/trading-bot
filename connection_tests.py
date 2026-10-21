@@ -13,12 +13,13 @@ class ConnectionTestError(RuntimeError):
     """An error safe to display without disclosing credentials or remote bodies."""
 
 
-def run(action, rules):
+def run(action, rules, store=None):
     if action == 'telegram':
         token=os.environ.get('TELEGRAM_BOT_TOKEN','')
-        chat=os.environ.get('TELEGRAM_CHAT_ID','')
+        from telegram_routing import read
+        chat=(read(store)['routes']['general'] if store is not None else '') or os.environ.get('TELEGRAM_CHAT_ID','')
         if not token or not chat:
-            raise ConnectionTestError('Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env, then restart the app.')
+            raise ConnectionTestError('Set TELEGRAM_BOT_TOKEN locally and configure General in online Settings or TELEGRAM_CHAT_ID.')
         from platform_app import send_telegram
         from runtime_env import environment
         try:

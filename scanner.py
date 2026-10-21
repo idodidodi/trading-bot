@@ -438,7 +438,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     if asset.get('max_data_age_seconds') and age_seconds > asset['max_data_age_seconds']:
                         raise ValueError('Latest closed candle is older than the configured freshness limit')
                     pending = sorted((s for s in matches if s['confirmed_at'] > cutoff), key=lambda s:(s['confirmed_at'],s.get('signal_status')!='provisional'))
-                    new = sum(store.insert(validate_signal(s, rules), delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
+                    new = sum(store.insert(validate_signal(s, rules) | {'market': asset.get('market') or 'unknown'}, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
                     with store.connect() as db:
                         db.execute('INSERT INTO scan_state(asset,timeframe,last_end) VALUES(?,?,?) ON CONFLICT(asset,timeframe) DO UPDATE SET last_end=MAX(last_end,excluded.last_end)',
                                    (state_id, timeframe, candles[-1].end))

@@ -16,3 +16,6 @@ web/version.json
 .DS_Store
 
 data.zip
+
+# Installation-specific Telegram destinations
+telegram-group-map.json

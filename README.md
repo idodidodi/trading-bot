@@ -8,7 +8,7 @@ In the local production dashboard, **Settings & versions → Paper trading** con
 
 In the local development dashboard, open **Settings & versions → Development overrides** to enable **Send Telegram alerts from development** and **Sync development data to cloud**. Updated dev and production senders compete through the shared Telegram coordinator; the first sender delivers each event. Save applies changes to subsequent delivery and sync requests without restarting; an in-progress request may finish. Close the browser and the scanner continues using the saved preferences. Settings persist in the development SQLite database and are never synced to cloud or applied to production. Disable these overrides when development delivery or syncing is no longer needed.
 
-Telegram requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`; cloud sync requires an HTTPS `CLOUD_SYNC_URL` and `CLOUD_SYNC_TOKEN`. Keep credentials in the local `.env` and restart after changing credentials. Existing `DEV_TELEGRAM_ENABLED` and `DEV_CLOUD_SYNC_ENABLED` environment values provide initial defaults until settings are saved; saved preferences take precedence. Development keeps separate data and does not enable persistent activity logs or paper orders. Previously processed dry-run alerts are never resent. These controls are available only in the local development dashboard, not the online dashboard. Production continues using `DRY_RUN` and its configured cloud connection.
+Telegram requires `TELEGRAM_BOT_TOKEN` and a General chat ID in cached cloud routing or `TELEGRAM_CHAT_ID`; cloud sync requires an HTTPS `CLOUD_SYNC_URL` and `CLOUD_SYNC_TOKEN`. Keep credentials in the local `.env` and restart after changing credentials. Existing `DEV_TELEGRAM_ENABLED` and `DEV_CLOUD_SYNC_ENABLED` environment values provide initial defaults until settings are saved; saved preferences take precedence. Development keeps separate data and does not enable persistent activity logs or paper orders. Previously processed dry-run alerts are never resent. These controls are available only in the local development dashboard, not the online dashboard. Production continues using `DRY_RUN` and its configured cloud connection.
 
 Development activity events, including scanner heartbeats, print immediately to the PyCharm/terminal console with a `[DEV ...]` prefix and an Israel-time timestamp. They are not written to the activity-log database. Production keeps its database logging.
 
@@ -358,3 +358,46 @@ SPX uses FMP's exact `^GSPC` cash index on exchange `INDEX`, with `FMP_API_KEY` 
 For existing managed configurations, run `.venv/bin/python scripts/activate-fmp.py --database data/dev/signals.sqlite3` (or your production database path). Activation verifies sufficient history, backs up the database, enables only SPX's supported timeframes, warms its candle cache and exports CSVs plus a manifest and replay config to `data/historical-fmp/`. Existing feed signals retain their separate identities. Restart the app after installing the new provider module. The backtest dialog offers FMP cash indices; choose daily, weekly or monthly. The existing `cloud/providers.sql` migration must be reapplied before online asset editing accepts FMP.
 
 Update notes and secure FMP credential setup: [CHANGELOG.md](CHANGELOG.md). The local Settings dialog also links to a bundled offline guide under **Changelog & FMP setup**.
+
+### Telegram groups by market and strategy
+
+Online **Settings → Telegram groups** stores chat IDs in Supabase, scoped to the
+installation. Only its owner can read or edit these settings. There are nine
+routes: General, and RSI / Pin Bars for each of Forex, Crypto, Stocks and Other.
+Stocks includes ETFs; Other includes indices, commodities and futures. EMA and
+BB Pin-Bars share the Pin Bars destination, retaining their original titles.
+Momentum, morning summaries and catch-up reports use General.
+
+Create the desired Telegram groups, add the existing bot, allow it to post, and
+send `/start@YourBotUsername` in each group. Use
+`.venv/bin/python telegram_setup.py chats` to discover their IDs. Enter the full
+numeric strings, including their leading minus signs, in online Settings. Chat
+IDs are configuration; the bot token stays in each scanner's private `.env`.
+
+Scanners fetch settings at startup and through cloud sync, including when dev
+uploads are disabled. The last valid revision is cached in memory and local
+SQLite for offline restarts. A blank category uses General; a blank cloud General
+uses local `TELEGRAM_CHAT_ID`. Definitively inaccessible category chats fall back
+to General. Timeouts, rate limits and ambiguous failures retry the selected chat.
+Retries keep their saved destination across settings changes and restarts.
+Already completed alerts are never replayed. Restart all scanner installations
+after upgrading so older scanners do not keep sending everything to General.
+
+Read effective routes without sending Telegram messages:
+
+```sh
+.venv/bin/python telegram_setup.py routes
+```
+
+Explicit tests (these send real messages, independently of dry-run settings):
+
+```sh
+.venv/bin/python telegram_setup.py test --route forex.rsi
+.venv/bin/python telegram_setup.py test --all
+```
+
+`--all` tests every route, including General fallback for blank categories, so a
+shared destination can receive several labelled tests. The original `test`
+command and local dashboard Telegram test use the cached General destination.
+Deploy the routing migration and updated sync endpoint before restarting upgraded
+scanners; see `cloud/README.md`.

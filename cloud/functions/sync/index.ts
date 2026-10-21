@@ -35,11 +35,16 @@ Deno.serve(async request=>{
  try{
   const raw=await request.text();if(raw.length>262144)return new Response('Batch too large',{status:413});
   const body=JSON.parse(raw),installation=Deno.env.get('INSTALLATION_ID');
+  const routingResponse=await fetch(url+'/rest/v1/rpc/telegram_read_routes',{method:'POST',headers,body:JSON.stringify({installation})});
+  if(!routingResponse.ok)return new Response('Telegram routing read failed',{status:503});
+  const telegram_routing=await routingResponse.json();
+  if(body.routing_only===true)return Response.json({telegram_routing});
   const stateCursor=body.state_cursor??0;if(!Number.isSafeInteger(stateCursor)||stateCursor<0)throw Error('Invalid state cursor');
   if(!Array.isArray(body.records)||body.records.length>100||!Number.isSafeInteger(body.cursor)||body.cursor<0)throw Error('Invalid batch');
   const response=await fetch(url+'/rest/v1/rpc/dashboard_ingest',{method:'POST',headers,body:JSON.stringify({installation,records:body.records,config_base:body.config_base||0})});
   if(!response.ok)return new Response('Storage write failed',{status:503});
   const result=await response.json();
+  result.telegram_routing=telegram_routing;
   result.backtest_publications=await publishSyncedBacktests(installation,body.records);
   const query=new URLSearchParams({installation:`eq.${installation}`,kind:'eq.feedback_history',change_sequence:`gt.${body.cursor}`,order:'change_sequence.asc',limit:'100',select:'payload,change_sequence'});
   const feedback=await fetch(url+'/rest/v1/dashboard_records?'+query,{headers});if(!feedback.ok)return new Response('Storage read failed',{status:503});

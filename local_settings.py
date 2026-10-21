@@ -29,8 +29,9 @@ def save(store, body):
         raise ValueError('Development overrides are only available in development.')
     if environment() == 'dev' and body.get('paper_trading_enabled'):
         raise ValueError('Paper trading remains disabled in development.')
-    if body.get('telegram_enabled') and not (os.environ.get('TELEGRAM_BOT_TOKEN') and os.environ.get('TELEGRAM_CHAT_ID')):
-        raise ValueError('Configure TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID locally before enabling delivery.')
+    from telegram_routing import read as routing_read
+    if body.get('telegram_enabled') and not (os.environ.get('TELEGRAM_BOT_TOKEN') and (os.environ.get('TELEGRAM_CHAT_ID') or routing_read(store)['routes']['general'])):
+        raise ValueError('Configure TELEGRAM_BOT_TOKEN locally and a General Telegram destination before enabling delivery.')
     if body.get('cloud_sync_enabled') and not (os.environ.get('CLOUD_SYNC_URL', '').startswith('https://') and os.environ.get('CLOUD_SYNC_TOKEN')):
         raise ValueError('Configure an HTTPS CLOUD_SYNC_URL and CLOUD_SYNC_TOKEN locally before enabling sync.')
     if body.get('paper_trading_enabled') and not (os.environ.get('ALPACA_API_KEY') and os.environ.get('ALPACA_SECRET_KEY')):

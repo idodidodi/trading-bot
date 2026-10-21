@@ -14,6 +14,9 @@ def ensure(store):
 def read(store, path):
     url=urlsplit(path);query=parse_qs(url.query)
     param=lambda key,default='':query.get(key,[default])[0]
+    if url.path=='/api/telegram-routing':
+        from telegram_routing import read
+        return read(store) | {'editable': False}
     if url.path=='/api/versions':
         from version_info import versions
         return versions(store)

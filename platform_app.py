@@ -172,7 +172,11 @@ class Store:
             if result.rowcount==1 and catchup_id:
                 db.execute('CREATE TABLE IF NOT EXISTS catchup_findings(command_id TEXT,signal_id TEXT,PRIMARY KEY(command_id,signal_id))')
                 db.execute('INSERT OR IGNORE INTO catchup_findings VALUES(?,?)',(catchup_id,key))
-            return result.rowcount == 1
+            inserted = result.rowcount == 1
+            if inserted:
+                from telegram_routing import remember
+                remember(db, signal_alert_event(payload), payload.get('market'), 'rsi')
+            return inserted
 
     def log(self, event, details):
         from runtime_env import environment
@@ -256,6 +260,10 @@ def quiet_hours(now=None):
     return minute>=23*60+30 or minute<6*60+30
 
 
+class TelegramDestinationError(RuntimeError):
+    """Telegram definitively rejected the destination; safe to use General."""
+
+
 def send_telegram(token, chat_id, text, silent=False, source_identity=None):
     from telegram_delivery import footer, source
     from telegram_formatting import presentation
@@ -272,6 +280,13 @@ def send_telegram(token, chat_id, text, silent=False, source_identity=None):
             raise RuntimeError('Telegram rejected message')
         return result.get('result', {}).get('message_id')
     except urllib.error.HTTPError as exc:
+        if exc.code in (400, 403):
+            try:
+                reason = json.load(exc).get('description', '').lower()
+            except Exception:
+                reason = ''
+            if any(term in reason for term in ('chat not found', 'bot was kicked', 'bot was blocked', 'not enough rights', 'bot is not a member', 'group chat was deleted')):
+                raise TelegramDestinationError('Telegram destination unavailable') from None
         # Do not log exception URLs: Telegram URLs contain the bot token.
         raise RuntimeError(f'Telegram HTTP {exc.code}') from None
     except (urllib.error.URLError, TimeoutError) as exc:
@@ -280,7 +295,7 @@ def send_telegram(token, chat_id, text, silent=False, source_identity=None):
 
 def delivery_worker(store, token, chat_id, dry_run, stop):
     from local_settings import delivery_dry_run
-    from telegram_delivery import deliver
+    from telegram_routing import deliver_routed
     from scanner_control import initialize as control_initialize
     with store.connect() as db:control_initialize(db)
     while not stop.is_set():
@@ -292,7 +307,7 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             try:
                 # Strategy alerts share RSI's sound policy, even overnight.
                 is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:'))
-                outcome = 'dry-run' if current_dry_run else deliver(store, token, chat_id, text, 'notification:' + key, send_telegram, silent=not is_signal and quiet_hours())
+                outcome = 'dry-run' if current_dry_run else deliver_routed(store, token, chat_id, text, 'notification:' + key, send_telegram, silent=not is_signal and quiet_hours(), notification_key=key)
                 with store.connect() as db:db.execute('UPDATE notification_queue SET status=? WHERE id=?',(outcome,key))
                 store.log('Queued notification delivered',outcome)
             except Exception as exc:
@@ -320,7 +335,7 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             elif signal_alert_delivered(store, payload):
                 outcome = 'suppressed'
             else:
-                outcome = deliver(store, token, chat_id, message(payload), signal_alert_event(payload), send_telegram)
+                outcome = deliver_routed(store, token, chat_id, message(payload), signal_alert_event(payload), send_telegram, payload=payload)
             with store.connect() as db:
                 db.execute('UPDATE signals SET status=?,attempts=?,error=NULL WHERE id=?',
                            (outcome, attempts + 1, key))
@@ -380,7 +395,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 from local_settings import read
                 self.respond(200, read(store))
                 return
-            if route in ('/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/bb-pin-bars', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions'):
+            if route in ('/api/telegram-routing', '/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/bb-pin-bars', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions'):
                 from dashboard_api import read
                 try:
                     self.respond(200, read(store, self.path))
@@ -465,7 +480,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     elif self.path=='/api/connection-test':
                         from connection_tests import run, ConnectionTestError
                         try:
-                            self.respond(200,run(body.get('action'),rules))
+                            self.respond(200,run(body.get('action'),rules,store))
                         except ConnectionTestError as exc:
                             self.respond(502,{'error':str(exc)})
                     elif self.path=='/api/csv-backtests':
@@ -566,7 +581,12 @@ def main():
     store = Store(data / 'signals.sqlite3')
     from local_settings import delivery_dry_run
     dry_run = delivery_dry_run(store, dry_run)
-    if not dry_run and (not token or not chat_id):
+    from telegram_routing import read as routing_read, refresh as routing_refresh
+    try:
+        routing_refresh(store)
+    except (RuntimeError, ValueError):
+        pass
+    if not dry_run and (not token or not (chat_id or routing_read(store)['routes']['general'])):
         raise SystemExit('Configure Telegram credentials locally or disable Telegram delivery in local settings.')
     if not legacy_webhook:
         from scanner import load_config

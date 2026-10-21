@@ -350,6 +350,28 @@ async function developmentSettingsControls(panel,isCurrent){
 }
 let versionRequest=0;
 function versionMatch(current,latest){return !current||!latest?'Comparison unavailable':current===latest?'Matches GitHub':'Differs from GitHub';}
+async function telegramRoutingControls(panel,isCurrent){
+ const section=node('section');section.className='development-settings telegram-routing';section.append(node('h3','Telegram groups'));panel.append(section);
+ try{
+  let value=await request('/api/telegram-routing');if(!isCurrent())return;
+  const inputs={},status=node('p');
+  section.append(node('p',online?'Save group chat IDs here. Scanners refresh automatically; blank categories use General.':'Cached cloud routing. Edit destinations in the online dashboard Settings.'));
+  for(const [key,label] of [['general','General'],...['forex','crypto','stocks','other'].flatMap(m=>[['rsi','RSI'],['pin-bars','Pin Bars']].map(([s,label])=>[m+'.'+s,m[0].toUpperCase()+m.slice(1)+' · '+label]))]){
+   const row=node('label',label+' '),input=node('input');input.type='text';input.value=value.routes[key]||'';input.placeholder='-100…';input.disabled=!value.editable;input.setAttribute('aria-label',label+' chat ID');inputs[key]=input;row.append(input);section.append(row);
+  }
+  if(value.editable){
+   const save=button('Save Telegram groups',async()=>{
+    const routes=Object.fromEntries(Object.entries(inputs).map(([key,input])=>[key,input.value.trim()]));
+    if(Object.values(routes).some(v=>v&&!/^-?[1-9][0-9]{0,19}$/.test(v))){status.textContent='Enter numeric chat IDs, including any leading minus sign.';return;}
+    save.disabled=true;
+    try{value=await request('/api/telegram-routing',{action:'save',revision:value.revision,routes});status.textContent='Saved. Connected scanners will refresh their routes.';}
+    catch(e){status.textContent=e.message+' Reopen Settings to reload before retrying.';}
+    finally{save.disabled=false;}
+   });section.append(save);
+  }
+  section.append(status);
+ }catch(e){if(isCurrent())section.append(node('p','Telegram routing unavailable. Only the installation owner can access online routing; the cloud migration must be installed.'));}
+}
 async function openVersions(){
  const dialog=$('settings-dialog'),panel=$('version-content'),id=++versionRequest;
  panel.replaceChildren(node('p','Checking versions…'));if(!dialog.open)dialog.showModal();
@@ -363,6 +385,7 @@ async function openVersions(){
   const local=value.local||{},github=value.github||{},remote=value.online_ui||{};
   panel.replaceChildren(node('p',`Environment: ${value.environment}`));
   if(!online){panel.append(node('p',value.environment==='prod'?'Production activity logs enabled.':'Development uses separate data; persistent activity logging and paper orders disabled.'));panel.append(node('p',`Telegram delivery: ${value.telegram_enabled?'enabled':'disabled (dry run)'}.`));panel.append(node('p',`Cloud sync: ${value.cloud_sync_enabled?'enabled (requires configured connection)':'disabled'}.`));}
+  await telegramRoutingControls(panel,()=>id===versionRequest&&dialog.open);
   await developmentSettingsControls(panel,()=>id===versionRequest&&dialog.open);
   if(id!==versionRequest||!dialog.open)return;
   const rows=[['Local UI',local.ui||'Unavailable',versionMatch(local.ui,github.ui)],['Online UI',remote.ui||'Unavailable',versionMatch(remote.ui,github.ui)],['Local scanner',local.scanner||'Unavailable',versionMatch(local.scanner,github.scanner)],['GitHub UI',github.ui||'Unavailable','Latest default branch'],['GitHub scanner',github.scanner||'Unavailable','Latest default branch'],['Installed app',local.version||'Unavailable','Running version'],['Latest executable release',value.release?.version||'Unavailable','GitHub release']];

@@ -40,6 +40,8 @@ def scan(store, asset, timeframe, candles, rules, now, selection_start=None, cat
                                   (key,signal['confirmed_at'],json.dumps(signal))).rowcount
             new += inserted
             if inserted and not catchup:
+                from telegram_routing import remember
+                remember(db, 'notification:' + engine.STRATEGY + ':' + key, asset.get('market') or 'unknown', engine.STRATEGY)
                 db.execute('INSERT OR IGNORE INTO notification_queue(id,text) VALUES(?,?)',
                            (engine.STRATEGY + ':' + key, engine.message(signal)))
         db.execute(f'INSERT INTO {engine.TABLE_PREFIX}_state VALUES(?,?,?) ON CONFLICT(feed,timeframe) DO UPDATE SET last_end=MAX(last_end,excluded.last_end)',
