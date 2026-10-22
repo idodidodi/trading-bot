@@ -22,6 +22,12 @@ def example():
                 spacing=7, rules=load_rules())
 
 
+def candle_example():
+    payload = example()
+    return payload | dict(signal_status='provisional', alert_timing='pivot_close',
+                          pivot_closed_at=payload['confirmed_at'])
+
+
 class EnvTests(unittest.TestCase):
     def test_notes_quotes_export_and_existing_environment(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -104,7 +110,7 @@ class ReceiverTests(unittest.TestCase):
 
     @patch.dict(os.environ, {'DEV_TELEGRAM_ENABLED': 'true'}, clear=True)
     def test_delivery_retries_and_recovers(self):
-        self.store.insert(validate_signal(example(), load_rules()))
+        self.store.insert(validate_signal(candle_example(), load_rules()))
         stop = threading.Event()
         def coordinate(payload):
             return {'status': {'acquire':'acquired', 'renew':'acquired', 'complete':'completed', 'release':'released'}[payload['action']]}

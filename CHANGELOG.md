@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — 2026-10-22
+
+### RSI candle-close alerts
+
+- Send one RSI Telegram alert at the divergence candle's close when provider data becomes available. Later structural confirmation remains in Signals without another Telegram alert; legacy pending confirmation deliveries are retired.
+- Include the reference and signal candles' opening and closing dates/times in Israel time, plus detection time. Preserve grouping, restart and cross-device deduplication.
+- Keep the Alpaca SIP feed and 16-minute delay unchanged.
+
 ## Unreleased — 2026-10-20
 
 ### Telegram readability

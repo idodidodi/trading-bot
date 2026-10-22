@@ -180,6 +180,7 @@ def detect(candles, rules, symbol, timeframe, *, provisional=False):
                               price1=prices[first], price2=prices[i], rsi1=rsi[first], rsi2=rsi[i],
                               band1=bands[first], band2=bands[i], band_touch_price=touch,
                               pivot1=candles[first].start, pivot2=candles[i].start,
+                              pivot1_closed_at=candles[first].end, pivot2_closed_at=candles[i].end,
                               confirmed_at=candles[event_index].end, spacing=spacing, rules=rules)
                 if provisional:
                     signal.update(signal_status='provisional', alert_timing='pivot_close',
@@ -438,7 +439,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     if asset.get('max_data_age_seconds') and age_seconds > asset['max_data_age_seconds']:
                         raise ValueError('Latest closed candle is older than the configured freshness limit')
                     pending = sorted((s for s in matches if s['confirmed_at'] > cutoff), key=lambda s:(s['confirmed_at'],s.get('signal_status')!='provisional'))
-                    new = sum(store.insert(validate_signal(s, rules) | {'market': asset.get('market') or 'unknown'}, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
+                    new = sum(store.insert(validate_signal(s, rules) | {'market': asset.get('market') or 'unknown', 'detected_at': now}, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
                     with store.connect() as db:
                         db.execute('INSERT INTO scan_state(asset,timeframe,last_end) VALUES(?,?,?) ON CONFLICT(asset,timeframe) DO UPDATE SET last_end=MAX(last_end,excluded.last_end)',
                                    (state_id, timeframe, candles[-1].end))

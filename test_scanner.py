@@ -180,6 +180,40 @@ class EngineTests(unittest.TestCase):
             self.assertIn(signal, replay)
             self.assertFalse(any(s['pivot2'] == bars[256].start for s in detect(bars, rules, 'test:EURUSD', '4h')))
 
+    def test_candle_timestamps_survive_validation_and_formatting(self):
+        from platform_app import validate_signal, message
+        bars = fixture()
+        signal = detect(bars[:257], load_rules(), 'TEST', '4h', provisional=True)[0]
+        clean = validate_signal(signal, load_rules())
+        self.assertEqual(clean['pivot1_closed_at'], bars[250].end)
+        self.assertEqual(clean['pivot2_closed_at'], bars[256].end)
+        text = message(clean | {'detected_at': bars[256].end + 16*60*1000})
+        for label in ('Reference candle opened:', 'Reference candle closed:',
+                      'Signal candle opened:', 'Second pivot closed:', 'Detected:'):
+            self.assertIn(label, text)
+        self.assertEqual(text.count('(Israel time)'), 5)
+        self.assertIn('subsequent candles can invalidate', text)
+        self.assertNotIn('Confirmed:', text)
+        for change in ({'pivot1_closed_at': signal['pivot1']},
+                       {'pivot2_closed_at': signal['confirmed_at']+1},
+                       {'pivot2_closed_at': signal['confirmed_at']-1}):
+            with self.assertRaises(ValueError):
+                validate_signal(signal | change, load_rules())
+
+    def test_meta_style_overnight_open_is_not_the_signal_close(self):
+        from scanner import timestamp
+        from platform_app import message
+        bars = fixture()
+        start = timestamp('2026-10-21T23:00:00+03:00')
+        shift = start - bars[256].start
+        bars = [replace(c, start=c.start+shift, end=c.end+shift) for c in bars]
+        signal = detect(bars[:257], load_rules(), 'alpaca:Alpaca-sip-split:META', '4h', provisional=True)[0]
+        text = message(signal)
+        self.assertIn('Signal candle opened: 21 Oct 2026 at 23:00', text)
+        self.assertIn('Second pivot closed: 22 Oct 2026 at 03:00', text)
+        self.assertEqual(signal['confirmed_at'], bars[256].end)
+        self.assertEqual(detect(bars[:257], load_rules(), 'TEST', '4h'), [])
+
     def test_provisional_requires_strict_left_and_band_touch(self):
         bars = fixture(); rules = load_rules()
         self.assertEqual(detect(bars, rules | {'bb_multiplier': 20}, 'test:EURUSD', '4h', provisional=True), [])
@@ -299,6 +333,7 @@ class EngineTests(unittest.TestCase):
             result = scan_once(store, config, rules, bars[-1].end)
             self.assertEqual(result[0]['new_signals'], 1)
             self.assertEqual(len(store.rows()), 2)
+            self.assertCountEqual([r[1] for r in store.rows()], ['pending', 'cancelled'])
             write(bars)  # A second following candle must not send a duplicate alert.
             restored = Store(Path(folder) / 'db.sqlite3')
             self.assertEqual(scan_once(restored, config, rules, bars[-1].end)[0]['new_signals'], 0)

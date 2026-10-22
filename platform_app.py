@@ -125,6 +125,15 @@ def validate_signal(body, rules):
                 or type(body.get('pivot_closed_at')) is not int or body['pivot_closed_at'] != body['confirmed_at']):
             raise ValueError('Invalid provisional signal timing')
         clean.update(signal_status='provisional', alert_timing='pivot_close', pivot_closed_at=body['pivot_closed_at'])
+    for key, start in (('pivot1_closed_at', 'pivot1'), ('pivot2_closed_at', 'pivot2')):
+        if key in body:
+            if type(body[key]) is not int or not body[start] < body[key] <= body['confirmed_at']:
+                raise ValueError(f'Invalid {key}')
+            clean[key] = body[key]
+    if 'pivot1_closed_at' in clean and clean['pivot1_closed_at'] > body['pivot2']:
+        raise ValueError('Overlapping pivot candles')
+    if clean.get('signal_status') == 'provisional' and clean.get('pivot2_closed_at', body['confirmed_at']) != body['confirmed_at']:
+        raise ValueError('Invalid signal candle close')
     return clean
 
 
@@ -162,6 +171,9 @@ class Store:
             connection.close()
 
     def insert(self, payload, delivery_status='pending',catchup_id=None):
+        # Structural confirmations remain findings, without a second Telegram alert.
+        if delivery_status == 'pending' and payload.get('signal_status') != 'provisional':
+            delivery_status = 'cancelled'
         identity = [payload[k] for k in ('symbol', 'timeframe', 'direction', 'pivot1', 'pivot2')]
         if payload.get('signal_status') == 'provisional': identity.append('warmup')
         if payload.get('review_slot'): identity.append(payload['review_slot'])
@@ -230,17 +242,28 @@ def signal_alert_delivered(store, payload):
 
 def message(payload):
     provisional = payload.get('signal_status') == 'provisional'
-    timestamp = payload['pivot_closed_at'] if provisional else payload['confirmed_at']
-    stamp = datetime.fromtimestamp(timestamp / 1000, ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y at %H:%M (Israel time)')
-    timing = f"Second pivot closed: {stamp}" if provisional else f"Confirmed: {stamp} ({payload['rules']['pivot_right']} following candle(s))"
-    footer = 'Signal only · provisional pivot · closed candle' if provisional else 'Signal only · closed-candle divergence'
-    return (f"{payload['direction'].upper()} RSI divergence{' (provisional)' if provisional else ''}\n"
+    def stamp(value):
+        return datetime.fromtimestamp(value / 1000, ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y at %H:%M (Israel time)') if value else 'unavailable in saved finding'
+    first_close = payload.get('pivot1_closed_at')
+    second_close = payload.get('pivot2_closed_at', payload.get('pivot_closed_at'))
+    timing = (f"Reference candle opened: {stamp(payload['pivot1'])}\n"
+              f"Reference candle closed: {stamp(first_close)}\n"
+              f"Signal candle opened: {stamp(payload['pivot2'])}\n"
+              f"Second pivot closed: {stamp(second_close)}")
+    if payload.get('detected_at'):
+        timing += f"\nDetected: {stamp(payload['detected_at'])}"
+    if not provisional:
+        timing += f"\nConfirmed: {stamp(payload['confirmed_at'])}"
+    description = ('Divergence at candle close; subsequent candles can invalidate the pivot.' if provisional
+                   else 'Structural pivot confirmed after the following candle; dashboard record only.')
+    return (f"{payload['direction'].upper()} RSI divergence{' · candle closed' if provisional else ' · structurally confirmed'}\n"
             f"{payload['symbol']} · {payload['timeframe']}\n"
             f"Price: {payload['price1']:g} → {payload['price2']:g}\n"
             f"RSI({payload['rules']['rsi_period']}): {payload['rsi1']:.2f} → {payload['rsi2']:.2f}\n"
             f"{'Lower' if payload['direction'] == 'bullish' else 'Upper'} BB touch: {payload['band2']:g}\n"
-            f"{timing}\n{payload.get('stage_description', 'Warm-up / potential divergence; awaiting pivot confirmation.' if provisional else 'Confirmed divergence / structural pivot confirmation after the next candle.')}\n"
-            f"One alert per pivot candle and stage; see Signals for all reference-pivot comparisons.\n{footer}")
+            f"{timing}\n{description}\n"
+            f"One alert per divergence candle; see Signals for all reference-pivot comparisons.\n"
+            f"Signal only · closed candle")
 
 
 def telegram_connection_error(exc):
@@ -322,9 +345,9 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             continue
         key, raw, attempts = row
         payload = json.loads(raw)
-        if payload.get('review_slot'):
-            # Retire queued clock reviews from older versions without resending
-            # cached setups after the move to candle-driven alerts.
+        if payload.get('review_slot') or payload.get('signal_status') != 'provisional':
+            # Retire legacy clock reviews and confirmation alerts, including retries.
+            # Keep their findings and completed delivery history intact.
             with store.connect() as db:
                 db.execute("UPDATE signals SET status='cancelled',error=NULL WHERE id=?", (key,))
             continue

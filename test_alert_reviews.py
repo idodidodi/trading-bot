@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from platform_app import Store, delivery_worker
-from test_platform import example
+from test_platform import candle_example as example
 
 
 class ReviewRetirementTests(unittest.TestCase):

@@ -15,7 +15,7 @@ import cloud_sync
 import local_settings
 import runtime_env
 from platform_app import Store, delivery_worker, handler_factory, load_rules
-from test_platform import example
+from test_platform import candle_example as example
 
 
 CREDENTIALS = {'TELEGRAM_BOT_TOKEN': 'test-token', 'TELEGRAM_CHAT_ID': '123',

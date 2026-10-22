@@ -6,8 +6,8 @@ from platform_app import ROOT, load_rules
 
 _lock = threading.Lock()
 STRATEGIES = {
-    'confirmed': 'RSI(3), Wilder; Bollinger Bands(20, 2 population deviations). Strict close-price pivots, 2 left / 1 right; compare all earlier same-type pivots at spacing 2–60 (at least one intervening candle). Opposing closing price and RSI; only P2 must wick-touch its band. No slope filter. Alert after the following candle closes.',
-    'warmup': 'Same RSI, bands and pivot-pair rules. Potential second pivot evaluated at its own close using only preceding candles. Early warning; the following candle can invalidate the candidate.'
+    'confirmed': 'RSI(3), Wilder; Bollinger Bands(20, 2 population deviations). Strict close-price pivots, 2 left / 1 right; compare all earlier same-type pivots at spacing 2–60 (at least one intervening candle). Opposing closing price and RSI; only P2 must wick-touch its band. No slope filter. Structural confirmation after the following candle closes; dashboard/history only, no additional live Telegram alert.',
+    'warmup': 'Same RSI, bands and pivot-pair rules. Potential second pivot evaluated at its own close using only preceding candles. Live Telegram alert stage; subsequent candles can invalidate the candidate.'
 }
 
 def options(store, job_id=None):

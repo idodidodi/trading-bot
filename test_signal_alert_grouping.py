@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from platform_app import Store, delivery_worker, signal_alert_event
-from test_platform import example
+from test_platform import candle_example as example
 
 
 @patch.dict('os.environ', {'DEV_TELEGRAM_ENABLED': 'true'}, clear=True)
@@ -41,7 +41,7 @@ class SignalAlertGroupingTests(unittest.TestCase):
         event = signal_alert_event(base)
         self.assertEqual(event, signal_alert_event(base | {'pivot1': 1, 'price1': 2, 'rsi1': 3}))
         for changes in ({'symbol': 'OTHER'}, {'timeframe': 'weekly'}, {'direction': 'bearish'},
-                        {'pivot2': base['pivot2'] + 1}, {'signal_status': 'provisional'}):
+                        {'pivot2': base['pivot2'] + 1}, {'signal_status': 'confirmed'}):
             with self.subTest(changes=changes):
                 self.assertNotEqual(event, signal_alert_event(base | changes))
 
@@ -59,15 +59,26 @@ class SignalAlertGroupingTests(unittest.TestCase):
         self.assertEqual(len(self.store.rows()), 11)
         self.assertEqual(sum(row[1] == 'suppressed' for row in self.store.rows()), 6)
 
-    def test_provisional_and_confirmed_each_send_once(self):
+    def test_only_candle_close_sends_and_confirmation_remains_a_finding(self):
         for stage in ('provisional', 'confirmed'):
             for offset in range(2):
                 self.store.insert(example() | {'pivot1': example()['pivot1'] + offset,
                     'signal_status': stage, 'pivot_closed_at': example()['confirmed_at']})
         send, _ = self.run_worker(4)
-        self.assertEqual(send.call_count, 2)
-        self.assertIn('(provisional)', send.call_args_list[0].args[2])
-        self.assertNotIn('(provisional)', send.call_args_list[1].args[2])
+        send.assert_called_once()
+        self.assertIn('RSI divergence · candle closed', send.call_args.args[2])
+        self.assertCountEqual([r[1] for r in self.store.rows()], ['sent', 'suppressed', 'cancelled', 'cancelled'])
+
+    def test_legacy_pending_confirmation_retry_is_retired_without_send(self):
+        self.store.insert(example() | {'signal_status': 'confirmed'})
+        with self.store.connect() as db:
+            db.execute("UPDATE signals SET status='pending',attempts=2")
+        self.store = Store(self.store.path)
+        sender, cloud = self.run_worker(1)
+        sender.assert_not_called()
+        cloud.assert_not_called()
+        self.assertEqual(self.store.rows()[0][1], 'cancelled')
+        self.assertEqual(self.store.rows()[0][2], 2)
 
     def test_upgrade_and_restart_suppress_late_comparisons_for_sent_candle(self):
         self.store.insert(example(), delivery_status='sent')
