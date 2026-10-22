@@ -76,22 +76,24 @@ def remember(db, event, market, strategy):
 
 
 def market_group(market):
-    return {'forex': 'forex', 'crypto': 'crypto', 'stock': 'stocks', 'etf': 'stocks'}.get(market, 'other')
+    return {'forex': 'forex', 'crypto': 'crypto', 'stock': 'stocks', 'stocks': 'stocks',
+            'equity': 'stocks', 'equities': 'stocks', 'etf': 'stocks'}.get(market, 'other')
 
 
 def recover(db, payload):
-    if payload.get('market'):
+    if payload.get('market') not in (None, '', 'unknown'):
         return payload['market']
     exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='managed_config'").fetchone()
     row = db.execute('SELECT payload FROM managed_config WHERE id=1').fetchone() if exists else None
     for asset in json.loads(row[0]).get('assets', []) if row else []:
         source = f"{asset['provider']}:{asset.get('exchange') or 'configured'}:{asset.get('symbol') or asset['id']}"
         if payload.get('asset') == asset['id'] or payload.get('symbol') in (asset['id'], source):
-            return asset.get('market') or 'unknown'
+            if asset.get('market') not in (None, '', 'unknown'):
+                return asset['market']
     # Rotating US stock feeds may no longer be in configured assets.
     if payload.get('symbol', '').startswith('alpaca:'):
         return 'stock'
-    return None
+    return payload.get('market') or None
 
 
 def select(store, event, general, payload=None, notification_key=None):
@@ -103,9 +105,9 @@ def select(store, event, general, payload=None, notification_key=None):
         if row and row[2] is not None:
             return row[2], row[3]
         market, strategy = (row[0], row[1]) if row else (None, None)
-        if payload is not None and not market:
+        if payload is not None and market in (None, '', 'unknown'):
             strategy, market = 'rsi', recover(db, payload)
-        if not strategy and notification_key:
+        if notification_key and (not strategy or market in (None, '', 'unknown')):
             prefix, _, key = notification_key.partition(':')
             if prefix in ('pin-bars', 'bb-pin-bars'):
                 table = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals'}[prefix]
@@ -119,7 +121,7 @@ def select(store, event, general, payload=None, notification_key=None):
         if not chat:
             raise RuntimeError('Configure a General Telegram destination')
         db.execute('''INSERT INTO telegram_event_routes VALUES(?,?,?,?,?) ON CONFLICT(event)
-            DO UPDATE SET chat=excluded.chat,general=excluded.general''', (event, market, strategy, chat, fallback))
+            DO UPDATE SET market=excluded.market,strategy=excluded.strategy,chat=excluded.chat,general=excluded.general''', (event, market, strategy, chat, fallback))
         return chat, fallback
 
 

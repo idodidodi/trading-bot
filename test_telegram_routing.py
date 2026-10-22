@@ -21,7 +21,7 @@ class RoutingTests(unittest.TestCase):
         routing.apply(self.store, dict(revision=1, routes=self.routes))
 
     def test_matrix(self):
-        for market, group in [('forex','forex'), ('crypto','crypto'), ('stock','stocks'), ('etf','stocks'), ('index','other'), ('commodity','other'), ('futures','other'), ('unknown','other')]:
+        for market, group in [('forex','forex'), ('crypto','crypto'), ('stock','stocks'), ('stocks','stocks'), ('equity','stocks'), ('equities','stocks'), ('etf','stocks'), ('index','other'), ('commodity','other'), ('futures','other'), ('unknown','other')]:
             for strategy in ('rsi', 'pin-bars', 'bb-pin-bars'):
                 event = market+strategy
                 with self.store.connect() as db:
@@ -69,6 +69,31 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(routing.select(self.store,'rsi','legacy',{'symbol':'oanda:OANDA:EUR/USD'})[0],self.routes['forex.rsi'])
         for strategy in ('pin-bars','bb-pin-bars'):
             self.assertEqual(routing.select(self.store,strategy,'legacy',notification_key=strategy+':old')[0],self.routes['forex.pin-bars'])
+
+    def test_alpaca_unknown_market_recovers_stock_and_equity_alias_routes(self):
+        assets = [dict(id='RDW', symbol='RDW', provider='alpaca', exchange='Alpaca-sip-split'),
+                  dict(id='GLW', symbol='GLW', provider='alpaca', exchange='Alpaca-sip-split', market='equity')]
+        with self.store.connect() as db:
+            db.execute('INSERT INTO managed_config VALUES(1,1,1,?)', (json.dumps({'assets': assets}),))
+        for symbol, market in [('RDW', 'unknown'), ('GLW', 'equity')]:
+            payload = dict(symbol='alpaca:Alpaca-sip-split:'+symbol, market=market)
+            with self.store.connect() as db:
+                routing.remember(db, symbol, market, 'rsi')
+            self.assertEqual(routing.select(self.store, symbol, 'legacy', payload)[0], self.routes['stocks.rsi'])
+        with self.store.connect() as db:
+            self.assertEqual(db.execute("SELECT market FROM telegram_event_routes WHERE event='RDW'").fetchone()[0], 'stock')
+            db.execute('CREATE TABLE pin_bar_signals(id TEXT,payload TEXT)')
+            db.execute('INSERT INTO pin_bar_signals VALUES(?,?)', ('rdw', json.dumps({'symbol':'alpaca:Alpaca-sip-split:RDW','market':'unknown'})))
+            routing.remember(db, 'pin', 'unknown', 'pin-bars')
+        self.assertEqual(routing.select(self.store, 'pin', 'legacy', notification_key='pin-bars:rdw')[0], self.routes['stocks.pin-bars'])
+
+    def test_selected_destination_stays_pinned_after_classification_recovery(self):
+        with self.store.connect() as db:
+            routing.remember(db, 'started', 'unknown', 'rsi')
+        original = routing.select(self.store, 'started', 'legacy', {'market':'unknown'})
+        self.assertEqual(original[0], self.routes['other.rsi'])
+        self.assertEqual(routing.select(self.store, 'started', 'legacy',
+            {'symbol':'alpaca:Alpaca-sip-split:RDW','market':'unknown'}), original)
 
     def coordinate(self, payload):
         return {'status':{'acquire':'acquired','renew':'acquired','complete':'completed','release':'released'}[payload['action']], 'silent':False}

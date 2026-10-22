@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — stock alert routing
+
+- Route all supported stock market labels (`stock`, `stocks`, `equity`, `equities`, `etf`) to Stocks Telegram groups.
+- Recover missing or unknown market metadata from Alpaca stock identities before choosing an alert's first destination. Preserve selected destinations for retries and never replay completed alerts.
+
 ## Unreleased — 2026-10-22
 
 ### RSI candle-close alerts
