@@ -57,7 +57,7 @@ class FeedbackTests(unittest.TestCase):
         self.assertIn('&lt;script&gt;', page)
         self.assertNotIn('<script>alert(1)</script>', page)
         self.assertEqual(len(self.store.rows()), 1)
-        self.assertEqual(self.store.rows()[0][1], 'pending')
+        self.assertEqual(self.store.rows()[0][1], 'cancelled')  # Confirmed finding stays dashboard-only.
 
     def test_validation_rolls_back_and_rejects_unknown_findings(self):
         for change in [dict(rating=0), dict(rating=6), dict(rating=True), dict(rating=1.5),
