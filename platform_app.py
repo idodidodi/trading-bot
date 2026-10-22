@@ -254,16 +254,12 @@ def message(payload):
         timing += f"\nDetected: {stamp(payload['detected_at'])}"
     if not provisional:
         timing += f"\nConfirmed: {stamp(payload['confirmed_at'])}"
-    description = ('Divergence at candle close; subsequent candles can invalidate the pivot.' if provisional
-                   else 'Structural pivot confirmed after the following candle; dashboard record only.')
     return (f"{payload['direction'].upper()} RSI divergence{' · candle closed' if provisional else ' · structurally confirmed'}\n"
             f"{payload['symbol']} · {payload['timeframe']}\n"
             f"Price: {payload['price1']:g} → {payload['price2']:g}\n"
             f"RSI({payload['rules']['rsi_period']}): {payload['rsi1']:.2f} → {payload['rsi2']:.2f}\n"
             f"{'Lower' if payload['direction'] == 'bullish' else 'Upper'} BB touch: {payload['band2']:g}\n"
-            f"{timing}\n{description}\n"
-            f"One alert per divergence candle; see Signals for all reference-pivot comparisons.\n"
-            f"Signal only · closed candle")
+            f"{timing}")
 
 
 def telegram_connection_error(exc):

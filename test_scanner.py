@@ -192,7 +192,8 @@ class EngineTests(unittest.TestCase):
                       'Signal candle opened:', 'Second pivot closed:', 'Detected:'):
             self.assertIn(label, text)
         self.assertEqual(text.count('(Israel time)'), 5)
-        self.assertIn('subsequent candles can invalidate', text)
+        self.assertNotIn('subsequent candles can invalidate', text)
+        self.assertNotIn('Signal only', text)
         self.assertNotIn('Confirmed:', text)
         for change in ({'pivot1_closed_at': signal['pivot1']},
                        {'pivot2_closed_at': signal['confirmed_at']+1},

@@ -32,7 +32,7 @@ class SignalAlertGroupingTests(unittest.TestCase):
             self.store.insert(example() | {'pivot1': example()['pivot1'] + offset})
         send, _ = self.run_worker(3)
         send.assert_called_once()
-        self.assertIn('see Signals for all reference-pivot comparisons', send.call_args.args[2])
+        self.assertNotIn('One alert per', send.call_args.args[2])
         self.assertCountEqual([row[1] for row in self.store.rows()], ['sent', 'suppressed', 'suppressed'])
         self.assertEqual(len(self.store.rows()), 3)
 
