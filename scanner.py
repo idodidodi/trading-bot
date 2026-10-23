@@ -266,6 +266,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     from kraken_feed import fetch_kraken
     from oanda_feed import fetch_oanda
     from fmp_feed import fetch_fmp
+    from yahoo_feed import fetch_yahoo
     from tiingo_feed import fetch_tiingo
     from alpaca_feed import fetch_alpaca
     config, config_revision = effective(store, config)
@@ -289,7 +290,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
         known={a['id'] for a in config['assets']}
         for old in json.loads(prior[0]).get('coverage',[]) if prior else []:
             if old['asset'] in known or old['asset'] in ('USDCNY','DAILY_SELECTION','WEEKLY_STOCK_SCREEN'):continue
-            if old.get('provider') not in ('twelvedata','kraken','oanda','tiingo','alpaca','fmp'):continue
+            if old.get('provider') not in ('twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo'):continue
             config['assets'].append(dict(id=old['asset'],provider=old['provider'],symbol=old.get('symbol',old['asset']),
                 exchange=old.get('exchange',''),enabled=True,feed_confirmed=True,timeframes=[old['timeframe']],
                 catchup_only=True,tradingview_symbol='',market=old.get('market') or ('stock' if old['asset'].startswith('STOCK-') else None)))
@@ -337,7 +338,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 continue
             raw=[];candles=[]
             try:
-                if provider in ('twelvedata', 'kraken', 'oanda', 'tiingo', 'fmp'):
+                if provider in ('twelvedata', 'kraken', 'oanda', 'tiingo', 'fmp', 'yahoo'):
                     spacing = (max(8, float(config.get('request_spacing_seconds', 8))) if provider == 'twelvedata'
                                else max(1, float(config.get(provider + '_request_spacing_seconds', 1))))
                     if provider in last_requests:
@@ -351,7 +352,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                         return coverage
                     last_requests[provider] = time.monotonic()
                 try:
-                    raw = {'csv': read_csv, 'twelvedata': fetch_twelve_data, 'kraken': fetch_kraken, 'oanda': fetch_oanda, 'tiingo': fetch_tiingo, 'alpaca': fetch_alpaca, 'fmp': fetch_fmp}[provider](asset, timeframe)
+                    raw = {'csv': read_csv, 'twelvedata': fetch_twelve_data, 'kraken': fetch_kraken, 'oanda': fetch_oanda, 'tiingo': fetch_tiingo, 'alpaca': fetch_alpaca, 'fmp': fetch_fmp, 'yahoo': fetch_yahoo}[provider](asset, timeframe)
                 except TwelveDataRateLimit:
                     from alpaca_feed import supported, fallback_asset, fetch_alpaca
                     if not config.get('alpaca_rate_limit_fallback', True) or not supported(asset):

@@ -24,7 +24,7 @@ The scanner reads numeric defaults from [the Markdown skill](skills/rsi-divergen
 
 ## Data-provider recommendation
 
-**Twelve Data** supplies candle feeds through `/time_series`. The permanent forex set is EUR/USD, USD/JPY, USD/CNY, GBP/USD and USD/CHF, based on the [BIS 2025 turnover survey](https://www.bis.org/publications/202509-commentary-otc-derivatives). The permanent crypto set is BTC/USD, ETH/USD, SOL/USD, NEAR/USD and DOGE/USD (Kraken spot for 4h/daily/weekly; Binance via Twelve Data for monthly). The requested NEAR and DOGE are included within the five permanent crypto slots; this is a chosen core, not a claim that all five lead global volume. Existing NVDA and the unavailable DAX placeholder are retained. The dollar index is excluded from the active asset list.
+**Twelve Data** supplies candle feeds through `/time_series`. The permanent forex set is EUR/USD, USD/JPY, USD/CNY, GBP/USD and USD/CHF, based on the [BIS 2025 turnover survey](https://www.bis.org/publications/202509-commentary-otc-derivatives). The permanent crypto set is BTC/USD, ETH/USD, SOL/USD, NEAR/USD and DOGE/USD (Kraken spot for 4h/daily/weekly; Binance via Twelve Data for monthly). The requested NEAR and DOGE are included within the five permanent crypto slots; this is a chosen core, not a claim that all five lead global volume. Existing NVDA and the DAX cash index (Yahoo delayed OHLC) are retained. The dollar index is excluded from the active asset list.
 
 The morning routine adding five forex and five crypto pairs is disabled. Scans use configured assets and the separately configured stock screen. Candle polling remains paced by each provider's request limits. Credentials stay in local `.env`.
 
@@ -32,7 +32,7 @@ The morning routine adding five forex and five crypto pairs is disabled. Scans u
 
 Kraken is enabled for configured crypto 4h, daily and weekly candles; optional 1h candles are supported too. Its public spot API needs no API key. The scanner verifies the canonical BASE/QUOTE response and excludes the final uncommitted bar. No USDT substitution or calendar-month aggregation is performed. Kraken returns at most about 720 recent candles; older catch-up requires backfill. Switching venue establishes a separate baseline, signal identity and candle cache, preventing mixed-venue indicators and historical alert floods.
 
-In **Assets**, keep Twelve Data as the primary provider with its Binance exchange and choose **Kraken spot** for the three native timeframes. The saved asset field is `"timeframe_providers": {"4h": "kraken", "daily": "kraken", "weekly": "kraken"}`. Coverage reports the actual selected provider and exchange. A Kraken override clears the primary venue’s TradingView mapping; use a separately verified Kraken mapping for assets whose primary provider is Kraken. For a Kraken-only asset, choose Kraken as primary, exchange `Kraken`, an exact pair such as `BTC/USD`, and native timeframes only. Monthly remains on Twelve Data; DAX still needs a verified index feed.
+In **Assets**, keep Twelve Data as the primary provider with its Binance exchange and choose **Kraken spot** for the three native timeframes. The saved asset field is `"timeframe_providers": {"4h": "kraken", "daily": "kraken", "weekly": "kraken"}`. Coverage reports the actual selected provider and exchange. A Kraken override clears the primary venue’s TradingView mapping; use a separately verified Kraken mapping for assets whose primary provider is Kraken. For a Kraken-only asset, choose Kraken as primary, exchange `Kraken`, an exact pair such as `BTC/USD`, and native timeframes only. Monthly remains on Twelve Data; DAX uses its separate Yahoo cash-index feed.
 
 Cloud upgrades require applying `cloud/providers.sql` after the existing schema/backtests migrations. It updates the asset validation and save logic while preserving the deployed backtest dispatcher; then publish the rebuilt browser assets. The local scanner and local Assets editor use the new routing immediately after restart.
 
@@ -66,7 +66,7 @@ Open `http://127.0.0.1:8080` on the computer running the app. No public port, we
 
 Use **Assets** to edit an existing installation. `scanner.json` seeds configuration only on the first start; subsequent runs use managed configuration in SQLite, so editing that file alone does not update an existing installation. The configured asset sets are described above; live timeframes are `monthly`, `weekly`, `daily`, `4h`, and optional `1h`. The default selection stays on the original four timeframes. Restart after changing the skill.
 
-The supplied configuration uses Twelve Data for forex, NVDA and monthly crypto, Kraken for native crypto 4h/daily/weekly (optional hourly too), and a CSV placeholder for DAX. Verified forex can move to OANDA after activation. A valid `TWELVE_DATA_API_KEY` in `.env` is required. An example live feed entry is:
+The supplied configuration uses Twelve Data for forex, NVDA and monthly crypto, Kraken for native crypto 4h/daily/weekly (optional hourly too), and Yahoo delayed cash-index candles for DAX. Verified forex can move to OANDA after activation. A valid `TWELVE_DATA_API_KEY` in `.env` is required. An example live feed entry is:
 
 ```json
 {
@@ -84,7 +84,7 @@ The adapter requests native timeframes and UTC timestamps, including up to 500 c
 
 If Twelve Data returns malformed historical OHLC prices, the scanner excludes the entire prefix through the last malformed candle and evaluates only the uninterrupted valid suffix. Coverage Details disclose the bad candle's UTC timestamp, excluded count and remaining closed history. Prices are never clamped and candles are never stitched across a bad bar. The suffix must still meet the strategy's minimum history; recent corruption remains unavailable, and the existing catch-up guard blocks recovery when it would skip unprocessed candles. A shorter history changes indicator initialization and is flagged as limited below 250 bars. CSV validation remains strict. Insufficient-history coverage now reports the available and required counts.
 
-[OANDA v20](https://developer.oanda.com/rest-live-v20/instrument-df/) is implemented for hourly, 4h, daily, weekly and monthly forex midpoint candles; activation requires an eligible v20 account and local credentials. DAX cash-index coverage still requires a verified, entitled exact feed; substituting a CFD, ETF, futures contract or USDT pair would change the instrument. QNT monthly remains unavailable while its selected feed has fewer than the required closed candles.
+[OANDA v20](https://developer.oanda.com/rest-live-v20/instrument-df/) is implemented for hourly, 4h, daily, weekly and monthly forex midpoint candles; activation requires an eligible v20 account and local credentials. DAX cash-index coverage uses Yahoo delayed OHLC (`^GDAXI`); it is separate from CFDs, ETFs and futures. QNT monthly remains unavailable while its selected feed has fewer than the required closed candles.
 
 ## Candle-file mode
 
@@ -273,13 +273,13 @@ Official [forex docs](https://www.tiingo.com/documentation/forex) and [coverage/
 
 ### DAX ETF proxy through Alpaca
 
-The managed asset `DAX-ETF` uses the US-listed Global X DAX Germany ETF, exact symbol `DAX`, with Alpaca SIP split-adjusted candles. It is a proxy priced in USD during US trading hours, with separate feed identity and signal history from the cash index. Its verified live timeframes are monthly, weekly, daily, 4h and 1h. Alpaca can now be selected as a primary US equity/ETF provider or an explicit timeframe override; Twelve Data quota fallback remains available independently.
+The former managed asset `DAX-ETF` used the US-listed Global X DAX Germany ETF, exact symbol `DAX`, with Alpaca SIP split-adjusted candles. It is a proxy priced in USD during US trading hours, with separate feed identity and signal history from the cash index. It supported monthly, weekly, daily, 4h and 1h; the weekly stock-screen migration removed this proxy from managed assets. Alpaca can now be selected as a primary US equity/ETF provider or an explicit timeframe override; Twelve Data quota fallback remains available independently.
 
 Local 2020 backtests now accept 1h for providers with hourly history, including Alpaca. CSVs without hourly files remain unavailable. US session gaps and limited pre-2020 monthly warmup can make replay partial. Backtests preserve provider candles and never enqueue live alerts. Online provider settings require the updated `cloud/providers.sql` migration; local changes do not deploy it automatically.
 
 ### German DAX provider research
 
-[QuoteMedia explicitly lists German DAX index coverage](https://quotemedia.com/data-coverage/exchange-support/german-indexes-dax-index), with delayed and end-of-day data, REST and FTP delivery, and history from 2008. Real-time coverage is not offered on that listing. Pricing and quotas are sales-assisted, and hourly/4h OHLC availability is not confirmed by the public coverage page. Ask for the DAX performance cash index, the exact API symbol, delayed OHLC intervals (1h/4h/daily), historical depth, API limits, and a personal-use quote before subscribing. This is a confirmed DAX index vendor, not yet an activated scanner provider. DAX remains on the existing unavailable/CSV route until usable candle access is verified; the separate DAX-ETF proxy does not replace the cash-index feed.
+[QuoteMedia explicitly lists German DAX index coverage](https://quotemedia.com/data-coverage/exchange-support/german-indexes-dax-index), with delayed and end-of-day data, REST and FTP delivery, and history from 2008. Real-time coverage is not offered on that listing. Pricing and quotas are sales-assisted, and hourly/4h OHLC availability is not confirmed by the public coverage page. Ask for the DAX performance cash index, the exact API symbol, delayed OHLC intervals (1h/4h/daily), historical depth, API limits, and a personal-use quote before subscribing. This is a confirmed DAX index vendor, not yet an activated scanner provider. Yahoo delayed OHLC now supplies the cash-index scanner; QuoteMedia remains an unactivated alternative. The separate DAX-ETF proxy does not replace the cash index.
 
 ### Signal follow-up outcomes
 
@@ -401,3 +401,11 @@ shared destination can receive several labelled tests. The original `test`
 command and local dashboard Telegram test use the cached General destination.
 Deploy the routing migration and updated sync endpoint before restarting upgraded
 scanners; see `cloud/README.md`.
+
+### Yahoo delayed DAX cash-index scanning
+
+DAX uses Yahoo Finance's exact `^GDAXI` cash index, currency EUR, exchange `XETRA`, market `index`. No API key is required. Yahoo quotes are delayed about 15 minutes; the scanner waits 16 minutes after each candle's close before evaluating it. This is delayed scanning, not a real-time exchange feed. The public chart endpoint can change or throttle requests; failures are shown as unavailable and retried.
+
+Native hourly and four-hour bars use Yahoo's per-date session metadata, including Berlin DST and the shortened final session bar. Arbitrarily timestamped quote snapshots are discarded. Daily candles retain the Berlin session date with conservative midnight UTC closes. Weekly and monthly OHLC are aggregated from ten years of daily data; open periods, truncated leading periods and periods containing missing source OHLC are excluded. Missing source dates are disclosed in coverage notes. Intraday requests use one year of history; no prices are manufactured or interpolated. Five-minute response caching shares daily history across daily/weekly/monthly requests. A new feed establishes separate signal baselines and candle-cache identities.
+
+For existing source installations, restart the scanner with the new code and run `.venv/bin/python scripts/activate-yahoo-dax.py --database /absolute/path/to/signals.sqlite3` using that installation's database (`data/dev/signals.sqlite3` for the default source development app). Activation verifies enough closed history for every selected timeframe, backs up SQLite, then updates only DAX and caches verified candles. Selected timeframes are preserved; hourly stays optional. Existing historical CSV backtests are unchanged. Bundled defaults now use Yahoo, but existing saved configurations require activation. Cloud Assets editing requires applying the updated `cloud/providers.sql` and publishing the updated browser assets; standalone scanners require a new executable build.

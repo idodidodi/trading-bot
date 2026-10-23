@@ -43,6 +43,8 @@ test('provider identities and overrides map to exact managed assets; ambiguous s
  assert.equal(vm.runInContext("assetMatches({symbol:'alpaca:Alpaca-sip-split:AAPL'},"+JSON.stringify([stock])+")[0].id",context),'STOCK-AAPL');
  const fx={id:'EURUSD',provider:'oanda',symbol:'EUR/USD',exchange:'OANDA'};
  assert.equal(vm.runInContext("assetMatches({symbol:'oanda:OANDA-practice:EUR/USD'},"+JSON.stringify([fx])+")[0].id",context),'EURUSD');
+ const dax={id:'DAX',provider:'yahoo',symbol:'^GDAXI',exchange:'XETRA',market:'index'};
+ assert.equal(vm.runInContext("assetMatches({symbol:'yahoo:XETRA:^GDAXI'},"+JSON.stringify([dax])+")[0].id",context),'DAX');
  assert.equal(vm.runInContext("assetMatches({symbol:'BTC/USD'},"+JSON.stringify([asset,{...asset,id:'OTHER'}])+").length",context),2);
 });
 

@@ -40,6 +40,8 @@ def next_due(asset, timeframe, raw, candles, now, row):
     delay=16*60*1000 if asset['provider']=='alpaca' and asset.get('alpaca_feed','sip')=='sip' else 0
     if row['status']=='unavailable':
         return next_market_time(asset,now+3600000)
+    if asset['provider']=='yahoo' and getattr(raw,'next_close_at',None):
+        return max(now+60000, raw.next_close_at)
     candidates=[c.end+delay for c in raw if c.end+delay>now]
     if getattr(raw,'next_close_at',None) and raw.next_close_at+delay>now:
         candidates.append(raw.next_close_at+delay)

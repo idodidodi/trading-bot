@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — 2026-10-23
+
+- Add Yahoo delayed DAX cash-index OHLC for hourly, 4h, daily, weekly and monthly scanning. Validate the exact index and exclude live quote snapshots and unfinished candles, including a 16-minute publication margin.
+- Use native intraday session boundaries and daily-derived calendar aggregates; disclose missing source OHLC. Add Yahoo to Assets and cloud provider validation.
+- Add backup-protected DAX activation for existing databases; retain selected timeframes and establish separate feed baselines.
+
 ## Unreleased — stock alert routing
 
 - Route all supported stock market labels (`stock`, `stocks`, `equity`, `equities`, `etf`) to Stocks Telegram groups.

@@ -26,9 +26,8 @@
     },
     {
       "id": "DAX",
-      "provider": "csv",
+      "provider": "yahoo",
       "path": "data/candles/{asset}-{timeframe}.csv",
-      "unavailable_reason": "DAX cash-index feed is unavailable with the configured Twelve Data access; a supported index feed is required",
       "enabled": true,
       "timeframes": [
         "monthly",
@@ -36,7 +35,13 @@
         "daily",
         "4h"
       ],
-      "portfolio": true
+      "portfolio": true,
+      "symbol": "^GDAXI",
+      "exchange": "XETRA",
+      "market": "index",
+      "feed_confirmed": true,
+      "timeframe_providers": {},
+      "tradingview_symbol": ""
     },
     {
       "id": "BTCUSD",
