@@ -103,6 +103,38 @@ class YahooTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'quota') as caught:yahoo.request_chart('1d')
             self.assertNotIn('secret',str(caught.exception))
 
+    def test_instrument_cache_isolation_and_futures_metadata(self):
+        yahoo._cache.clear()
+        dax=self.chart(['2026-10-21T07:00:00Z'])
+        es=self.chart(['2026-10-21T04:00:00Z'])
+        es['meta'].update(symbol='ES=F',currency='USD',instrumentType='FUTURE',exchangeName='CME',
+                          exchangeTimezoneName='America/New_York')
+        payload=lambda result:io.StringIO(json.dumps(dict(chart=dict(result=[result],error=None))))
+        with patch('yahoo_feed.urllib.request.urlopen',side_effect=[payload(dax),payload(es)]) as request:
+            self.assertEqual(yahoo.request_chart('1d')['meta']['symbol'],'^GDAXI')
+            self.assertEqual(yahoo.request_chart('1d','ES=F')['meta']['symbol'],'ES=F')
+            self.assertEqual(yahoo.request_chart('1d')['meta']['symbol'],'^GDAXI')
+            self.assertEqual(request.call_count,2)
+        bars=yahoo.candles_from_chart(es,'daily',timestamp('2026-10-23T01:00:00Z'),'ES=F')
+        self.assertEqual(bars[0].start,timestamp('2026-10-21T00:00:00Z'))
+        self.assertTrue(any('roll gaps' in n for n in bars.notes))
+        with self.assertRaises(ValueError):yahoo.candles_from_chart(es,'daily',timestamp('2026-10-23T01:00:00Z'))
+        for symbol,exchange in [('ES=F','CME'),('CL=F','NYMEX')]:
+            validate_asset(self.asset|dict(symbol=symbol,exchange=exchange,market='futures'))
+            with self.assertRaises(ValueError):validate_asset(self.asset|dict(symbol=symbol,exchange=exchange))
+
+    def test_futures_overnight_buckets_use_new_york_dates(self):
+        stamps=['2026-10-22T04:00:00Z','2026-10-22T08:00:00Z','2026-10-23T00:00:00Z',
+                '2026-10-23T02:12:31Z']
+        opening=timestamp('2026-10-22T04:00:00Z')//1000
+        closing=timestamp('2026-10-23T03:59:00Z')//1000
+        chart=self.chart(stamps,'4h',[[dict(start=opening,end=closing)]])
+        chart['meta'].update(symbol='ES=F',currency='USD',instrumentType='FUTURE',exchangeName='CME',
+                             exchangeTimezoneName='America/New_York')
+        bars=yahoo.candles_from_chart(chart,'4h',timestamp('2026-10-23T04:15:00Z'),'ES=F')
+        self.assertEqual(len(bars),3)
+        self.assertEqual(bars[-1].end,closing*1000)
+
     def test_scanner_baseline_cache_and_provider_deadline(self):
         from scanner import ProviderCandles
         from scan_schedule import next_due

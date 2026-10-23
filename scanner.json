@@ -438,10 +438,10 @@
     },
     {
       "id": "ES",
-      "name": "E-mini S&P 500 futures",
+      "name": "E-mini S&P 500 \u2014 Yahoo selected-contract futures",
       "market": "futures",
-      "provider": "csv",
-      "enabled": false,
+      "provider": "yahoo",
+      "enabled": true,
       "timeframes": [
         "monthly",
         "weekly",
@@ -450,8 +450,11 @@
       ],
       "path": "data/candles/{asset}-{timeframe}.csv",
       "tradingview_symbol": "",
-      "unavailable_reason": "Exact futures provider, continuous-contract roll convention and feed access await configuration. No spot/CFD substitution.",
-      "portfolio": true
+      "portfolio": true,
+      "feed_confirmed": true,
+      "timeframe_providers": {},
+      "symbol": "ES=F",
+      "exchange": "CME"
     },
     {
       "id": "RDW",
@@ -493,6 +496,49 @@
       "portfolio": true,
       "feed_confirmed": true,
       "timeframe_providers": {}
+    },
+    {
+      "id": "XAUUSD",
+      "portfolio": true,
+      "enabled": true,
+      "feed_confirmed": true,
+      "timeframes": [
+        "monthly",
+        "weekly",
+        "daily",
+        "4h"
+      ],
+      "tradingview_symbol": "",
+      "timeframe_providers": {},
+      "name": "Gold \u2014 Tiingo XAU/USD",
+      "symbol": "XAU/USD",
+      "provider": "tiingo",
+      "exchange": "Tiingo",
+      "market": "commodity"
+    },
+    {
+      "id": "FETUSD",
+      "portfolio": true,
+      "enabled": true,
+      "feed_confirmed": true,
+      "timeframes": [
+        "monthly",
+        "weekly",
+        "daily",
+        "4h"
+      ],
+      "tradingview_symbol": "",
+      "timeframe_providers": {
+        "1h": "kraken",
+        "4h": "kraken",
+        "daily": "kraken",
+        "weekly": "kraken"
+      },
+      "name": "FET/USD spot",
+      "symbol": "FET/USD",
+      "provider": "twelvedata",
+      "exchange": "Binance",
+      "market": "crypto"
     }
   ],
   "request_spacing_seconds": 8,

@@ -15,7 +15,9 @@ begin
    provider:=coalesce(overrides->>frame,asset->>'provider');
    if provider in ('twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo') and (coalesce(asset->>'symbol','')='' or asset->>'feed_confirmed' is distinct from 'true') then raise exception 'Confirm exact feed';end if;
    if provider='yahoo' then
-    if asset->>'symbol' is distinct from '^GDAXI' or asset->>'exchange' is distinct from 'XETRA' or asset->>'market' is distinct from 'index' then raise exception 'Yahoo requires the confirmed ^GDAXI DAX cash index, XETRA exchange and index market';end if;
+    if not coalesce(((asset->>'symbol'='^GDAXI' and asset->>'exchange'='XETRA' and asset->>'market'='index')
+         or (asset->>'symbol'='ES=F' and asset->>'exchange'='CME' and asset->>'market'='futures')
+         or (asset->>'symbol'='CL=F' and asset->>'exchange'='NYMEX' and asset->>'market'='futures')), false) then raise exception 'Confirm a supported exact Yahoo index or futures symbol, exchange and market';end if;
    end if;
    if provider='fmp' then
     if frame not in ('daily','weekly','monthly') or coalesce(asset->>'symbol','') not in ('^GSPC','^GDAXI') or asset->>'exchange' is distinct from 'INDEX' then raise exception 'FMP requires a confirmed cash index and daily/weekly/monthly candles';end if;
@@ -33,7 +35,11 @@ begin
     if asset->>'provider'='oanda' and asset->>'exchange' is distinct from 'OANDA' then raise exception 'Select OANDA exchange';end if;
    end if;
    if provider='tiingo' then
-    if coalesce(asset->>'symbol','') !~ '^[A-Z]{3}/[A-Z]{3}$' then raise exception 'Tiingo requires an exact forex BASE/QUOTE pair';end if;
+    if asset->>'symbol' in ('USOIL/USD','XAU/USD') and asset->>'market'='commodity' then
+     if coalesce(asset->>'tradingview_symbol','')<>'' then raise exception 'Tiingo commodities have no verified TradingView mapping';end if;
+    else
+     if coalesce(asset->>'symbol','') !~ '^[A-Z]{3}/[A-Z]{3}$' or asset->>'symbol'='XAU/USD' or asset->>'market' in ('commodity','commodities','futures') then raise exception 'Tiingo requires an exact forex pair or verified commodity series';end if;
+    end if;
     if asset->>'provider'='tiingo' and asset->>'exchange' is distinct from 'Tiingo' then raise exception 'Select Tiingo exchange';end if;
    end if;
   end loop;

@@ -87,6 +87,18 @@ class TiingoTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'different'):
                 fetch_tiingo(oil,'daily')
 
+    def test_gold_commodity_identity_and_calendar(self):
+        from market_calendar import is_forex
+        gold=self.asset|dict(id='XAUUSD',symbol='XAU/USD',market='commodity',tradingview_symbol='')
+        validate_asset(gold)
+        self.assertFalse(is_forex(gold))
+        with patch('tiingo_feed.request_json',return_value=self.data(ticker='xauusd')) as request:
+            bars=fetch_tiingo(gold,'daily',end='2026-10-06T00:00:00Z')
+            self.assertEqual(request.call_args.args[0],'XAU/USD')
+            self.assertIn('gold OHLC',bars.notes[0])
+        for change in [dict(market='forex'),dict(tradingview_symbol='OANDA:XAUUSD'),dict(symbol='GC/USD')]:
+            with self.assertRaises(ValueError):validate_asset(gold|change)
+
     def test_errors_sanitized_and_auth_classified(self):
         for code,body,expected in [(403,b'{"detail":"Invalid token. private"}','token'),(403,b'private','access'),(429,b'private','quota')]:
             with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,dict(DATA_DIR=folder,TIINGO_API_KEY='secret')):

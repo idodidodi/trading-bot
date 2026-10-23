@@ -1,4 +1,4 @@
-"""Delayed Yahoo DAX cash-index OHLC. Never turn quote snapshots into candles."""
+"""Delayed Yahoo index and selected-contract futures OHLC, never quote snapshots."""
 from datetime import datetime, timedelta, timezone
 import json
 import math
@@ -13,22 +13,35 @@ DELAY_MS = 16 * 60 * 1000  # 15-minute feed delay plus publication margin.
 BERLIN = ZoneInfo('Europe/Berlin')
 UTC = timezone.utc
 _cache = {}
+INSTRUMENTS = {
+    '^GDAXI': dict(exchange='XETRA', market='index', currency='EUR', kind='INDEX',
+                   venue='GER', zone='Europe/Berlin', label='DAX cash index'),
+    'ES=F': dict(exchange='CME', market='futures', currency='USD', kind='FUTURE',
+                 venue='CME', zone='America/New_York', label='E-mini S&P 500 futures'),
+    'CL=F': dict(exchange='NYMEX', market='futures', currency='USD', kind='FUTURE',
+                 venue='NYM', zone='America/New_York', label='WTI crude oil futures'),
+}
 
 
 def validate_feed(asset, timeframe):
-    if (timeframe not in FRAMES or asset.get('symbol') != '^GDAXI'
-            or asset.get('exchange') != 'XETRA' or asset.get('market') != 'index'
+    instrument = INSTRUMENTS.get(asset.get('symbol'))
+    if (instrument is None or timeframe not in FRAMES
+            or asset.get('exchange') != instrument['exchange'] or asset.get('market') != instrument['market']
             or asset.get('feed_confirmed') is not True):
-        raise ValueError('Yahoo requires the confirmed ^GDAXI DAX cash index, XETRA exchange and index market')
+        raise ValueError('Confirm a supported exact Yahoo index or futures symbol, exchange and market')
 
 
-def request_chart(interval):
+def request_chart(interval, symbol='^GDAXI'):
+    if symbol not in INSTRUMENTS:
+        raise ValueError('Unsupported Yahoo instrument')
     now = time.time()
-    cached = _cache.get(interval)
+    key = (symbol, interval)
+    cached = _cache.get(key)
     if cached and now - cached[0] < 300:
         return cached[1]
     params = dict(interval=interval, range='10y' if interval == '1d' else '1y', includePrePost='false')
-    url = 'https://query1.finance.yahoo.com/v8/finance/chart/%5EGDAXI?' + urllib.parse.urlencode(params)
+    url = ('https://query1.finance.yahoo.com/v8/finance/chart/' + urllib.parse.quote(symbol, safe='')
+           + '?' + urllib.parse.urlencode(params))
     request = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
@@ -43,18 +56,20 @@ def request_chart(interval):
                          f'Yahoo candle request failed (HTTP {code}); retry later') from None
     except (OSError, ValueError, KeyError, TypeError):
         raise ValueError('Yahoo candle response unavailable or malformed; retry later') from None
-    _cache[interval] = (now, result)
+    _cache[key] = (now, result)
     return result
 
 
-def candles_from_chart(result, timeframe, now):
+def candles_from_chart(result, timeframe, now, symbol='^GDAXI'):
     from scanner import Candle, ProviderCandles, check_candles, interval_end
     interval = timeframe if timeframe in ('1h', '4h') else '1d'
     try:
         meta = result['meta']
-        if (meta['symbol'] != '^GDAXI' or meta['currency'] != 'EUR'
-                or meta['instrumentType'] != 'INDEX' or meta['exchangeName'] != 'GER'
-                or meta['exchangeTimezoneName'] != 'Europe/Berlin'
+        instrument = INSTRUMENTS[symbol]
+        zone = ZoneInfo(instrument['zone'])
+        if (meta['symbol'] != symbol or meta['currency'] != instrument['currency']
+                or meta['instrumentType'] != instrument['kind'] or meta['exchangeName'] != instrument['venue']
+                or meta['exchangeTimezoneName'] != instrument['zone']
                 or meta['dataGranularity'] != interval):
             raise ValueError('Yahoo returned a different instrument, venue, currency or interval')
         stamps = result['timestamp']
@@ -72,11 +87,11 @@ def candles_from_chart(result, timeframe, now):
                     start, end = session['start'], session['end']
                     if end <= start:
                         raise ValueError('Invalid Yahoo session boundaries')
-                    sessions[datetime.fromtimestamp(start, BERLIN).date()] = (start, end)
+                    sessions[datetime.fromtimestamp(start, zone).date()] = (start, end)
         bars, rejected_dates = [], set()
         excluded = 0
         for i, stamp in enumerate(stamps):
-            local = datetime.fromtimestamp(stamp, BERLIN)
+            local = datetime.fromtimestamp(stamp, zone)
             values = [prices[k][i] for k in ('open', 'high', 'low', 'close')]
             if interval != '1d':
                 session = sessions.get(local.date())
@@ -119,9 +134,11 @@ def candles_from_chart(result, timeframe, now):
             aggregated.append(Candle(int(start.timestamp()*1000), end, members[0].open,
                                      max(c.high for c in members), min(c.low for c in members), members[-1].close))
         closed = aggregated
-    notes = ['Yahoo Finance ^GDAXI DAX cash index in EUR; delayed data; 16-minute publication margin',
-             'Native session-aligned intraday OHLC; session ends from Yahoo metadata' if interval != '1d'
+    notes = [f"Yahoo Finance {symbol} {instrument['label']} in {instrument['currency']}; delayed data; 16-minute publication margin",
+             'Native intraday OHLC; bucket boundaries from Yahoo metadata (not an independent exchange calendar)' if interval != '1d'
              else 'Daily session dates use conservative UTC day closes; weekly/monthly aggregated from daily OHLC']
+    if instrument['kind'] == 'FUTURE':
+        notes.append('Yahoo-selected futures contracts; provider-defined roll and adjustment convention; roll gaps possible; no local back-adjustment')
     if rejected_dates:
         notes.append(f'{len(rejected_dates)} source date(s) with missing OHLC excluded; affected aggregate periods omitted')
     if excluded:
@@ -139,5 +156,5 @@ def candles_from_chart(result, timeframe, now):
 
 def fetch_yahoo(asset, timeframe):
     validate_feed(asset, timeframe)
-    return candles_from_chart(request_chart(timeframe if timeframe in ('1h', '4h') else '1d'),
-                              timeframe, int(time.time()*1000))
+    return candles_from_chart(request_chart(timeframe if timeframe in ('1h', '4h') else '1d', asset['symbol']),
+                              timeframe, int(time.time()*1000), asset['symbol'])

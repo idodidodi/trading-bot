@@ -2,6 +2,9 @@
 
 ## Unreleased — 2026-10-23
 
+- Connect ES to Yahoo-selected E-mini S&P 500 futures, gold XAU/USD to Tiingo, and FET/USD spot to Kraken (with Twelve Data monthly candles). Keep futures, gold and crypto feed identities separate.
+- Verify and back up saved portfolios before activation. Keep the existing Tiingo USOIL series as chosen; Yahoo CL=F futures require a separate explicit opt-in.
+
 - Add Yahoo delayed DAX cash-index OHLC for hourly, 4h, daily, weekly and monthly scanning. Validate the exact index and exclude live quote snapshots and unfinished candles, including a 16-minute publication margin.
 - Use native intraday session boundaries and daily-derived calendar aggregates; disclose missing source OHLC. Add Yahoo to Assets and cloud provider validation.
 - Add backup-protected DAX activation for existing databases; retain selected timeframes and establish separate feed baselines.

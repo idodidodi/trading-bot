@@ -15,13 +15,15 @@ FRAMES = {'1h': '1hour', '4h': '4hour', 'daily': '1day', 'weekly': '1day', 'mont
 
 
 def validate_feed(asset, timeframe):
-    oil = asset.get('symbol') == 'USOIL/USD' and asset.get('market') == 'commodity'
-    if timeframe not in FRAMES or (not oil and not re.fullmatch(r'[A-Z]{3}/[A-Z]{3}', asset.get('symbol', ''))):
+    if asset.get('symbol') == 'XAU/USD' and asset.get('market') != 'commodity':
+        raise ValueError('Classify Tiingo XAU/USD as a gold commodity feed')
+    commodity = asset.get('symbol') in ('USOIL/USD', 'XAU/USD') and asset.get('market') == 'commodity'
+    if timeframe not in FRAMES or (not commodity and not re.fullmatch(r'[A-Z]{3}/[A-Z]{3}', asset.get('symbol', ''))):
         raise ValueError('Tiingo requires an exact forex BASE/QUOTE pair and supported timeframe')
-    if asset.get('market') in ('commodity', 'commodities', 'futures') and not oil:
-        raise ValueError('Only the verified Tiingo USOIL/USD commodity series is supported')
-    if oil and asset.get('tradingview_symbol'):
-        raise ValueError('Tiingo derived WTI has no verified TradingView chart mapping')
+    if asset.get('market') in ('commodity', 'commodities', 'futures') and not commodity:
+        raise ValueError('Only verified Tiingo USOIL/USD and XAU/USD commodity series are supported')
+    if commodity and asset.get('tradingview_symbol'):
+        raise ValueError('Tiingo commodity series have no verified TradingView chart mapping')
     if asset.get('exchange') not in ('Tiingo', 'Tiingo-UTC') or asset.get('feed_confirmed') is not True:
         raise ValueError('Confirm the exact Tiingo forex feed in Assets')
 
@@ -139,7 +141,8 @@ def fetch_tiingo(asset, timeframe, *, start=None, end=None):
     if timeframe in ('weekly','monthly'):
         closed = aggregate_daily(closed,timeframe,cutoff)
     label = ('Tiingo tokenized derived US oil price (WTI); separate from FOREXCOM:USOIL'
-             if asset.get('symbol') == 'USOIL/USD' else 'Tiingo forex OHLC')
+             if asset.get('symbol') == 'USOIL/USD' else 'Tiingo XAU/USD gold OHLC; separate from gold futures'
+             if asset.get('symbol') == 'XAU/USD' else 'Tiingo forex OHLC')
     result = ProviderCandles(closed, [label + '; UTC boundaries' +
         ('; aggregated from daily OHLC, complete calendar periods only' if timeframe in ('weekly','monthly') else '; native '+FRAMES[timeframe])])
     return result
