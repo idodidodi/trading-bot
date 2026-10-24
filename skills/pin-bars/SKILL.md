@@ -14,7 +14,7 @@ The supplied [MT4 source](references/EMA_PinBar_Alert.mq4) is the strategy refer
 - Fast EMA: 8, applied to closes.
 - Slow EMA: 21, applied to closes.
 - Pin-Bar ratio: 2.0.
-- Maximum short-wick ratio: 0.20.
+- Maximum short-wick ratio: 0.66.
 
 Allow explicit user overrides and report the actual parameters. Use the EMA values at the signal candle, including its close. EMA recurrence is `EMA[t] = alpha * close[t] + (1 - alpha) * EMA[t-1]`, with `alpha = 2 / (period + 1)`. State the seed convention and available history when calculating outside MT4; the source delegates EMA calculation to `iMA` and does not specify its initialization. Do not claim exact MT4 parity without checking against exported MT4 values. Aim for 250 closed candles; require at least the slow EMA period and flag shorter-than-recommended history as limited. Exclude the chosen seed/warm-up region from signal comparisons.
 
@@ -55,7 +55,7 @@ lower_wick <= upper_wick * max_short_wick_ratio
 high >= fast_ema OR high >= slow_ema
 ```
 
-The short wick must not exceed 20% of the long wick; equality at this limit passes. This is an explicit user override of the MT4 shape definition, applied to both EMA and BB Pin-Bars.
+The short wick must not exceed 66% of the long wick; equality at this limit passes. This is an explicit user override of the MT4 shape definition, applied to both EMA and BB Pin-Bars.
 
 Use the strict inequalities exactly: a wick equal to twice the body or equal opposing wicks fails. For bearish signals only, equal EMAs or a close equal to the slow EMA also fails. The bullish EMA alignment and close-above-slow filters are disabled by user request; a dominant lower wick gives bullish bias regardless of candle body color. Touching an EMA exactly passes the touch condition. The touch rule uses OR, so touching either EMA is enough. Do not require touching both or crossing and reclaiming the fast EMA.
 

@@ -37,7 +37,7 @@ def ema(closes, period):
     return result
 
 
-def direction(bar, fast, slow, ratio, max_short_wick_ratio=0.20):
+def direction(bar, fast, slow, ratio, max_short_wick_ratio=0.66):
     body = abs(bar.open - bar.close)
     lower = min(bar.open, bar.close) - bar.low
     upper = bar.high - max(bar.open, bar.close)

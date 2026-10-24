@@ -37,9 +37,9 @@ class PinBarTests(unittest.TestCase):
         self.assertIsNone(pin_bars.direction(bearish,101,102,2))
         self.assertEqual(pin_bars.direction(replace(bearish,open=90),93,95,2),'bearish')
 
-    def test_marked_eurusd_rejected_but_short_nose_preserves_bullish_override(self):
+    def test_marked_eurusd_passes_relaxed_nose_limit_and_preserves_bullish_override(self):
         b = Candle(1000,2000,1.11885,1.119349,1.1175,1.11876)
-        self.assertIsNone(pin_bars.direction(b,1.1180955746596948,1.1192357959604202,2))
+        self.assertEqual(pin_bars.direction(b,1.1180955746596948,1.1192357959604202,2),'bullish')
         self.assertEqual(pin_bars.direction(replace(b,high=1.119),1.1180955746596948,1.1192357959604202,2),'bullish')
 
     def test_short_wick_boundaries_both_strategies_and_directions(self):
@@ -54,10 +54,10 @@ class PinBarTests(unittest.TestCase):
                         levels = (70, 100) if mirror else (100, 130)
                     return engine.direction(b, *levels, 2)
                 expected = 'bearish' if mirror else 'bullish'
-                for nose in (0, 1, 2, 2.001):
+                for nose in (0, 20, 33, 33.001):
                     with self.subTest(engine=engine.STRATEGY, mirror=mirror, nose=nose):
-                        b = Candle(1000, 2000, 110, 111+nose, 100, 111)
-                        self.assertEqual(classify(b), expected if nose <= 2 else None)
+                        b = Candle(1000, 2000, 150, 151+nose, 100, 151)
+                        self.assertEqual(classify(b), expected if nose <= 33 else None)
                 # Twice the body is insufficient; a zero-body long wick remains valid.
                 self.assertIsNone(classify(Candle(1000, 2000, 110, 115, 100, 115)))
                 self.assertEqual(classify(Candle(1000, 2000, 110, 112, 100, 110)), expected)
