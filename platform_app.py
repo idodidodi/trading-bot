@@ -10,7 +10,7 @@ import math
 import os
 from pathlib import Path
 import re
-import sqlite3
+from postgres_store import DatabaseError, OperationalError, database_busy, PoolTimeout, WorkerOwned, test_database
 import signal
 import ssl
 import sys
@@ -137,38 +137,30 @@ def validate_signal(body, rules):
     return clean
 
 
-def database_busy(exc):
-    return (isinstance(exc, sqlite3.OperationalError) and
-            (getattr(exc, 'sqlite_errorcode', 0) & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
-             or 'locked' in str(exc).lower() or 'busy' in str(exc).lower()))
-
-
 class Store:
-    def __init__(self, path):
-        self.path = path
+    def __init__(self, path=None):
+        # Legacy path arguments are ignored; never create or open a local DB.
+        self.path = None
+        self.guard = None
         with self.connect() as db:
-            db.execute('PRAGMA journal_mode=WAL')
-            db.execute('''CREATE TABLE IF NOT EXISTS signals (
-                id TEXT PRIMARY KEY, payload TEXT NOT NULL, received REAL NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
-                next_attempt REAL NOT NULL DEFAULT 0, error TEXT)''')
-            from finding_feedback import initialize
-            initialize(db)
-            from managed_assets import initialize as initialize_assets
-            initialize_assets(db)
-            from cloud_sync import initialize as initialize_sync
-            initialize_sync(db)
-            from local_settings import initialize as initialize_settings
-            initialize_settings(db)
+            version = db.execute('SELECT version FROM schema_version WHERE id=1').fetchone()
+            if version != (1,):
+                raise RuntimeError('Apply the prepared Postgres schema before starting')
 
-    @contextmanager
     def connect(self):
-        connection = sqlite3.connect(self.path, timeout=5)
-        try:
-            with connection:
-                yield connection
-        finally:
-            connection.close()
+        from postgres_store import connect
+        if self.guard is not None:
+            self.guard.check()
+        return connect()
+
+    def acquire_worker(self):
+        from postgres_store import WorkerGuard
+        if self.guard is None:
+            with self.connect() as db:
+                if db.execute('SELECT enabled FROM runtime_control WHERE id=1').fetchone() != (True,):
+                    raise RuntimeError('Runtime activation is disabled; complete the manual migration first')
+            self.guard = WorkerGuard()
+        return self.guard
 
     def insert(self, payload, delivery_status='pending',catchup_id=None):
         # Structural confirmations remain findings, without a second Telegram alert.
@@ -179,12 +171,15 @@ class Store:
         if payload.get('review_slot'): identity.append(payload['review_slot'])
         key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
         with self.connect() as db:
-            result = db.execute('INSERT OR IGNORE INTO signals(id,payload,received,status) VALUES(?,?,?,?)',
+            result = db.execute('INSERT INTO signals(id,payload,received,status) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING',
                                 (key, json.dumps(payload), time.time(),delivery_status))
             if result.rowcount==1 and catchup_id:
-                db.execute('CREATE TABLE IF NOT EXISTS catchup_findings(command_id TEXT,signal_id TEXT,PRIMARY KEY(command_id,signal_id))')
-                db.execute('INSERT OR IGNORE INTO catchup_findings VALUES(?,?)',(catchup_id,key))
+                db.require_table('catchup_findings')
+                db.execute('INSERT INTO catchup_findings VALUES(%s,%s) ON CONFLICT DO NOTHING',(catchup_id,key))
             inserted = result.rowcount == 1
+            if inserted:
+                from postgres_store import remember_finding
+                remember_finding(db, 'live', payload)
             if inserted:
                 from telegram_routing import remember
                 remember(db, signal_alert_event(payload), payload.get('market'), 'rsi')
@@ -202,13 +197,11 @@ class Store:
             print(f'[PROD {stamp}] {event}: {details}', flush=True)
         try:
             with self.connect() as db:
-                db.execute("CREATE TABLE IF NOT EXISTS activity_log(id INTEGER PRIMARY KEY, occurred REAL, event TEXT, details TEXT)")
-                db.execute("INSERT INTO activity_log(occurred,event,details) VALUES(?,?,?)", (time.time(), event, details))
-        except sqlite3.OperationalError as exc:
-            if not database_busy(exc):
-                raise
+                db.require_table('activity_log')
+                db.execute('INSERT INTO activity_log(occurred,event,details) VALUES(%s,%s,%s)', (time.time(), event, details))
+        except Exception as exc:
             # Failure reporting must not kill a worker when SQLite is busy.
-            print(f'{event}: {details} (activity database busy)', file=sys.stderr, flush=True)
+            print(f'{event}: {details} (activity database unavailable)', file=sys.stderr, flush=True)
 
     def rows(self):
         with self.connect() as db:
@@ -229,14 +222,7 @@ def signal_alert_delivered(store, payload):
     # Include pre-grouping deliveries so upgrading does not repeat an alert
     # when another reference pivot for an already delivered candle arrives.
     with store.connect() as db:
-        return db.execute('''SELECT 1 FROM signals
-            WHERE status IN ('sent','suppressed')
-            AND json_extract(payload,'$.symbol')=?
-            AND json_extract(payload,'$.timeframe')=?
-            AND json_extract(payload,'$.direction')=?
-            AND json_extract(payload,'$.pivot2')=?
-            AND CASE WHEN json_extract(payload,'$.signal_status')='provisional'
-                THEN 'provisional' ELSE 'confirmed' END=? LIMIT 1''',
+        return db.execute("SELECT 1 FROM signals\n            WHERE status IN ('sent','suppressed')\n            AND (payload::jsonb->>'symbol')=%s\n            AND (payload::jsonb->>'timeframe')=%s\n            AND (payload::jsonb->>'direction')=%s\n            AND (payload::jsonb->>'pivot2')::bigint=%s\n            AND CASE WHEN (payload::jsonb->>'signal_status')='provisional'\n                THEN 'provisional' ELSE 'confirmed' END=%s LIMIT 1",
             signal_alert_identity(payload)).fetchone() is not None
 
 
@@ -326,22 +312,32 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
     while not stop.is_set():
         current_dry_run = delivery_dry_run(store, dry_run)
         with store.connect() as db:
-            note=db.execute("SELECT id,text,attempts FROM notification_queue WHERE status='pending' AND next_attempt<=? ORDER BY rowid LIMIT 1",(time.time(),)).fetchone()
+            note=db.execute("""WITH picked AS (SELECT id FROM notification_queue n
+                WHERE status='pending' AND next_attempt<=extract(epoch from clock_timestamp())
+                AND NOT EXISTS(SELECT 1 FROM migration_holds h WHERE h.queue='notification_queue' AND h.key=n.id)
+                ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1)
+                UPDATE notification_queue n SET next_attempt=extract(epoch from clock_timestamp())+90
+                FROM picked p WHERE n.id=p.id RETURNING n.id,n.text,n.attempts""").fetchone()
         if note:
             key,text,attempts=note
             try:
                 # Strategy alerts share RSI's sound policy, even overnight.
                 is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:'))
                 outcome = 'dry-run' if current_dry_run else deliver_routed(store, token, chat_id, text, 'notification:' + key, send_telegram, silent=not is_signal and quiet_hours(), notification_key=key)
-                with store.connect() as db:db.execute('UPDATE notification_queue SET status=? WHERE id=?',(outcome,key))
+                with store.connect() as db:db.execute('UPDATE notification_queue SET status=%s WHERE id=%s',(outcome,key))
                 store.log('Queued notification delivered',outcome)
             except Exception as exc:
                 from telegram_delivery import DeliveryPending
                 store.log('Queued notification delayed', str(exc) if isinstance(exc, DeliveryPending) else 'Delivery failed')
-                with store.connect() as db:db.execute('UPDATE notification_queue SET attempts=?,next_attempt=? WHERE id=?',(attempts+1,time.time()+min(300,2**min(attempts+1,9)),key))
+                with store.connect() as db:db.execute('UPDATE notification_queue SET attempts=%s,next_attempt=%s WHERE id=%s',(attempts+1,time.time()+min(300,2**min(attempts+1,9)),key))
             continue
         with store.connect() as db:
-            row = db.execute("SELECT id,payload,attempts FROM signals WHERE status='pending' AND next_attempt<=? ORDER BY received LIMIT 1", (time.time(),)).fetchone()
+            row = db.execute("""WITH picked AS (SELECT id FROM signals s
+                WHERE status='pending' AND next_attempt<=extract(epoch from clock_timestamp())
+                AND NOT EXISTS(SELECT 1 FROM migration_holds h WHERE h.queue='signals' AND h.key=s.id)
+                ORDER BY received FOR UPDATE SKIP LOCKED LIMIT 1)
+                UPDATE signals s SET next_attempt=extract(epoch from clock_timestamp())+90
+                FROM picked p WHERE s.id=p.id RETURNING s.id,s.payload,s.attempts""").fetchone()
         if not row:
             stop.wait(1)
             continue
@@ -351,7 +347,7 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             # Retire legacy clock reviews and confirmation alerts, including retries.
             # Keep their findings and completed delivery history intact.
             with store.connect() as db:
-                db.execute("UPDATE signals SET status='cancelled',error=NULL WHERE id=?", (key,))
+                db.execute("UPDATE signals SET status='cancelled',error=NULL WHERE id=%s", (key,))
             continue
         store.log('Delivery attempt', f'{key} · attempt {attempts + 1}')
         try:
@@ -362,7 +358,7 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             else:
                 outcome = deliver_routed(store, token, chat_id, message(payload), signal_alert_event(payload), send_telegram, payload=payload)
             with store.connect() as db:
-                db.execute('UPDATE signals SET status=?,attempts=?,error=NULL WHERE id=?',
+                db.execute('UPDATE signals SET status=%s,attempts=%s,error=NULL WHERE id=%s',
                            (outcome, attempts + 1, key))
             store.log('Delivery completed', outcome)
         except Exception as exc:
@@ -370,7 +366,7 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             error = str(exc) if isinstance(exc, RuntimeError) else 'Delivery failed'
             store.log('Delivery failed', error)
             with store.connect() as db:
-                db.execute('UPDATE signals SET attempts=?,next_attempt=?,error=? WHERE id=?',
+                db.execute('UPDATE signals SET attempts=%s,next_attempt=%s,error=%s WHERE id=%s',
                            (attempts + 1, time.time() + min(300, 2 ** min(attempts + 1, 9)), error, key))
         stop.wait(0.1)
 
@@ -404,6 +400,13 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
             if route in ('/', '/signals', '/logs', '/backtest', '/assets', '/candle', '/dashboard'):
                 self.respond(200, (ROOT / 'web/index.html').read_text(encoding='utf-8'), 'text/html; charset=utf-8')
                 return
+            if route == '/web/config.js' and not test_database():
+                from dashboard_server import browser_config
+                self.respond(200,'window.DASHBOARD_CONFIG = '+json.dumps(browser_config(ROOT))+';','text/javascript')
+                return
+            if route.startswith('/api/') and not test_database():
+                self.respond(403,{'error':'Use authenticated Supabase APIs'})
+                return
             if route.startswith('/web/'):
                 if route == '/web/version.json':
                     from version_info import local_versions
@@ -428,6 +431,8 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     self.respond(404, {'error':str(exc)})
                 except (ValueError, TypeError):
                     self.respond(400, {'error':'Invalid dashboard request'})
+                except (DatabaseError, PoolTimeout, WorkerOwned):
+                    self.respond(503, {'error':'Postgres unavailable; processing is paused'})
                 return
             if self.path == '/health':
                 self.respond(200, {'ok': True, 'dry_run': delivery_dry_run(store, dry_run), 'rules': rules})
@@ -441,7 +446,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 coverage = ''
                 scan_note = 'Waiting for the first scan cycle.'
                 with store.connect() as db:
-                    exists = db.execute("SELECT name FROM sqlite_master WHERE name='scanner_status'").fetchone()
+                    exists = db.execute("SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='scanner_status'").fetchone()
                     state = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone() if exists else None
                 if state:
                     scan_state = json.loads(state[0])
@@ -480,6 +485,9 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 self.respond(404, {'error': 'Not found'})
 
         def do_POST(self):
+            if dashboard and not test_database():
+                self.respond(403,{'error':'Use authenticated Supabase APIs'})
+                return
             if dashboard and self.path in ('/api/feedback', '/api/assets', '/api/backtests', '/api/finding-state','/api/catchup','/api/updates','/api/csv-backtests','/api/connection-test','/api/local-settings'):
                 from finding_feedback import save
                 host = self.headers.get('Host')
@@ -535,8 +543,8 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                     self.respond(409, {'error': str(exc)})
                 except (ValueError, TypeError, OSError) as exc:
                     self.respond(400, {'error': str(exc) if self.path=='/api/csv-backtests' and isinstance(exc,ValueError) else 'Invalid asset configuration or feedback'})
-                except sqlite3.Error:
-                    self.respond(503, {'error': 'Local storage unavailable. Try saving again.'})
+                except (DatabaseError, PoolTimeout, WorkerOwned):
+                    self.respond(503, {'error': 'Postgres unavailable. Reload before retrying a save.'})
                 return
             if dashboard or self.path != '/webhook':
                 self.respond(404, {'error': 'Not found'})
@@ -593,6 +601,9 @@ def main():
     runtime = configure(ROOT)
     from version_info import local_versions
     local_versions()
+    if os.environ.get('TRADING_BOT_ROLE') == 'dashboard':
+        from dashboard_server import serve
+        return serve(ROOT,int(os.environ.get('PORT','8080')))
     rules = load_rules()
     secret = os.environ.get('WEBHOOK_SECRET', '')
     token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -603,7 +614,8 @@ def main():
         raise SystemExit('Set WEBHOOK_SECRET to a random value of at least 32 characters in .env.')
     data = Path(os.environ.get('DATA_DIR', str(ROOT / 'data')))
     data.mkdir(parents=True, exist_ok=True)
-    store = Store(data / 'signals.sqlite3')
+    store = Store()
+    store.acquire_worker()
     from local_settings import delivery_dry_run
     dry_run = delivery_dry_run(store, dry_run)
     from telegram_routing import read as routing_read, refresh as routing_refresh
@@ -616,29 +628,28 @@ def main():
     if not legacy_webhook:
         from scanner import load_config
         from managed_assets import ensure
-        from portfolio_upgrade import install
         ensure(store,load_config())
-        install(store)
     store.log('Platform started', 'dry-run' if dry_run else 'Telegram')
     stop = threading.Event()
-    worker = threading.Thread(target=delivery_worker, args=(store, token, chat_id, dry_run, stop), daemon=True)
+    from postgres_store import resilient_worker
+    worker = threading.Thread(target=resilient_worker(delivery_worker, 'delivery'), args=(store, token, chat_id, dry_run, stop), daemon=True)
     worker.start()
     from market_summary import worker as summary_worker
-    summary_thread = threading.Thread(target=summary_worker, args=(store, stop), name='market-summary', daemon=True)
+    summary_thread = threading.Thread(target=resilient_worker(summary_worker, 'summary'), args=(store, stop), name='market-summary', daemon=True)
     summary_thread.start()
-    from cloud_sync import worker as sync_worker
-    sync_thread = threading.Thread(target=sync_worker, args=(store, stop), daemon=True)
-    sync_thread.start()
     from paper_trading import worker as paper_worker
-    paper_thread = threading.Thread(target=paper_worker, args=(store, stop), daemon=True)
+    paper_thread = threading.Thread(target=resilient_worker(paper_worker, 'paper'), args=(store, stop), daemon=True)
     paper_thread.start()
+    from backtest_jobs import worker as replay_worker
+    replay_thread = threading.Thread(target=resilient_worker(replay_worker, 'replay'),args=(store,stop),daemon=True)
+    replay_thread.start()
     host = os.environ.get('HOST', '127.0.0.1')
     scanner_thread = None
     if not legacy_webhook:
         from scanner import load_config, scanner_worker, prepare_store
         config = load_config()
         prepare_store(store)
-        scanner_thread = threading.Thread(target=scanner_worker, args=(store, config, rules, stop), daemon=True)
+        scanner_thread = threading.Thread(target=resilient_worker(scanner_worker, 'scanner'), args=(store, config, rules, stop), daemon=True)
         scanner_thread.start()
     server = LocalHTTPServer((host, int(os.environ.get('PORT', '8080'))), handler_factory(store, rules, secret, dry_run, dashboard=True))
     from windows_update import worker as update_worker
@@ -646,7 +657,9 @@ def main():
         stop.set()
         server.shutdown()
     update_thread=threading.Thread(target=update_worker,args=(stop,update_shutdown),name='app-updater',daemon=True)
-    update_thread.start()
+    # Manual database migration releases must never update/restart themselves.
+    # This branch's updater is disabled even in frozen executables.
+    # update_thread.start()
     webhook_server = None
     if legacy_webhook:
         webhook_server = ThreadingHTTPServer((host, int(os.environ.get('WEBHOOK_PORT', '8081'))), handler_factory(store, rules, secret, dry_run))
@@ -669,8 +682,8 @@ def main():
         stop.set()
         worker.join(timeout=20)
         summary_thread.join(timeout=12)
-        sync_thread.join(timeout=12)
         paper_thread.join(timeout=16)
+        replay_thread.join(timeout=16)
         if scanner_thread:
             scanner_thread.join(timeout=21)
 

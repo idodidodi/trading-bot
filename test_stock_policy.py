@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,7 +16,7 @@ from test_paper_trading import signal,ASSET,ACCOUNT,QUOTE,NOW
 
 def instant(day):return int(datetime.fromisoformat(day).replace(tzinfo=ZoneInfo('Asia/Jerusalem')).timestamp()*1000)
 
-class StockPolicyTests(unittest.TestCase):
+class StockPolicyTests(PostgresTestCase):
     def test_schedule_uses_israel_weekdays(self):
         for day in ['2026-10-10','2026-10-11']:
             now=instant(day+'T08:15:00');self.assertFalse(scan_day(now))

@@ -15,8 +15,13 @@ def finding_id(source, signal):
     return hashlib.sha256(canonical([source, signal]).encode()).hexdigest()
 
 
+def persisted_id(db,source,signal):
+    row=db.execute("SELECT finding_id FROM finding_keys WHERE source=%s AND evidence_hash=sha256(convert_to(%s::jsonb::text,'UTF8'))",(source,canonical(signal))).fetchone()
+    return row[0] if row else finding_id(source,signal)
+
+
 def latest_report(db, root):
-    exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='backtest_runs'").fetchone()
+    exists = db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='backtest_runs'").fetchone()
     row = db.execute('SELECT report FROM backtest_runs ORDER BY id DESC LIMIT 1').fetchone() if exists else None
     saved = Path(root) / 'data/historical-2020/report.json'
     return json.loads(row[0]) if row else json.loads(saved.read_text(encoding='utf-8')) if saved.exists() else None
@@ -25,16 +30,8 @@ def latest_report(db, root):
 def initialize(db):
     from finding_state import initialize as initialize_state
     initialize_state(db)
-    db.execute('''CREATE TABLE IF NOT EXISTS finding_feedback (
-        finding_id TEXT PRIMARY KEY, source TEXT NOT NULL,
-        evidence TEXT NOT NULL, rating INTEGER CHECK(rating BETWEEN 1 AND 5),
-        comment TEXT NOT NULL, revision INTEGER NOT NULL, updated_at REAL NOT NULL)''')
-    db.execute('''CREATE TABLE IF NOT EXISTS feedback_history (
-        sequence INTEGER PRIMARY KEY AUTOINCREMENT, finding_id TEXT NOT NULL,
-        source TEXT NOT NULL, evidence TEXT NOT NULL,
-        rating INTEGER CHECK(rating BETWEEN 1 AND 5), comment TEXT NOT NULL,
-        revision INTEGER NOT NULL, updated_at REAL NOT NULL,
-        UNIQUE(finding_id, revision))''')
+    db.require_table('finding_feedback')
+    db.require_table('feedback_history')
 
 
 def save(store, root, body):
@@ -49,28 +46,22 @@ def save(store, root, body):
     if type(revision) is not int or revision < 0:
         raise ValueError('Invalid revision')
     with store.connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
         if source == 'live':
             signals = (json.loads(row[0]) for row in db.execute('SELECT payload FROM signals'))
         else:
             report = latest_report(db, root)
             signals = (s for r in report['results'] for s in r['signals']) if report else []
-        signal = next((s for s in signals if finding_id(source, s) == key), None)
+        signal = next((s for s in signals if persisted_id(db,source,s) == key), None)
         if signal is None:
             raise LookupError('Finding is no longer in this view. Reload before saving.')
-        existing = db.execute('SELECT revision FROM finding_feedback WHERE finding_id=?', (key,)).fetchone()
+        existing = db.execute('SELECT revision FROM finding_feedback WHERE finding_id=%s', (key,)).fetchone()
         if revision != (existing[0] if existing else 0):
             raise LookupError('Feedback changed in another tab. Reload before saving.')
         value = (key, source, canonical(signal), rating, comment, revision + 1, time.time())
-        db.execute('''INSERT INTO finding_feedback VALUES(?,?,?,?,?,?,?)
-            ON CONFLICT(finding_id) DO UPDATE SET rating=excluded.rating,
-            comment=excluded.comment, revision=excluded.revision, updated_at=excluded.updated_at''', value)
-        db.execute('''INSERT INTO feedback_history
-            (finding_id,source,evidence,rating,comment,revision,updated_at) VALUES(?,?,?,?,?,?,?)''', value)
-        from cloud_sync import enqueue
+        db.execute('INSERT INTO finding_feedback VALUES(%s,%s,%s,%s,%s,%s,%s)\n            ON CONFLICT(finding_id) DO UPDATE SET rating=excluded.rating,\n            comment=excluded.comment, revision=excluded.revision, updated_at=excluded.updated_at', value)
+        db.execute('INSERT INTO feedback_history\n            (finding_id,source,evidence,rating,comment,revision,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s)', value)
         feedback=dict(finding_id=key,source=source,evidence=signal,rating=rating,comment=comment,revision=revision+1,updated_at=value[-1])
-        enqueue(db,'feedback',key,feedback)
-        enqueue(db,'feedback_history',f'{key}:{revision+1}',feedback)
     return {'saved': True, 'revision': revision + 1, 'storage': 'local', 'online': 'not configured'}
 
 

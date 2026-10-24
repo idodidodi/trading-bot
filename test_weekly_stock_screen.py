@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -5,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import Candle
 from weekly_stock_screen import POLICY, local_day, resolve, week_start
 
@@ -14,7 +15,7 @@ def instant(local):
     return int(datetime.fromisoformat(local).replace(tzinfo=ZoneInfo('Asia/Jerusalem')).timestamp()*1000)
 
 
-class WeeklyStockScreenTests(unittest.TestCase):
+class WeeklyStockScreenTests(PostgresTestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

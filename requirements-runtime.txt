@@ -1,0 +1,4 @@
+psycopg[binary,pool]>=3.2,<4
+certifi
+# tzdata supports Windows and Linux images without system zoneinfo.
+tzdata

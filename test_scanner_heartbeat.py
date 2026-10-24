@@ -1,17 +1,17 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
-import sqlite3
+import psycopg
 from pathlib import Path
 import tempfile
 import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from platform_app import Store
 from scanner import next_heartbeat_at, prepare_store, scanner_heartbeat, scanner_worker
 
 
 @patch.dict('os.environ', {'TRADING_BOT_ENV': 'prod'})
-class ScannerHeartbeatTests(unittest.TestCase):
+class ScannerHeartbeatTests(PostgresTestCase):
     def test_wall_clock_schedule_before_at_and_after_quarter_hour(self):
         self.assertEqual(next_heartbeat_at(899), 900)
         self.assertEqual(next_heartbeat_at(900), 4500)
@@ -23,7 +23,7 @@ class ScannerHeartbeatTests(unittest.TestCase):
             store = Store(Path(folder) / 'signals.sqlite3')
             prepare_store(store)
             with store.connect() as db:
-                db.execute('INSERT INTO scanner_status(id,payload) VALUES(1,?)',
+                db.execute('INSERT INTO scanner_status(id,payload) VALUES(1,%s)',
                            (json.dumps({'phase': 'scanning'}),))
             finished = Mock()
             finished.is_set.side_effect = [False, False, False, True]
@@ -61,7 +61,7 @@ class ScannerHeartbeatTests(unittest.TestCase):
             prepare_store(store)
             finished=Mock()
             finished.is_set.side_effect=[False,False,True]
-            with patch.object(store,'log',side_effect=[sqlite3.OperationalError('database is locked'), None]) as write, \
+            with patch.object(store,'log',side_effect=[psycopg.OperationalError('database is locked'), None]) as write, \
                  patch('scanner.time.time',side_effect=[899,900,931]), \
                  patch('scanner.next_heartbeat_at',side_effect=[900,4500]), \
                  patch('sys.stderr'):
@@ -74,7 +74,7 @@ class ScannerHeartbeatTests(unittest.TestCase):
             store=Store(Path(folder)/'signals.sqlite3')
             stop=Mock()
             stop.wait.return_value=False
-            with patch('scanner._scanner_worker',side_effect=[sqlite3.OperationalError('database is locked'),None]) as scan, \
+            with patch('scanner._scanner_worker',side_effect=[psycopg.OperationalError('database is locked'),None]) as scan, \
                  patch('scanner.scanner_heartbeat') as heartbeat, patch('sys.stderr'):
                 scanner_worker(store,{}, {},stop)
             self.assertEqual(scan.call_count,2)

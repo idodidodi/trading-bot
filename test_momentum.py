@@ -1,10 +1,10 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 from scanner import Candle
-from platform_app import Store
 import momentum
 
 DAY=86400000
@@ -19,7 +19,7 @@ def trend():
     return bars
 
 
-class MomentumTests(unittest.TestCase):
+class MomentumTests(PostgresTestCase):
     def test_confirmed_buy_sell_and_no_chasing(self):
         bars=trend();s=momentum.candidate(bars,'X','stock')
         self.assertIsNotNone(s);self.assertEqual(s['direction'],'buy')

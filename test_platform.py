@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import copy
 import json
 import os
@@ -12,7 +13,7 @@ from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
 from generate_pine import render
-from platform_app import Store, delivery_worker, handler_factory, load_env, load_rules, validate_signal
+from platform_app import delivery_worker, handler_factory, load_env, load_rules, validate_signal
 
 
 def example():
@@ -28,7 +29,7 @@ def candle_example():
                           pivot_closed_at=payload['confirmed_at'])
 
 
-class EnvTests(unittest.TestCase):
+class EnvTests(PostgresTestCase):
     def test_notes_quotes_export_and_existing_environment(self):
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, '.env').write_text(
@@ -44,7 +45,7 @@ class EnvTests(unittest.TestCase):
                 self.assertEqual(len(os.environ), 3)
 
 
-class RulesTests(unittest.TestCase):
+class RulesTests(PostgresTestCase):
     def test_bullish_and_bearish(self):
         p = example()
         clean = validate_signal(p, load_rules())
@@ -67,7 +68,7 @@ class RulesTests(unittest.TestCase):
         self.assertNotIn('__RULES_JSON__', pine)
 
 
-class ReceiverTests(unittest.TestCase):
+class ReceiverTests(PostgresTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.store = Store(Path(self.temp.name) / 'test.sqlite3')
@@ -114,12 +115,16 @@ class ReceiverTests(unittest.TestCase):
         stop = threading.Event()
         def coordinate(payload):
             return {'status': {'acquire':'acquired', 'renew':'acquired', 'complete':'completed', 'release':'released'}[payload['action']]}
-        with patch('telegram_delivery.coordinator', side_effect=coordinate), patch('platform_app.send_telegram', side_effect=[RuntimeError('Telegram connection failed'), None]) as send:
+        with patch('platform_app.send_telegram', side_effect=[RuntimeError('Telegram connection failed'), None]) as send:
             worker = threading.Thread(target=delivery_worker, args=(self.store, 'test-token', '123', False, stop))
             worker.start()
             try:
                 deadline = time.monotonic() + 5
                 while time.monotonic() < deadline and self.store.rows()[0][1] != 'sent':
+                    if send.call_count:
+                        with self.store.connect() as db:
+                            db.execute('UPDATE telegram_delivery SET locked_until=0')
+                            db.execute('UPDATE signals SET next_attempt=0')
                     time.sleep(0.05)
                 self.assertEqual(self.store.rows()[0][1], 'sent')
                 self.assertEqual(send.call_count, 2)

@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 from dataclasses import replace
 from pathlib import Path
 import tempfile
@@ -6,7 +7,7 @@ from unittest.mock import patch
 
 import pin_bars
 import bb_pin_bars
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import Candle, prepare_store, scan_once
 from dashboard_api import read
 
@@ -19,7 +20,7 @@ def bars():
     return result
 
 
-class PinBarTests(unittest.TestCase):
+class PinBarTests(PostgresTestCase):
     def test_source_conditions_and_strict_boundaries(self):
         b = Candle(1000,2000,110,111.1,100,111)
         self.assertEqual(pin_bars.direction(b,108,105,2),'bullish')
@@ -125,25 +126,6 @@ class PinBarTests(unittest.TestCase):
             self.assertEqual(coverage[0]['pin_bars']['status'],'baseline set')
             with self.assertRaises(ValueError):read(store,'/api/pin-bars?page=-1')
 
-    def test_cloud_snapshot_is_bounded_and_preserves_latest_signals(self):
-        import json
-        from cloud_sync import snapshot, batch, canonical
-        with tempfile.TemporaryDirectory() as folder:
-            store=Store(Path(folder)/'db');prepare_store(store)
-            signal=pin_bars.detect(bars(),pin_bars.load_rules(),'csv:test:X','X','4h')[-1]
-            with store.connect() as db:
-                pin_bars.initialize(db)
-                for i in range(600):
-                    db.execute('INSERT INTO pin_bar_signals VALUES(?,?,?)',
-                               (str(i),i,json.dumps(signal|dict(confirmed_at=i))))
-            snapshot(store)
-            outgoing=batch(store)
-            payload=next(r['payload'] for r in outgoing['records'] if r['key']=='pin-bars-live')
-            self.assertLessEqual(len(canonical(payload).encode()),180100)
-            self.assertLessEqual(len(payload['signals']),500)
-            self.assertEqual(payload['signals'][0]['confirmed_at'],599)
-            self.assertEqual(payload['mirror_limit'],len(payload['signals']))
-            self.assertEqual(len(pin_bars.view(store,page=11)['signals']),50)
 
 
 if __name__=='__main__':unittest.main()

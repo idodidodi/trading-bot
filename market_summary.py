@@ -80,7 +80,7 @@ def enqueue_due(store, now):
     key = 'market-summary:' + day
     with store.connect() as db:
         initialize(db)
-        if db.execute('SELECT 1 FROM notification_queue WHERE id=?', (key,)).fetchone():
+        if db.execute('SELECT 1 FROM notification_queue WHERE id=%s', (key,)).fetchone():
             return False
     text = snapshot(now)
     # If a request crossed midnight, let the next iteration handle the new day.
@@ -88,7 +88,7 @@ def enqueue_due(store, now):
         return False
     with store.connect() as db:
         initialize(db)
-        inserted = db.execute('INSERT OR IGNORE INTO notification_queue(id,text) VALUES(?,?)',
+        inserted = db.execute('INSERT INTO notification_queue(id,text) VALUES(%s,%s) ON CONFLICT DO NOTHING',
                               (key, text)).rowcount == 1
     return inserted
 

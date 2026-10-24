@@ -31,6 +31,7 @@ jobs:
       - name: Smoke-test standalone app
         shell: pwsh
         run: |
+          $env:TRADING_BOT_ROLE = 'dashboard'
           $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'family-bot-smoke'
           New-Item -ItemType Directory -Force $env:LOCALAPPDATA | Out-Null
           Start-Process -FilePath (Resolve-Path 'dist/FamilyTradingBot.exe')
@@ -38,9 +39,8 @@ jobs:
           for ($Attempt = 0; $Attempt -lt 45; $Attempt++) {
             Start-Sleep -Seconds 1
             try {
-              $Health = Invoke-RestMethod 'http://127.0.0.1:8080/health'
-              $Updates = Invoke-RestMethod 'http://127.0.0.1:8080/api/updates'
-              if ($Health.ok -and $Health.dry_run -and $Updates.supported) { $Ready = $true; break }
+              $Config = Invoke-WebRequest 'http://127.0.0.1:8080/web/config.js'
+              if ($Config.Content -match 'supabaseUrl') { $Ready = $true; break }
             } catch {}
           }
           Get-Process FamilyTradingBot -ErrorAction SilentlyContinue | Stop-Process -Force

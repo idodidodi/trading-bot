@@ -109,7 +109,7 @@ def acknowledge(store, record_id, kind, now=None):
     if kind not in fields:raise ValueError('Unknown tracking notification type')
     with store.connect() as db:
         initialize_paper(db)
-        row=db.execute('SELECT payload FROM paper_trades WHERE id=?',(record_id,)).fetchone()
+        row=db.execute('SELECT payload FROM paper_trades WHERE id=%s',(record_id,)).fetchone()
         if not row:raise ValueError('Tracking record not found')
         record=json.loads(row[0])
         if kind.startswith('tracking_') or kind=='entry_failure':
@@ -119,12 +119,12 @@ def acknowledge(store, record_id, kind, now=None):
         else:
             field='fill_reported_at' if kind=='paper_fill' else 'close_reported_at'
             record.setdefault('notifications',{})[field]=now
-        db.execute('INSERT OR REPLACE INTO paper_trades VALUES(?,?)',(record_id,json.dumps(record)))
+        db.execute('INSERT INTO paper_trades VALUES(%s,%s) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload',(record_id,json.dumps(record)))
     return {'record_id':record_id,'kind':kind,'acknowledged_at':now}
 
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--ack',nargs=2,metavar=('RECORD_ID','KIND'));args=parser.parse_args()
-    load_env();store=Store(Path(os.environ.get('DATA_DIR',str(ROOT/'data')))/'signals.sqlite3')
+    load_env();store=Store()
     result=acknowledge(store,*args.ack) if args.ack else refresh(store)
     print(json.dumps(result,indent=2))

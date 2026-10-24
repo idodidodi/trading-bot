@@ -19,59 +19,24 @@ def validate(routes):
 
 
 def initialize(db):
-    db.execute('CREATE TABLE IF NOT EXISTS telegram_routes(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL,routes TEXT NOT NULL)')
-    db.execute('''CREATE TABLE IF NOT EXISTS telegram_event_routes(
-        event TEXT PRIMARY KEY,market TEXT,strategy TEXT,chat TEXT,general TEXT)''')
-
-
-def apply(store, value):
-    with _cache_lock:
-        if not isinstance(value, dict) or type(value.get('revision')) is not int or value['revision'] < 0:
-            raise ValueError('Invalid Telegram routing revision')
-        routes = validate(value.get('routes'))
-        with store.connect() as db:
-            initialize(db)
-            db.execute('BEGIN IMMEDIATE')
-            db.execute('''INSERT INTO telegram_routes VALUES(1,?,?) ON CONFLICT(id) DO UPDATE
-                SET revision=excluded.revision,routes=excluded.routes WHERE excluded.revision>telegram_routes.revision''',
-                (value['revision'], json.dumps(routes)))
-            row = db.execute('SELECT revision,routes FROM telegram_routes WHERE id=1').fetchone()
-        store._telegram_routes = (row[0], json.loads(row[1]))
+    db.require_table('telegram_routes')
+    db.require_table('telegram_event_routes')
 
 
 def read(store):
-    with _cache_lock:
-        cached = getattr(store, '_telegram_routes', None)
-        if cached is None:
-            with store.connect() as db:
-                initialize(db)
-                row = db.execute('SELECT revision,routes FROM telegram_routes WHERE id=1').fetchone()
-            cached = (row[0], json.loads(row[1])) if row else (0, validate({}))
-            store._telegram_routes = cached
-        return dict(revision=cached[0], routes=dict(cached[1]))
-
-
-def fetch_cloud():
-    url = os.environ.get('CLOUD_SYNC_URL', '')
-    token = os.environ.get('CLOUD_SYNC_TOKEN', '')
-    if not url.startswith('https://') or not token:
-        raise RuntimeError('Cloud routing connection is not configured')
-    request = urllib.request.Request(url, data=b'{"routing_only":true}',
-        headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            return json.loads(response.read(16385))['telegram_routing']
-    except Exception:
-        raise RuntimeError('Telegram routing unavailable; retaining cached routes') from None
+    with store.connect() as db:
+        value = db.execute('SELECT bot_runtime.read_routes()').fetchone()[0]
+        row = (value['revision'],value['routes'])
+    return dict(revision=row[0], routes=validate(row[1])) if row else dict(revision=0, routes=validate({}))
 
 
 def refresh(store):
-    apply(store, fetch_cloud())
+    return read(store)
 
 
 def remember(db, event, market, strategy):
     initialize(db)
-    db.execute('INSERT OR IGNORE INTO telegram_event_routes(event,market,strategy) VALUES(?,?,?)',
+    db.execute('INSERT INTO telegram_event_routes(event,market,strategy) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',
                (event, market, strategy))
 
 
@@ -83,7 +48,7 @@ def market_group(market):
 def recover(db, payload):
     if payload.get('market') not in (None, '', 'unknown'):
         return payload['market']
-    exists = db.execute("SELECT 1 FROM sqlite_master WHERE name='managed_config'").fetchone()
+    exists = db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='managed_config'").fetchone()
     row = db.execute('SELECT payload FROM managed_config WHERE id=1').fetchone() if exists else None
     for asset in json.loads(row[0]).get('assets', []) if row else []:
         source = f"{asset['provider']}:{asset.get('exchange') or 'configured'}:{asset.get('symbol') or asset['id']}"
@@ -100,8 +65,8 @@ def select(store, event, general, payload=None, notification_key=None):
     routes = read(store)['routes']
     with store.connect() as db:
         initialize(db)
-        db.execute('BEGIN IMMEDIATE')
-        row = db.execute('SELECT market,strategy,chat,general FROM telegram_event_routes WHERE event=?', (event,)).fetchone()
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
+        row = db.execute('SELECT market,strategy,chat,general FROM telegram_event_routes WHERE event=%s', (event,)).fetchone()
         if row and row[2] is not None:
             return row[2], row[3]
         market, strategy = (row[0], row[1]) if row else (None, None)
@@ -111,8 +76,8 @@ def select(store, event, general, payload=None, notification_key=None):
             prefix, _, key = notification_key.partition(':')
             if prefix in ('pin-bars', 'bb-pin-bars'):
                 table = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals'}[prefix]
-                exists = db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (table,)).fetchone()
-                signal = db.execute(f'SELECT payload FROM {table} WHERE id=?', (key,)).fetchone() if exists else None
+                exists = db.execute('SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=%s', (table,)).fetchone()
+                signal = db.execute(f'SELECT payload FROM {table} WHERE id=%s', (key,)).fetchone() if exists else None
                 if signal:
                     strategy, market = prefix, recover(db, json.loads(signal[0]))
         fallback = routes['general'] or general
@@ -120,8 +85,7 @@ def select(store, event, general, payload=None, notification_key=None):
         chat = routes.get(route) or fallback
         if not chat:
             raise RuntimeError('Configure a General Telegram destination')
-        db.execute('''INSERT INTO telegram_event_routes VALUES(?,?,?,?,?) ON CONFLICT(event)
-            DO UPDATE SET market=excluded.market,strategy=excluded.strategy,chat=excluded.chat,general=excluded.general''', (event, market, strategy, chat, fallback))
+        db.execute('INSERT INTO telegram_event_routes VALUES(%s,%s,%s,%s,%s) ON CONFLICT(event)\n            DO UPDATE SET market=excluded.market,strategy=excluded.strategy,chat=excluded.chat,general=excluded.general', (event, market, strategy, chat, fallback))
         return chat, fallback
 
 
@@ -135,6 +99,6 @@ def deliver_routed(store, token, general, text, event, send, silent=False, paylo
         if not fallback or fallback == chat:
             raise
         with store.connect() as db:
-            db.execute('UPDATE telegram_event_routes SET chat=? WHERE event=?', (fallback, event))
+            db.execute('UPDATE telegram_event_routes SET chat=%s WHERE event=%s', (fallback, event))
         store.log('Telegram destination unavailable', 'Alert routed to General')
         return deliver(store, token, fallback, text, event, send, silent=silent)

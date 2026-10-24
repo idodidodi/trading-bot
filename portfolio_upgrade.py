@@ -40,29 +40,19 @@ def upgraded(config):
 
 
 def install(store):
-    from cloud_sync import enqueue
     with store.connect() as db:
-        db.execute('CREATE TABLE IF NOT EXISTS app_migrations(name TEXT PRIMARY KEY,applied REAL NOT NULL)')
+        db.require_table('app_migrations')
         done=db.execute("SELECT 1 FROM app_migrations WHERE name='family-2026-10-09'").fetchone()
         revision=db.execute('SELECT revision FROM managed_config WHERE id=1').fetchone()[0]
     if done:return dict(revision=revision,changed=False)
-    # Back up with SQLite's consistent backup API, including while another
-    # reader is attached; never copy a WAL database as an ordinary file.
-    import sqlite3
-    from pathlib import Path
-    backup=Path(store.path).parent/'backups'/'before-family-2026-10-09.sqlite3'
-    backup.parent.mkdir(parents=True,exist_ok=True)
-    if not backup.exists():
-        with store.connect() as db,sqlite3.connect(backup) as destination:db.backup(destination)
     with store.connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
         revision,applied,raw=db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
         config=upgraded(json.loads(raw))
         changed=config!=json.loads(raw)
         if changed:
             revision+=1;raw=json.dumps(config)
-            db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1',(revision,raw))
-            db.execute('INSERT INTO config_history VALUES(?,?,?)',(revision,raw,time.time()))
-            enqueue(db,'config','current',dict(revision=revision,applied_revision=applied,config=config))
-        db.execute("INSERT OR IGNORE INTO app_migrations VALUES('family-2026-10-09',?)",(time.time(),))
+            db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1',(revision,raw))
+            db.execute('INSERT INTO config_history VALUES(%s,%s,%s)',(revision,raw,time.time()))
+        db.execute("INSERT INTO app_migrations VALUES('family-2026-10-09',%s) ON CONFLICT DO NOTHING",(time.time(),))
     return dict(revision=revision,changed=changed)

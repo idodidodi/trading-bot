@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
 import csv
 from dataclasses import replace
@@ -8,7 +9,7 @@ import unittest
 from unittest.mock import patch, Mock
 import urllib.error
 
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import Candle, check_candles, detect, indicators, prepare_store, scan_once, fetch_twelve_data, scanner_worker, normalize_provider_candles, usable_provider_history
 
 
@@ -22,7 +23,7 @@ def fixture():
     return bars
 
 
-class EngineTests(unittest.TestCase):
+class EngineTests(PostgresTestCase):
     def test_corrupt_provider_prefix_is_quarantined_without_changing_prices(self):
         bars = fixture()
         bars[20] = replace(bars[20], close=bars[20].low - .01)

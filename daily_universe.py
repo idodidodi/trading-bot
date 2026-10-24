@@ -1,4 +1,5 @@
 """Morning asset selection, ranked by venue-specific 24-hour USD turnover."""
+from postgres_store import RETRYABLE, DatabaseError
 import copy
 from datetime import datetime, timedelta
 import json
@@ -122,7 +123,7 @@ def rank(pairs, tickers, supported, excluded, count):
 
 
 def initialize(db):
-    db.execute('CREATE TABLE IF NOT EXISTS daily_universe(session TEXT PRIMARY KEY, payload TEXT NOT NULL)')
+    db.require_table('daily_universe')
 
 
 def status(store):
@@ -139,7 +140,7 @@ def resolve(store, config, now):
     day, boundary = session(policy, now)
     with store.connect() as db:
         initialize(db)
-        row = db.execute('SELECT payload FROM daily_universe WHERE session=?', (day,)).fetchone()
+        row = db.execute('SELECT payload FROM daily_universe WHERE session=%s', (day,)).fetchone()
     selection = json.loads(row[0]) if row else None
     if selection is None or (selection['status'] == 'unavailable' and now - selection['checked_at'] >= 3600000):
         selection = dict(session=day, starts_at=boundary, checked_at=now, source=policy['source'],
@@ -151,10 +152,12 @@ def resolve(store, config, now):
             if any(len(rows) != policy['count'] for rows in ranked.values()):
                 raise ValueError('Fewer than five eligible pairs with valid volume in a market')
             selection.update(status='selected', selected=ranked)
+        except (DatabaseError, *RETRYABLE):
+            raise
         except Exception:
             selection.update(status='unavailable', reason='Daily volume selection unavailable; retry next scan. Permanent assets remain active.')
         with store.connect() as db:
-            db.execute('INSERT OR REPLACE INTO daily_universe VALUES(?,?)', (day, json.dumps(selection)))
+            db.execute('INSERT INTO daily_universe VALUES(%s,%s) ON CONFLICT(session) DO UPDATE SET payload=excluded.payload', (day, json.dumps(selection)))
         store.log('Daily asset selection', json.dumps(selection))
     result = copy.deepcopy(config)
     known = {a['id'] for a in result['assets']}
@@ -174,14 +177,12 @@ def resolve(store, config, now):
 
 def install(store):
     """Versioned migration for this installation; do not run on every startup."""
-    from cloud_sync import enqueue
     with store.connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
         revision, applied, payload = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
         config = configure(json.loads(payload))
         revision += 1
         payload = json.dumps(config)
-        db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1', (revision, payload))
-        db.execute('INSERT INTO config_history VALUES(?,?,?)', (revision, payload, time.time()))
-        enqueue(db, 'config', 'current', dict(revision=revision, applied_revision=applied, config=config))
+        db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1', (revision, payload))
+        db.execute('INSERT INTO config_history VALUES(%s,%s,%s)', (revision, payload, time.time()))
     return config

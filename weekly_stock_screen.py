@@ -1,4 +1,5 @@
 """Daily rotating weekly BB-touch screen across S&P 400/500 constituents."""
+from postgres_store import RETRYABLE, DatabaseError
 import json
 from datetime import datetime, time as wall_time, timedelta
 from pathlib import Path
@@ -34,7 +35,7 @@ def universe():
 
 
 def initialize(db):
-    db.execute('CREATE TABLE IF NOT EXISTS weekly_stock_screen(day TEXT PRIMARY KEY, week TEXT NOT NULL, payload TEXT NOT NULL)')
+    db.require_table('weekly_stock_screen')
 
 
 def status(store):
@@ -60,8 +61,8 @@ def resolve(store, config, rules, now):
     week_start_at, week=week_start(policy, day)
     with store.connect() as db:
         initialize(db)
-        row=db.execute('SELECT payload FROM weekly_stock_screen WHERE day=?',(day,)).fetchone()
-        prior=db.execute('SELECT payload FROM weekly_stock_screen WHERE week=? AND day<? ORDER BY day',(week,day)).fetchall()
+        row=db.execute('SELECT payload FROM weekly_stock_screen WHERE day=%s',(day,)).fetchone()
+        prior=db.execute('SELECT payload FROM weekly_stock_screen WHERE week=%s AND day<%s ORDER BY day',(week,day)).fetchall()
     selection=json.loads(row[0]) if row else None
     permanent={a.get('symbol',a['id']).upper() for a in config['assets'] if a.get('market') not in ('forex','crypto','futures')}
     policy_stamp={key:policy.get(key) for key in ('count','lookback_weeks','source')}
@@ -74,7 +75,7 @@ def resolve(store, config, rules, now):
         if selection.get('signal_lookback_start')!=signal_since:
             selection['signal_lookback_start']=signal_since
             with store.connect() as db:
-                db.execute('UPDATE weekly_stock_screen SET payload=? WHERE day=?',(json.dumps(selection),day))
+                db.execute('UPDATE weekly_stock_screen SET payload=%s WHERE day=%s',(json.dumps(selection),day))
     if selection is None or selection['status']=='unavailable' and now-selection['checked_at']>=3600000:
         from scanner import indicators
         sp400,sp500=universe()
@@ -129,10 +130,12 @@ def resolve(store, config, rules, now):
                              signal_lookback_start=week_start_at-policy.get('signal_lookback_weeks',0)*7*86400000)
             if selection['status']=='partial':
                 selection['reason']=f"Only {len(selected_upper)} upper and {len(selected_lower)} lower band touches available after this week's earlier picks; no non-touching stocks were substituted."
+        except (DatabaseError, *RETRYABLE):
+            raise
         except Exception:
             selection.update(status='unavailable',reason='Weekly stock screen unavailable; check Alpaca credentials, feed entitlement, and symbol coverage.')
         with store.connect() as db:
-            db.execute('INSERT OR REPLACE INTO weekly_stock_screen VALUES(?,?,?)',(day,week,json.dumps(selection)))
+            db.execute('INSERT INTO weekly_stock_screen VALUES(%s,%s,%s) ON CONFLICT(day) DO UPDATE SET week=excluded.week,payload=excluded.payload',(day,week,json.dumps(selection)))
         store.log('Weekly stock screen',json.dumps({k:v for k,v in selection.items() if k!='candidates'}))
 
     result=dict(config)
@@ -160,9 +163,8 @@ def seconds_to_refresh(policy, now):
 def install(store):
     """Add the screen policy and remove the obsolete DAX ETF from managed assets."""
     import time
-    from cloud_sync import enqueue
     with store.connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
         row=db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
         if not row:
             raise ValueError('Asset configuration has not been initialized')
@@ -175,9 +177,8 @@ def install(store):
             config['weekly_stock_screen']=dict(POLICY)
             revision+=1
             payload=json.dumps(config)
-            db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1',(revision,payload))
-            db.execute('INSERT INTO config_history VALUES(?,?,?)',(revision,payload,time.time()))
-            enqueue(db,'config','current',dict(revision=revision,applied_revision=applied,config=config))
+            db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1',(revision,payload))
+            db.execute('INSERT INTO config_history VALUES(%s,%s,%s)',(revision,payload,time.time()))
     return dict(revision=revision,changed=changed,removed=before-len(config['assets']))
 
 
@@ -194,11 +195,11 @@ def cached_snapshot(store,symbols,now):
     if end.timestamp()*1000>now:friday-=timedelta(days=7)
     key=friday.isoformat()+':'+os.environ.get('ALPACA_DATA_FEED','sip')
     with store.connect() as db:
-        db.execute('CREATE TABLE IF NOT EXISTS stock_screen_history(key TEXT PRIMARY KEY,payload TEXT NOT NULL)')
-        row=db.execute('SELECT payload FROM stock_screen_history WHERE key=?',(key,)).fetchone()
+        db.require_table('stock_screen_history')
+        row=db.execute('SELECT payload FROM stock_screen_history WHERE key=%s',(key,)).fetchone()
     if row:
         return {symbol:[Candle(**c) for c in candles] for symbol,candles in json.loads(row[0]).items()}
     histories=_market_snapshot(symbols,now)
     with store.connect() as db:
-        db.execute('INSERT OR REPLACE INTO stock_screen_history VALUES(?,?)',(key,json.dumps({symbol:[asdict(c) for c in bars] for symbol,bars in histories.items()})))
+        db.execute('INSERT INTO stock_screen_history VALUES(%s,%s) ON CONFLICT(key) DO UPDATE SET payload=excluded.payload',(key,json.dumps({symbol:[asdict(c) for c in bars] for symbol,bars in histories.items()})))
     return histories

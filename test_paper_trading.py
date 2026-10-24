@@ -1,10 +1,10 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from platform_app import Store
 import paper_trading as p
 
 NOW=1791811800000
@@ -45,7 +45,7 @@ class FakeBroker:
         if method=='DELETE':order['status']='canceled'
         return order
 
-class PaperTests(unittest.TestCase):
+class PaperTests(PostgresTestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.store=Store(Path(self.tmp.name)/'test.sqlite3')
         self.env=patch.dict(os.environ,TRADING_BOT_ENV='prod',PAPER_TRADING_ENABLED='true',PAPER_RISK_PCT='1',PAPER_MAX_NOTIONAL='10000');self.env.start()
@@ -126,14 +126,14 @@ class PaperTests(unittest.TestCase):
         with patch('paper_trading.time.time',return_value=1),patch('paper_trading.cycle',side_effect=[TimeoutError(),success,success]):
             p.check_and_log(self.store);p.check_and_log(self.store);p.check_and_log(self.store)
         with self.store.connect() as db:
-            rows=db.execute("SELECT event,details FROM activity_log ORDER BY id").fetchall()
+            rows=db.execute('SELECT event,details FROM activity_log ORDER BY id').fetchall()
         self.assertEqual([r[0] for r in rows],['Paper trading check failed','Paper trading connection recovered'])
         self.assertIn('account ACTIVE',rows[1][1]);self.assertIn('Previous failure:',rows[1][1])
     def test_healthy_check_does_not_spam_recovery_logs(self):
         with patch('paper_trading.time.time',return_value=1),patch('paper_trading.cycle',return_value=dict(enabled=True,status=dict(checked_at=1000))):
             p.check_and_log(self.store)
         with self.store.connect() as db:
-            self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='activity_log'").fetchone())
+            self.assertIsNone(db.execute("SELECT 1 FROM activity_log LIMIT 1").fetchone())
     def test_cached_or_disabled_check_does_not_resolve_failure(self):
         self.store.log('Paper trading check failed','URLError')
         for result in [dict(enabled=True,status=dict(checked_at=999)),dict(enabled=False,status=dict(checked_at=1000))]:
@@ -153,7 +153,7 @@ class PaperTests(unittest.TestCase):
             def __exit__(self,*a):pass
             def read(self):return b'{}'
         with patch.dict(os.environ,ALPACA_API_KEY='dummy',ALPACA_SECRET_KEY='dummy',ALPACA_BASE_URL='https://api.alpaca.markets'),patch('urllib.request.urlopen',return_value=Response()) as send:
-            p.AlpacaPaper().request('/v2/orders','POST',{})
+            p.AlpacaPaper(self.store).request('/v2/orders','POST',{})
             self.assertEqual(send.call_args[0][0].full_url,'https://paper-api.alpaca.markets/v2/orders')
     def test_changed_account_cannot_execute_scheduled_entry(self):
         self.run_tick(NOW-1000)

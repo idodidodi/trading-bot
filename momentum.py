@@ -1,4 +1,5 @@
 """Closed daily-candle momentum candidates and conservative next-open simulation."""
+from postgres_store import RETRYABLE, DatabaseError
 import hashlib
 import json
 import math
@@ -131,10 +132,10 @@ def replay(histories):
 
 
 def initialize(db):
-    db.execute('CREATE TABLE IF NOT EXISTS momentum_runs(day TEXT PRIMARY KEY,payload TEXT NOT NULL)')
-    db.execute('CREATE TABLE IF NOT EXISTS momentum_history(market TEXT,symbol TEXT,payload TEXT NOT NULL,PRIMARY KEY(market,symbol))')
-    db.execute('CREATE TABLE IF NOT EXISTS momentum_reports(id INTEGER PRIMARY KEY,created INTEGER,payload TEXT NOT NULL)')
-    db.execute('CREATE TABLE IF NOT EXISTS momentum_feeds(symbol TEXT PRIMARY KEY,payload TEXT NOT NULL)')
+    db.require_table('momentum_runs')
+    db.require_table('momentum_history')
+    db.require_table('momentum_reports')
+    db.require_table('momentum_feeds')
 
 
 def session(now):
@@ -170,7 +171,7 @@ def seconds_to_scan(store):
     delay=(boundary.timestamp()*1000-now)/1000
     with store.connect() as db:
         initialize(db)
-        row=db.execute('SELECT payload FROM momentum_runs WHERE day=?',(session(now),)).fetchone()
+        row=db.execute('SELECT payload FROM momentum_runs WHERE day=%s',(session(now),)).fetchone()
     if not row:return max(30,delay)
     saved=json.loads(row[0])
     if saved.get('retryable',saved['status']!='completed'):delay=min(delay,max(30,(saved['scanned_at']+3600000-now)/1000))
@@ -187,7 +188,7 @@ def scan(store, config, now=None, stop=None, force=False):
     now=int(time.time()*1000) if now is None else now;day=session(now)
     with store.connect() as db:
         initialize(db)
-        prior=db.execute('SELECT payload FROM momentum_runs WHERE day=?',(day,)).fetchone()
+        prior=db.execute('SELECT payload FROM momentum_runs WHERE day=%s',(day,)).fetchone()
     prior=json.loads(prior[0]) if prior else None
     if prior and not force:
         if not prior.get('retryable',prior['status']!='completed') or now-prior['scanned_at']<3600000:return prior
@@ -214,6 +215,8 @@ def scan(store, config, now=None, stop=None, force=False):
                     coverage.append(dict(market='stock',symbol=symbol,status='excluded',reason='Stock below $5 minimum'));continue
                 histories[('stock',symbol)]=bars
             coverage.append(dict(market='stock',status='scanned',symbols=len(stock_bars),eligible=sum(k[0]=='stock' for k in histories)))
+        except (DatabaseError, *RETRYABLE):
+            raise
         except Exception:
             coverage.append(dict(market='stock',status='unavailable',reason='US daily scan failed; check Alpaca credentials and feed entitlement'))
     else:
@@ -225,7 +228,7 @@ def scan(store, config, now=None, stop=None, force=False):
         recent=[json.loads(r[0]) for r in db.execute('SELECT payload FROM momentum_runs ORDER BY day DESC LIMIT 20')]
         issued={s['symbol'] for r in recent for s in r['picks'].values() if s and s['market']=='crypto'}
         monitoring={s:json.loads(raw) for s,raw in db.execute('SELECT * FROM momentum_feeds') if s in issued}
-        for symbol,asset in crypto.items():db.execute('INSERT OR REPLACE INTO momentum_feeds VALUES(?,?)',(symbol,json.dumps(asset)))
+        for symbol,asset in crypto.items():db.execute('INSERT INTO momentum_feeds VALUES(%s,%s) ON CONFLICT(symbol) DO UPDATE SET payload=excluded.payload',(symbol,json.dumps(asset)))
     for symbol,configured in sorted((monitoring|crypto).items()):
         if stop is not None and stop.is_set():return None
         try:
@@ -237,6 +240,8 @@ def scan(store, config, now=None, stop=None, force=False):
             if len(bars)<MIN_HISTORY or now-bars[-1].end>36*3600000:raise ValueError()
             histories[('crypto',symbol)]=bars
             coverage.append(dict(market='crypto',symbol=symbol,status='scanned',candles=len(bars)))
+        except (DatabaseError, *RETRYABLE):
+            raise
         except Exception:
             coverage.append(dict(market='crypto',symbol=symbol,status='unavailable',reason='Daily feed unavailable, stale or insufficient history'))
         delay=8 if configured.get('timeframe_providers',{}).get('daily',configured['provider'])=='twelvedata' else 1
@@ -255,7 +260,7 @@ def scan(store, config, now=None, stop=None, force=False):
         pick=candidates[0] if candidates else None
         # Preserve issued confirmations across retries, weekends, and rule-version changes.
         with store.connect() as db:
-            old=[json.loads(r[0]).get('picks',{}).get(market) for r in db.execute('SELECT payload FROM momentum_runs WHERE day<? ORDER BY day DESC LIMIT 7',(day,))]
+            old=[json.loads(r[0]).get('picks',{}).get(market) for r in db.execute('SELECT payload FROM momentum_runs WHERE day<%s ORDER BY day DESC LIMIT 7',(day,))]
         repeated=same_confirmation(pick,old)
         # A retry can fill a missing market but never rewrite an already issued pick.
         issued=prior.get('picks',{}).get(market) if prior else None
@@ -272,9 +277,9 @@ def scan(store, config, now=None, stop=None, force=False):
     report=replay(replay_histories)
     with store.connect() as db:
         for (market,symbol),bars in histories.items():
-            db.execute('INSERT OR REPLACE INTO momentum_history VALUES(?,?,?)',(market,symbol,json.dumps([vars(b) for b in bars])))
-        db.execute('INSERT OR REPLACE INTO momentum_runs VALUES(?,?)',(day,json.dumps(payload)))
-        db.execute('INSERT INTO momentum_reports(created,payload) VALUES(?,?)',(now,json.dumps(report)))
+            db.execute('INSERT INTO momentum_history VALUES(%s,%s,%s) ON CONFLICT(market,symbol) DO UPDATE SET payload=excluded.payload',(market,symbol,json.dumps([vars(b) for b in bars])))
+        db.execute('INSERT INTO momentum_runs VALUES(%s,%s) ON CONFLICT(day) DO UPDATE SET payload=excluded.payload',(day,json.dumps(payload)))
+        db.execute('INSERT INTO momentum_reports(created,payload) VALUES(%s,%s)',(now,json.dumps(report)))
     store.log('Momentum daily scan',json.dumps(dict(day=day,status=payload['status'],results=results)))
     return payload
 
@@ -289,7 +294,7 @@ def view(store, source='live', limit=30):
             result['note']+=' Showing the latest 100 candidates.'
             return result
         query='SELECT payload FROM momentum_runs ORDER BY day DESC'
-        rows=[json.loads(r[0]) for r in db.execute(query+' LIMIT ?',(limit,))] if limit else [json.loads(r[0]) for r in db.execute(query)]
+        rows=[json.loads(r[0]) for r in db.execute(query+' LIMIT %s',(limit,))] if limit else [json.loads(r[0]) for r in db.execute(query)]
         latest=rows[0] if rows else None
         histories={(m,s):json.loads(raw) for m,s,raw in db.execute('SELECT * FROM momentum_history')}
     from scanner import Candle
@@ -313,8 +318,9 @@ if __name__=='__main__':
     from scanner import load_config
     from managed_assets import effective
     parser=argparse.ArgumentParser();parser.add_argument('--scan',action='store_true');args=parser.parse_args()
-    load_env();store=Store(os.path.join(os.environ.get('DATA_DIR',str(ROOT/'data')),'signals.sqlite3'))
+    load_env();store=Store()
     if args.scan:
+        store.acquire_worker()
         from daily_universe import resolve
         cfg,_=effective(store,load_config());cfg,_=resolve(store,cfg,int(time.time()*1000))
         scan(store,cfg)

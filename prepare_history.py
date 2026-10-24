@@ -116,7 +116,7 @@ def main():
     from platform_app import Store
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
-        report = run_backtest(Store(Path(tmp)/'replay.sqlite3'), json.loads((DEST/'backtest-config.json').read_text()), load_rules())
+        report = run_backtest(Store(), json.loads((DEST/'backtest-config.json').read_text()), load_rules())
     (DEST/'report.json').write_text(json.dumps(report,indent=2))
     print('Historical config:', DEST/'backtest-config.json')
 

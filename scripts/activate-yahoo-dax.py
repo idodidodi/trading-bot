@@ -3,7 +3,6 @@ import argparse
 from contextlib import closing
 import json
 from pathlib import Path
-import sqlite3
 import sys
 import time
 
@@ -12,7 +11,6 @@ from platform_app import Store, load_rules
 from managed_assets import cache_candles, get, validate_asset
 from scanner import minimum_history
 from yahoo_feed import fetch_yahoo
-from cloud_sync import enqueue
 
 
 def activate(store):
@@ -31,12 +29,8 @@ def activate(store):
     for frame, bars in history.items():
         if len(bars) < required:
             raise ValueError(f'Only {len(bars)} closed {frame} candles; need {required}. Configuration unchanged')
-    backup = Path(store.path).parent / 'backups' / f'before-yahoo-dax-{time.time_ns()}.sqlite3'
-    backup.parent.mkdir(parents=True, exist_ok=True)
-    with store.connect() as source, closing(sqlite3.connect(backup)) as destination:
-        source.backup(destination)
     with store.connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
         revision, applied, raw = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
         if revision != state['revision']:
             raise ValueError('Assets changed during verification; rerun activation')
@@ -44,23 +38,19 @@ def activate(store):
         config['assets'] = [asset if a['id'] == 'DAX' else a for a in config['assets']]
         revision += 1
         payload = json.dumps(config)
-        db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1', (revision, payload))
-        db.execute('INSERT INTO config_history VALUES(?,?,?)', (revision, payload, time.time()))
-        enqueue(db, 'config', 'current', dict(revision=revision, applied_revision=applied, config=config))
+        db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1', (revision, payload))
+        db.execute('INSERT INTO config_history VALUES(%s,%s,%s)', (revision, payload, time.time()))
     for frame, bars in history.items():
         cache_candles(store, asset, frame, bars)
-    return dict(database=str(store.path), revision=revision, backup=str(backup),
+    return dict(database='Postgres', revision=revision,
                 candles={f: len(b) for f, b in history.items()},
                 note='Yahoo delayed DAX cash index; restart running scanners to load the adapter')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--database', type=Path, required=True)
     args = parser.parse_args()
-    if not args.database.exists():
-        raise SystemExit('Start the app first to initialize its asset configuration')
     try:
-        print(json.dumps(activate(Store(args.database)), indent=2))
+        print(json.dumps(activate(Store()), indent=2))
     except ValueError as exc:
         raise SystemExit(str(exc)) from None

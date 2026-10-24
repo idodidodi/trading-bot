@@ -1,3 +1,5 @@
+> This migration branch uses Postgres as the only runtime database. Follow the [manual migration runbook](POSTGRES_MIGRATION.md) before installation. Instructions below describe the preserved SQLite release where they conflict.
+
 # Independent local trading-signal platform
 
 ## Production and development

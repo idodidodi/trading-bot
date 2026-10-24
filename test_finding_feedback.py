@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
 from pathlib import Path
 import tempfile
@@ -9,11 +10,11 @@ from http.server import ThreadingHTTPServer
 
 from dashboard_pages import render_page
 from finding_feedback import export, finding_id, save
-from platform_app import Store, handler_factory, load_rules, validate_signal
+from platform_app import handler_factory, load_rules, validate_signal
 from test_platform import example
 
 
-class FeedbackTests(unittest.TestCase):
+class FeedbackTests(PostgresTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.store = Store(Path(self.temp.name) / 'test.sqlite3')
@@ -48,8 +49,8 @@ class FeedbackTests(unittest.TestCase):
         body = self.body | dict(source='backtest', finding_id=finding_id('backtest', self.signal))
         save(self.store, self.root, body)
         with self.store.connect() as db:
-            db.execute('CREATE TABLE backtest_runs(id INTEGER PRIMARY KEY, report TEXT)')
-            db.execute('INSERT INTO backtest_runs(report) VALUES(?)', (json.dumps(self.report),))
+            db.require_table('backtest_runs')
+            db.execute('INSERT INTO backtest_runs(report) VALUES(%s)', (json.dumps(self.report),))
         save(self.store, self.root, body | dict(revision=1, rating=5))
         page = render_page(self.store, '/backtest')
         self.assertIn('Feedback</th>', page)

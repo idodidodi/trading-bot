@@ -1,7 +1,7 @@
 """Small bounded read/write API shared by local and hosted dashboard bundles."""
 import json
 from urllib.parse import urlsplit, parse_qs
-from finding_feedback import finding_id, latest_report
+from finding_feedback import persisted_id, finding_id, latest_report
 from platform_app import ROOT
 import managed_assets
 
@@ -52,7 +52,7 @@ def read(store, path):
         from daily_universe import status
         from weekly_stock_screen import status as stock_status
         with store.connect() as db:
-            exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='scanner_status'").fetchone()
+            exists=db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='scanner_status'").fetchone()
             row=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone() if exists else None
         return ensure(store) | dict(daily_selection=status(store),weekly_stock_selection=stock_status(store),coverage=json.loads(row[0]).get('coverage',[]) if row else [])
     if url.path=='/api/followup':
@@ -63,7 +63,7 @@ def read(store, path):
         return detail(store,ROOT,param('source'),param('finding'),param('target','pivot2'))
     if url.path=='/api/logs':
         with store.connect() as db:
-            exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='activity_log'").fetchone()
+            exists=db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='activity_log'").fetchone()
             mode=param('filter','all')
             where="WHERE lower(event || ' ' || details) LIKE '%error%' OR lower(event || ' ' || details) LIKE '%failed%' OR lower(details) LIKE '%unavailable%' OR lower(details) LIKE '%insufficient%' OR lower(details) LIKE '%retry%'" if mode!='all' else ''
             rows=db.execute(f'SELECT occurred,event,details FROM activity_log {where} ORDER BY id DESC LIMIT 200').fetchall() if exists else []
@@ -78,13 +78,13 @@ def read(store, path):
     with store.connect() as db:
         summary=[]
         if source=='live':
-            exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='scanner_status'").fetchone()
+            exists=db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='scanner_status'").fetchone()
             current=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone() if exists else None
             summary=json.loads(current[0]).get('coverage',[]) if current else []
             states={key: (status, revision) for key,status,revision in db.execute('SELECT finding_id,status,revision FROM finding_state')}
             visible=[]
             for row in db.execute('SELECT payload FROM signals ORDER BY received DESC,id'):
-                signal=json.loads(row[0]);status=states.get(finding_id(source,signal),('active',0))[0]
+                signal=json.loads(row[0]);status=states.get(persisted_id(db,source,signal),('active',0))[0]
                 if status!='deleted' and (status!='archived' or param('archived')=='true'):visible.append(signal)
                 if len(visible)>=page*50+51:break
             signals=visible[page*50:page*50+51]
@@ -99,7 +99,7 @@ def read(store, path):
                         'timeframe': {'1h': 60, '60': 60, '4h': 240, '240': 240, 'daily': 1440, 'D': 1440, 'weekly': 10080, 'W': 10080, 'monthly': 43200, 'M': 43200}.get(s['timeframe'], 0),
                         'evidence': (s['direction'], s.get('signal_status', 'confirmed')),
                         'confirmed_at': s['confirmed_at'],
-                        'rating': ratings.get(finding_id(source, s))}[sort]
+                        'rating': ratings.get(persisted_id(db,source,s))}[sort]
             all_signals = [s for r in report['results'] for s in r['signals']] if report else []
             all_signals.sort(key=lambda s: (s['confirmed_at'], finding_id(source, s)))
             rated = [s for s in all_signals if sort_value(s) is not None]
@@ -111,8 +111,8 @@ def read(store, path):
         precomputed = {k: v for r in report['results'] for k,v in r.get('followups',{}).items()} if source=='backtest' and report else {}
         result=[]
         for s in signals[:50]:
-            key=finding_id(source,s)
-            fb=db.execute('SELECT rating,comment,revision FROM finding_feedback WHERE finding_id=?',(key,)).fetchone()
+            key=persisted_id(db,source,s)
+            fb=db.execute('SELECT rating,comment,revision FROM finding_feedback WHERE finding_id=%s',(key,)).fetchone()
             status,revision=states.get(key,('active',0)) if source=='live' else ('active',0)
             followup = precomputed.get(key) or stored(db,key)
             result.append(dict(id=key,signal=s,followup=followup.get('recovery') if followup else None,archived=status=='archived',state_revision=revision,feedback=dict(zip(('rating','comment','revision'),fb)) if fb else None))

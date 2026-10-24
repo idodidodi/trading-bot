@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 from datetime import datetime, timezone
 import importlib.util
 import io
@@ -9,13 +10,13 @@ from unittest.mock import patch
 import urllib.error
 
 from managed_assets import ensure, get, validate_asset
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import prepare_store, scan_once, timestamp
 from test_scanner import fixture
 import yahoo_feed as yahoo
 
 
-class YahooTests(unittest.TestCase):
+class YahooTests(PostgresTestCase):
     asset = dict(id='DAX', provider='yahoo', symbol='^GDAXI', exchange='XETRA', market='index',
                  feed_confirmed=True, enabled=True, timeframes=['monthly', 'weekly', 'daily', '4h'])
 
@@ -177,7 +178,7 @@ class YahooTests(unittest.TestCase):
             assets=get(store)['config']['assets']
             self.assertEqual(assets[1]['id'],'SPX');self.assertFalse(assets[1]['enabled'])
             self.assertEqual(assets[0]['provider'],'yahoo');self.assertTrue(assets[0]['enabled'])
-            self.assertNotIn('unavailable_reason',assets[0]);self.assertTrue(Path(result['backup']).exists())
+            self.assertNotIn('unavailable_reason',assets[0]);self.assertGreater(result['revision'],1)
 
 
 if __name__=='__main__':unittest.main()

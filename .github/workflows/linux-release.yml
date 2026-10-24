@@ -10,6 +10,17 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: trading_bot_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test-only
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TRADING_TEST_DATABASE_URL: host=127.0.0.1 port=5432 dbname=trading_bot_test user=postgres password=test-only sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -23,6 +34,7 @@ jobs:
         run: python3 -m pip install -r windows-build-requirements.txt
       - name: Verify scanner and updater
         run: |
+          python3 scripts/setup-postgres-tests.py
           python3 -m unittest discover -q
       - name: Build standalone executable
         run: bash scripts/build-linux.sh
@@ -31,6 +43,7 @@ jobs:
           XDG_DATA_HOME: ${{ runner.temp }}/family-bot-smoke
           XDG_CONFIG_HOME: ${{ runner.temp }}/family-bot-config
           PORT: '18080'
+          TRADING_BOT_ROLE: dashboard
         run: |
           unset DISPLAY WAYLAND_DISPLAY
           mkdir -p "$XDG_DATA_HOME"

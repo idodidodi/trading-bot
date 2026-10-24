@@ -1,0 +1,22 @@
+# Copy manually to ~/.config/systemd/user/trading-bot-postgres.service.
+# Replace ALL /absolute paths. Do not reuse the old service's working directory.
+[Unit]
+Description=Trading Bot Postgres worker (manual migration installation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/absolute/new-postgres-install
+Environment=TRADING_BOT_ENV=prod
+Environment=TRADING_BOT_ENV_FILE=/absolute/new-postgres-config/worker.env
+ExecStart=/absolute/new-postgres-install/.venv/bin/python /absolute/new-postgres-install/platform_app.py
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=90
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

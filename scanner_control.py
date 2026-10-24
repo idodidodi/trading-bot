@@ -2,25 +2,25 @@
 import json
 import time
 import uuid
-import sqlite3
+from postgres_store import DatabaseError, OperationalError
 
 
 def initialize(db):
-    db.execute('CREATE TABLE IF NOT EXISTS scanner_commands(id TEXT PRIMARY KEY,status TEXT NOT NULL,payload TEXT NOT NULL,created REAL NOT NULL)')
-    db.execute('CREATE TABLE IF NOT EXISTS notification_queue(id TEXT PRIMARY KEY,text TEXT NOT NULL,status TEXT NOT NULL DEFAULT \'pending\',attempts INTEGER NOT NULL DEFAULT 0,next_attempt REAL NOT NULL DEFAULT 0)')
+    db.require_table('scanner_commands')
+    db.require_table('notification_queue')
 
 
 def request(store, key=None):
     with store.connect() as db:
         initialize(db)
-        db.execute('BEGIN IMMEDIATE')
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
         existing=db.execute("SELECT id,status,payload FROM scanner_commands WHERE status IN ('pending','running') ORDER BY created LIMIT 1").fetchone()
         if existing and key is None:
             return dict(id=existing[0],status=existing[1],**json.loads(existing[2]))
         key=key or str(uuid.uuid4())
         uuid.UUID(key)
-        db.execute('INSERT OR IGNORE INTO scanner_commands VALUES(?,?,?,?)',(key,'pending','{}',time.time()))
-        row=db.execute('SELECT status,payload FROM scanner_commands WHERE id=?',(key,)).fetchone()
+        db.execute('INSERT INTO scanner_commands VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING',(key,'pending','{}',time.time()))
+        row=db.execute('SELECT status,payload FROM scanner_commands WHERE id=%s',(key,)).fetchone()
     return dict(id=key,status=row[0],**json.loads(row[1]))
 
 
@@ -32,24 +32,19 @@ def status(store):
 
 
 def claim(store):
-    try:
-        with store.connect() as db:
-            initialize(db)
-            # Idle polling needs no writer lock; cloud sync may be writing.
-            if not db.execute("SELECT 1 FROM scanner_commands WHERE status='pending' LIMIT 1").fetchone():return None
-            db.execute('BEGIN IMMEDIATE')
-            row=db.execute("SELECT id FROM scanner_commands WHERE status='pending' ORDER BY created LIMIT 1").fetchone()
-            if row:db.execute("UPDATE scanner_commands SET status='running' WHERE id=?",row)
-        return row[0] if row else None
-    except sqlite3.OperationalError as exc:
-        if 'locked' not in str(exc).lower():raise
-        return None  # The durable request remains pending for the next poll.
+    with store.connect() as db:
+        row = db.execute("""WITH picked AS (
+            SELECT id FROM scanner_commands c WHERE status='pending'
+            AND NOT EXISTS(SELECT 1 FROM migration_holds h WHERE h.queue='scanner_commands' AND h.key=c.id)
+            ORDER BY created FOR UPDATE SKIP LOCKED LIMIT 1)
+            UPDATE scanner_commands c SET status='running' FROM picked p WHERE c.id=p.id RETURNING c.id""").fetchone()
+    return row[0] if row else None
 
 
 def finish(store,key,coverage,new_findings):
     with store.connect() as db:
-        db.execute('CREATE TABLE IF NOT EXISTS catchup_findings(command_id TEXT,signal_id TEXT,PRIMARY KEY(command_id,signal_id))')
-        saved=db.execute('SELECT COUNT(*) FROM catchup_findings WHERE command_id=?',(key,)).fetchone()[0]
+        db.require_table('catchup_findings')
+        saved=db.execute('SELECT COUNT(*) FROM catchup_findings WHERE command_id=%s',(key,)).fetchone()[0]
     new_findings=max(saved,new_findings)
     failures=[r for r in coverage if r['status'] in ('unavailable','insufficient history')]
     pin_count=sum(r.get('pin_bars',{}).get('new_signals',0) for r in coverage if not r.get('check_state'))
@@ -61,6 +56,6 @@ def finish(store,key,coverage,new_findings):
           'Open Signals and coverage for details. Catch-up is limited to available provider history.')
     with store.connect() as db:
         initialize(db)
-        db.execute('UPDATE scanner_commands SET status=?,payload=? WHERE id=?',('completed',json.dumps(payload),key))
-        db.execute('INSERT OR IGNORE INTO notification_queue(id,text) VALUES(?,?)',(key,text))
+        db.execute('UPDATE scanner_commands SET status=%s,payload=%s WHERE id=%s',('completed',json.dumps(payload),key))
+        db.execute('INSERT INTO notification_queue(id,text) VALUES(%s,%s) ON CONFLICT DO NOTHING',(key,text))
     store.log('Catch-up completed',json.dumps(payload))

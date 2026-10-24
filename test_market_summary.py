@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
 import os
 from datetime import datetime
@@ -7,14 +8,14 @@ import unittest
 from unittest.mock import Mock, patch
 
 import market_summary as summary
-from platform_app import Store, delivery_worker
+from platform_app import delivery_worker
 
 
 def clock(value):
     return datetime.fromisoformat(value).timestamp()
 
 
-class MarketSummaryTests(unittest.TestCase):
+class MarketSummaryTests(PostgresTestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
@@ -109,7 +110,7 @@ class MarketSummaryTests(unittest.TestCase):
             self.queue()
         stop = Mock()
         stop.is_set.side_effect = [False, True]
-        with patch('telegram_delivery.coordinator', return_value={'status':'acquired'}), patch('platform_app.send_telegram', side_effect=RuntimeError('Telegram connection failed')) as send:
+        with patch('platform_app.send_telegram', side_effect=RuntimeError('Telegram connection failed')) as send:
             delivery_worker(self.store, 'test', '123', False, stop)
             send.assert_called_once()
         with self.store.connect() as db:

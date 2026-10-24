@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 from datetime import datetime, timezone
 import importlib.util
 import io
@@ -10,12 +11,12 @@ import urllib.error
 
 from managed_assets import ensure, for_timeframe, get, validate_asset
 from oanda_feed import available_forex, candle_end, fetch_oanda, request_json
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import check_candles, interval_end, prepare_store, scan_once, scanner_worker, timestamp
 from test_scanner import fixture
 
 
-class OandaTests(unittest.TestCase):
+class OandaTests(PostgresTestCase):
     def setUp(self):
         self.asset = dict(id='EURUSD', symbol='EUR/USD', provider='oanda', exchange='OANDA',
                           enabled=True, feed_confirmed=True, timeframes=['1h'])

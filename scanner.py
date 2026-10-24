@@ -1,4 +1,5 @@
 """Independent OHLC scanner; no TradingView account, webhook, or Pine required."""
+from postgres_store import RETRYABLE, DatabaseError
 import argparse
 import calendar
 import csv
@@ -8,7 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
-import sqlite3
+from postgres_store import DatabaseError, OperationalError
 import sys
 import threading
 import time
@@ -280,6 +281,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     if run_momentum:
         try:
             scan_momentum(store, config, now, stop=stop)
+        except (DatabaseError, *RETRYABLE):
+            raise
         except Exception:
             store.log('Momentum scan failed', 'Daily strategy unavailable; check provider access and diagnostics')
     if catchup:
@@ -425,7 +428,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     state_id = f"{asset['id']}@{source_id}@{rules['skill_hash']}@all-stages-v2"
                     matches = detect(candles, rules, source_id, timeframe) + detect(candles, rules, source_id, timeframe, provisional=True)
                     with store.connect() as db:
-                        state = db.execute('SELECT last_end FROM scan_state WHERE asset=? AND timeframe=?', (state_id, timeframe)).fetchone()
+                        state = db.execute('SELECT last_end FROM scan_state WHERE asset=%s AND timeframe=%s', (state_id, timeframe)).fetchone()
                     # First run establishes a baseline without flooding Telegram with history.
                     cutoff = state[0] if state else candles[-1].end
                     if asset.get('weekly_screen_selected') and not state:
@@ -442,7 +445,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     pending = sorted((s for s in matches if s['confirmed_at'] > cutoff), key=lambda s:(s['confirmed_at'],s.get('signal_status')!='provisional'))
                     new = sum(store.insert(validate_signal(s, rules) | {'market': asset.get('market') or 'unknown', 'detected_at': now}, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
                     with store.connect() as db:
-                        db.execute('INSERT INTO scan_state(asset,timeframe,last_end) VALUES(?,?,?) ON CONFLICT(asset,timeframe) DO UPDATE SET last_end=MAX(last_end,excluded.last_end)',
+                        db.execute('INSERT INTO scan_state AS saved(asset,timeframe,last_end) VALUES(%s,%s,%s) ON CONFLICT(asset,timeframe) DO UPDATE SET last_end=GREATEST(saved.last_end,excluded.last_end)',
                                    (state_id, timeframe, candles[-1].end))
                     row.update(status='scanned' if state else 'baseline set', candles=len(candles), last_closed_at=candles[-1].end,
                                new_signals=new, historical_matches=len(matches), limited_history=len(candles) < 250,
@@ -451,6 +454,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 # Only local, known ValueErrors are shown; URLs and provider payloads are never logged.
                 reason = asset.get('unavailable_reason', 'Candle CSV missing; configure a live provider in Assets') if isinstance(exc, FileNotFoundError) else str(exc)
                 row.update(status='unavailable', reason=reason)
+            except (DatabaseError, *RETRYABLE):
+                raise
             except Exception:
                 row.update(status='unavailable', reason='Data request or parsing failed; check provider access and format')
             row['checked_at']=now
@@ -458,19 +463,22 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
             save(store,schedule_key,row['next_close_at'],row)
             coverage.append(row)
             store.log('Market check', json.dumps(row))
+    from version_info import local_versions
+    from runtime_env import environment
+    status = dict(scanned_at=now,coverage=coverage,versions=local_versions(),environment=environment())
     with store.connect() as db:
-        db.execute('INSERT OR REPLACE INTO scanner_status(id,payload) VALUES(1,?)', (json.dumps(dict(scanned_at=now, coverage=coverage)),))
+        db.execute('INSERT INTO scanner_status(id,payload) VALUES(1,%s) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload',(json.dumps(status),))
     if config_revision is not None:
         with store.connect() as db:
-            db.execute('UPDATE managed_config SET applied_revision=? WHERE id=1', (config_revision,))
+            db.execute('UPDATE managed_config SET applied_revision=%s WHERE id=1', (config_revision,))
     store.log('Scan cycle completed', f'{sum(not r.get("check_state") for r in coverage)} market checks; {sum(bool(r.get("check_state")) for r in coverage)} waiting for another closed candle')
     return coverage
 
 
 def prepare_store(store):
     with store.connect() as db:
-        db.execute('CREATE TABLE IF NOT EXISTS scan_state(asset TEXT,timeframe TEXT,last_end INTEGER,PRIMARY KEY(asset,timeframe))')
-        db.execute('CREATE TABLE IF NOT EXISTS scanner_status(id INTEGER PRIMARY KEY,payload TEXT)')
+        db.require_table('scan_state')
+        db.require_table('scanner_status')
 
 
 def load_config():
@@ -505,7 +513,7 @@ def scanner_heartbeat(store, finished):
                 phase = json.loads(saved[0]).get('phase', 'starting') if saved else 'starting'
                 stamp = datetime.fromtimestamp(now, ZoneInfo('Asia/Jerusalem')).strftime('%Y-%m-%d %H:%M:%S')
                 store.log('Scanner heartbeat', f'Scanner is running · {phase} · {stamp} (Israel time)' + memory_status())
-            except sqlite3.Error as exc:
+            except DatabaseError as exc:
                 # A long sync transaction must not permanently kill monitoring.
                 print(f'Scanner heartbeat could not access database ({type(exc).__name__}); retrying in 30 seconds', file=sys.stderr, flush=True)
                 finished.wait(30)
@@ -535,7 +543,7 @@ def scanner_worker(store, config, rules, stop):
                 prepare_store(store)
                 _scanner_worker(store, config, rules, stop)
                 break
-            except sqlite3.OperationalError as exc:
+            except OperationalError as exc:
                 if not database_busy(exc):
                     raise
                 print('Scanner database busy; retrying in 5 seconds', file=sys.stderr, flush=True)
@@ -543,6 +551,8 @@ def scanner_worker(store, config, rules, stop):
                 # Keep the same heartbeat thread alive throughout contention.
                 if stop.wait(5):
                     break
+    except (DatabaseError, *RETRYABLE):
+        raise
     except Exception as exc:
         # Preserve failure visibility even when SQLite itself is unavailable.
         reason = f'Scanner stopped after {type(exc).__name__}; restart required'
@@ -552,9 +562,9 @@ def scanner_worker(store, config, rules, stop):
                 saved = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
                 status = json.loads(saved[0]) if saved else {}
                 status.update(phase='failed', next_scan_at=None, error=reason)
-                db.execute('INSERT OR REPLACE INTO scanner_status(id,payload) VALUES(1,?)', (json.dumps(status),))
+                db.execute('INSERT INTO scanner_status(id,payload) VALUES(1,%s) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (json.dumps(status),))
             store.log('Scanner failed', reason)
-        except sqlite3.Error:
+        except DatabaseError:
             pass
         raise
     finally:
@@ -573,16 +583,13 @@ def _scanner_worker(store, config, rules, stop):
     command=None
     with store.connect() as db:
         old=db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
-    if old and time.time()*1000-json.loads(old[0]).get('scanned_at',time.time()*1000)>config.get('poll_seconds',14400)*1000+300000:
-        from scanner_control import request
-        request(store)
     while not stop.is_set():
         with store.connect() as db:
             previous = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
             if previous:
                 progress = json.loads(previous[0])
                 progress.update(phase='scanning', next_scan_at=None)
-                db.execute('UPDATE scanner_status SET payload=? WHERE id=1', (json.dumps(progress),))
+                db.execute('UPDATE scanner_status SET payload=%s WHERE id=1', (json.dumps(progress),))
         command=command or claim(store)
         coverage = scan_once(store, config, rules, stop=stop,catchup=command or False,run_momentum=True)
         if command and not stop.is_set():
@@ -618,7 +625,7 @@ def _scanner_worker(store, config, rules, stop):
             saved = db.execute('SELECT payload FROM scanner_status WHERE id=1').fetchone()
             schedule = json.loads(saved[0]) if saved else dict(scanned_at=int(time.time() * 1000), coverage=coverage or [])
             schedule.update(phase='waiting', next_scan_at=int((time.time() + delay) * 1000))
-            db.execute('INSERT OR REPLACE INTO scanner_status(id,payload) VALUES(1,?)', (json.dumps(schedule),))
+            db.execute('INSERT INTO scanner_status(id,payload) VALUES(1,%s) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload', (json.dumps(schedule),))
         command=wait_for_command(store,stop,delay)
 
 
@@ -641,6 +648,7 @@ if __name__ == '__main__':
     configure(ROOT)
     data = Path(os.environ.get('DATA_DIR', str(ROOT / 'data')))
     data.mkdir(parents=True, exist_ok=True)
-    store = Store(data / 'signals.sqlite3')
+    store = Store()
+    store.acquire_worker()
     prepare_store(store)
     print(json.dumps(scan_once(store, load_config(), load_rules()), indent=2))

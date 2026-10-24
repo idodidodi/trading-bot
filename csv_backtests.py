@@ -91,14 +91,14 @@ def run(body, now=None):
 
 
 def initialize(db):
-    db.execute('CREATE TABLE IF NOT EXISTS csv_backtest_runs(id TEXT PRIMARY KEY,created INTEGER,report TEXT,csv TEXT)')
+    db.require_table('csv_backtest_runs')
 
 
 def save(store, body):
     report=run(body)
     with store.connect() as db:
         initialize(db)
-        db.execute('INSERT OR REPLACE INTO csv_backtest_runs VALUES(?,?,?,?)',
+        db.execute('INSERT INTO csv_backtest_runs VALUES(%s,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET created=excluded.created,report=excluded.report,csv=excluded.csv',
                    (report['id'],report['generated_at'],json.dumps(report),body['csv']))
     return view(store,report['id'])
 

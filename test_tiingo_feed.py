@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 from datetime import datetime, timezone
 from dataclasses import replace
 import importlib.util
@@ -12,12 +13,12 @@ from unittest.mock import patch
 
 from tiingo_feed import fetch_tiingo, request_json
 from managed_assets import ensure, for_timeframe, get, validate_asset
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import Candle, ProviderCandles, prepare_store, scan_once, timestamp
 from test_scanner import fixture
 
 
-class TiingoTests(unittest.TestCase):
+class TiingoTests(PostgresTestCase):
     asset = dict(id='EURUSD', symbol='EUR/USD', provider='tiingo', exchange='Tiingo',
                  enabled=True, feed_confirmed=True, timeframes=['daily'])
 
@@ -38,8 +39,10 @@ class TiingoTests(unittest.TestCase):
                 request.assert_not_called()
                 with self.assertRaisesRegex(ValueError,'budget'):
                     request_json('GBP/USD','1hour','2026-10-01','2026-10-06')
-            contents=Path(folder,'tiingo-cache.sqlite3').read_bytes()
-            self.assertNotIn(b'secret',contents)
+            self.assertFalse(Path(folder,'tiingo-cache.sqlite3').exists())
+            from postgres_store import connect
+            with connect() as db:
+                self.assertNotIn('secret',str(db.execute('SELECT * FROM tiingo_responses').fetchall()))
 
     def test_native_frames_pair_validation_and_incomplete_bar(self):
         for frame,freq in [('1h','1hour'),('4h','4hour'),('daily','1day')]:

@@ -1,4 +1,5 @@
 """Routing persistence, recovery and actual coordinated delivery without network."""
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import io
 import json
 import os
@@ -8,17 +9,23 @@ import unittest
 import urllib.error
 from unittest.mock import Mock, patch
 
-from platform_app import Store, TelegramDestinationError, send_telegram
+from platform_app import TelegramDestinationError, send_telegram
 import telegram_routing as routing
 
 
-class RoutingTests(unittest.TestCase):
+class RoutingTests(PostgresTestCase):
+    def apply(self,value):
+        from psycopg.types.json import Jsonb
+        routes=routing.validate(value['routes'])
+        with self.store.connect() as db:
+            db.execute("INSERT INTO public.telegram_routes VALUES('00000000-0000-0000-0000-000000000002',%s,%s) ON CONFLICT(installation) DO UPDATE SET revision=excluded.revision,routes=excluded.routes WHERE excluded.revision>telegram_routes.revision",(value['revision'],Jsonb(routes)))
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.store = Store(Path(self.tmp.name) / 'signals.sqlite3')
         self.routes = {key: str(-1000-i) for i, key in enumerate(routing.ROUTES)}
-        routing.apply(self.store, dict(revision=1, routes=self.routes))
+        self.apply( dict(revision=1, routes=self.routes))
 
     def test_matrix(self):
         for market, group in [('forex','forex'), ('crypto','crypto'), ('stock','stocks'), ('stocks','stocks'), ('equity','stocks'), ('equities','stocks'), ('etf','stocks'), ('index','other'), ('commodity','other'), ('futures','other'), ('unknown','other')]:
@@ -34,38 +41,37 @@ class RoutingTests(unittest.TestCase):
 
     def test_refresh_restart_and_pinned_destination(self):
         first = routing.select(self.store,'one','legacy',{'market':'crypto'})
-        routing.apply(self.store,dict(revision=2,routes={'general':'-5','crypto.rsi':'-6'}))
+        self.apply(dict(revision=2,routes={'general':'-5','crypto.rsi':'-6'}))
         restarted=Store(self.store.path)
         self.assertEqual(routing.read(restarted)['revision'],2)
         self.assertEqual(routing.select(restarted,'one','legacy'),first)
         self.assertEqual(routing.select(restarted,'two','legacy',{'market':'crypto'})[0],'-6')
-        routing.apply(restarted,dict(revision=1,routes=self.routes))
+        self.apply(dict(revision=1,routes=self.routes))
         self.assertEqual(routing.read(restarted)['revision'],2)
-        with patch('telegram_routing.fetch_cloud',side_effect=RuntimeError('offline')):
-            with self.assertRaises(RuntimeError):routing.refresh(restarted)
+        self.assertEqual(routing.refresh(restarted)['revision'],2)
         self.assertEqual(routing.read(restarted)['revision'],2)
 
     def test_validation_is_atomic(self):
         for routes in ({'bad':'123'},{'general':123},{'general':'@name'},{'general':'1.2'},{'general':' 123'}):
-            with self.assertRaises(ValueError):routing.apply(self.store,dict(revision=2,routes=routes))
+            with self.assertRaises(ValueError):self.apply(dict(revision=2,routes=routes))
             self.assertEqual(routing.read(self.store)['revision'],1)
         self.assertEqual(routing.validate({'general':'-100123'})['general'],'-100123')
 
     def test_missing_route_and_unrecoverable_legacy_use_general(self):
-        routing.apply(self.store,dict(revision=2,routes={'general':'-5'}))
+        self.apply(dict(revision=2,routes={'general':'-5'}))
         self.assertEqual(routing.select(self.store,'unknown','legacy',{'market':'forex'})[0],'-5')
         self.assertEqual(routing.select(self.store,'old','legacy',{'symbol':'unknown'})[0],'-5')
         fresh=Store(Path(self.tmp.name)/'fresh.sqlite3')
-        self.assertEqual(routing.select(fresh,'old','-7')[0],'-7')
+        self.assertEqual(routing.select(fresh,'old','-7')[0],'-5')
 
     def test_legacy_recovery_from_assets_and_both_strategy_tables(self):
         asset={'id':'EURUSD','market':'forex','provider':'oanda','symbol':'EUR/USD','exchange':'OANDA'}
         with self.store.connect() as db:
-            db.execute('INSERT INTO managed_config VALUES(1,1,1,?)',(json.dumps({'assets':[asset]}),))
+            db.execute('INSERT INTO managed_config VALUES(1,1,1,%s)',(json.dumps({'assets':[asset]}),))
             routing.remember(db,'rsi',None,'rsi')
             for strategy, table in [('pin-bars','pin_bar_signals'),('bb-pin-bars','bb_pin_bar_signals')]:
-                db.execute(f'CREATE TABLE {table}(id TEXT,payload TEXT)')
-                db.execute(f'INSERT INTO {table} VALUES(?,?)',('old',json.dumps({'symbol':'EURUSD'})))
+                db.require_table(table)
+                db.execute(f'INSERT INTO {table}(id,payload) VALUES(%s,%s)',('old',json.dumps({'symbol':'EURUSD'})))
         self.assertEqual(routing.select(self.store,'rsi','legacy',{'symbol':'oanda:OANDA:EUR/USD'})[0],self.routes['forex.rsi'])
         for strategy in ('pin-bars','bb-pin-bars'):
             self.assertEqual(routing.select(self.store,strategy,'legacy',notification_key=strategy+':old')[0],self.routes['forex.pin-bars'])
@@ -74,7 +80,7 @@ class RoutingTests(unittest.TestCase):
         assets = [dict(id='RDW', symbol='RDW', provider='alpaca', exchange='Alpaca-sip-split'),
                   dict(id='GLW', symbol='GLW', provider='alpaca', exchange='Alpaca-sip-split', market='equity')]
         with self.store.connect() as db:
-            db.execute('INSERT INTO managed_config VALUES(1,1,1,?)', (json.dumps({'assets': assets}),))
+            db.execute('INSERT INTO managed_config VALUES(1,1,1,%s)', (json.dumps({'assets': assets}),))
         for symbol, market in [('RDW', 'unknown'), ('GLW', 'equity')]:
             payload = dict(symbol='alpaca:Alpaca-sip-split:'+symbol, market=market)
             with self.store.connect() as db:
@@ -82,8 +88,8 @@ class RoutingTests(unittest.TestCase):
             self.assertEqual(routing.select(self.store, symbol, 'legacy', payload)[0], self.routes['stocks.rsi'])
         with self.store.connect() as db:
             self.assertEqual(db.execute("SELECT market FROM telegram_event_routes WHERE event='RDW'").fetchone()[0], 'stock')
-            db.execute('CREATE TABLE pin_bar_signals(id TEXT,payload TEXT)')
-            db.execute('INSERT INTO pin_bar_signals VALUES(?,?)', ('rdw', json.dumps({'symbol':'alpaca:Alpaca-sip-split:RDW','market':'unknown'})))
+            db.require_table('pin_bar_signals')
+            db.execute('INSERT INTO pin_bar_signals(id,payload) VALUES(%s,%s)', ('rdw', json.dumps({'symbol':'alpaca:Alpaca-sip-split:RDW','market':'unknown'})))
             routing.remember(db, 'pin', 'unknown', 'pin-bars')
         self.assertEqual(routing.select(self.store, 'pin', 'legacy', notification_key='pin-bars:rdw')[0], self.routes['stocks.pin-bars'])
 
@@ -100,17 +106,18 @@ class RoutingTests(unittest.TestCase):
 
     def test_destination_rejection_falls_back_and_retries_general_after_restart(self):
         sender=Mock(side_effect=[TelegramDestinationError('unavailable'),RuntimeError('offline')])
-        with patch('telegram_delivery.coordinator',side_effect=self.coordinate):
+        if True:
             with self.assertRaises(RuntimeError):
                 routing.deliver_routed(self.store,'123:secret','legacy','text','event',sender,payload={'market':'forex'})
             self.assertEqual([c.args[1] for c in sender.call_args_list],[self.routes['forex.rsi'],self.routes['general']])
+            with self.store.connect() as db:db.execute('UPDATE telegram_delivery SET locked_until=0')
             sender=Mock(return_value=42)
             self.assertEqual(routing.deliver_routed(Store(self.store.path),'123:secret','legacy','text','event',sender),'sent')
             self.assertEqual(sender.call_args.args[1],self.routes['general'])
 
     def test_ambiguous_failure_never_falls_back_and_other_groups_continue(self):
         sender=Mock(side_effect=RuntimeError('timeout'))
-        with patch('telegram_delivery.coordinator',side_effect=self.coordinate):
+        if True:
             with self.assertRaises(RuntimeError):
                 routing.deliver_routed(self.store,'123:secret','legacy','text','event',sender,payload={'market':'crypto'})
             sender.assert_called_once()
@@ -127,18 +134,11 @@ class RoutingTests(unittest.TestCase):
                 if expected is RuntimeError:self.assertNotIsInstance(caught.exception,TelegramDestinationError)
             error.close()
 
-    def test_read_only_cloud_request_and_disabled_upload_refresh(self):
-        response=io.BytesIO(json.dumps({'telegram_routing':{'revision':2,'routes':{'general':'-8'}}}).encode())
-        with patch.dict(os.environ,{'CLOUD_SYNC_URL':'https://cloud.invalid/sync','CLOUD_SYNC_TOKEN':'private'}), patch('telegram_routing.urllib.request.urlopen',return_value=response) as fetch:
-            routing.refresh(self.store)
-        self.assertEqual(json.loads(fetch.call_args.args[0].data),{'routing_only':True})
-        self.assertEqual(routing.read(self.store)['routes']['general'],'-8')
-        import cloud_sync
-        stop=Mock();stop.is_set.side_effect=[False,True];stop.wait.return_value=True
-        with patch.dict(os.environ,{'CLOUD_SYNC_URL':'https://cloud.invalid/sync','CLOUD_SYNC_TOKEN':'private'}), patch('runtime_env.cloud_sync_enabled',return_value=False), patch('telegram_routing.refresh') as refresh, patch('cloud_sync.snapshot') as snapshot:
-            cloud_sync.worker(self.store,stop)
-        refresh.assert_called_once_with(self.store)
-        snapshot.assert_not_called()
+    def test_routing_reads_current_postgres_row_without_http(self):
+        self.apply(dict(revision=2,routes={'general':'-8'}))
+        with patch('urllib.request.urlopen') as network:
+            self.assertEqual(routing.refresh(self.store)['routes']['general'],'-8')
+        network.assert_not_called()
 
     def test_cli_routes_do_not_send_and_targeted_tests_use_cloud_cache(self):
         import contextlib

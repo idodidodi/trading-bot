@@ -25,10 +25,10 @@ test('gear connection buttons send one explicit action and show success or failu
  for(const error of [false,true]){
   const {get,requests}=setup({environment:'prod',local:{version:'1.0.6'}},error?{error:'Cloud unavailable'}:{message:'One demo synced'});
   await get('settings').onclick();
-  const controls=descendants(get('version-content')).filter(e=>e.tag==='button'&&['Test Telegram','Sync demo signal to cloud'].includes(e.textContent));
+  const controls=descendants(get('version-content')).filter(e=>e.tag==='button'&&['Test Telegram','Test database connection'].includes(e.textContent));
   assert.equal(controls.length,2);
   assert.ok(!requests.some(r=>r.url==='/api/connection-test'));
-  for(const [index,action] of ['telegram','cloud-demo'].entries()){
+  for(const [index,action] of ['telegram','database'].entries()){
    await controls[index].onclick();
    assert.equal(controls[index].disabled,false);
    assert.equal(JSON.parse(requests.filter(r=>r.url==='/api/connection-test').at(-1).options.body).action,action);
@@ -62,7 +62,7 @@ test('development settings show explicitly enabled Telegram and cloud sync',asyn
  await get('settings').onclick();
  const output=text(get('version-content'));
  assert.ok(output.includes('Telegram delivery: enabled.'));
- assert.ok(output.includes('Cloud sync: enabled'));
+ assert.ok(output.includes('Storage: shared Postgres.'));
  assert.ok(output.includes('paper orders disabled'));
  assert.ok(!output.includes('deliveries disabled'));
 });

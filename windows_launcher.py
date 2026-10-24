@@ -11,7 +11,7 @@ import webbrowser
 def main():
     frozen=getattr(sys,'frozen',False)
     if frozen:
-        root=Path(os.environ['LOCALAPPDATA'])/'FamilyTradingBot'
+        root=Path(os.environ['LOCALAPPDATA'])/'FamilyTradingBotPostgres'
         binary=root/'bin'/'FamilyTradingBot.exe'
         binary.parent.mkdir(parents=True,exist_ok=True)
         if Path(sys.executable).resolve()!=binary.resolve():

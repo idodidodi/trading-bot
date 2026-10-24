@@ -3,12 +3,12 @@ import os
 
 from runtime_env import environment
 
-KEYS = {'telegram_enabled': 'DEV_TELEGRAM_ENABLED', 'cloud_sync_enabled': 'DEV_CLOUD_SYNC_ENABLED',
+KEYS = {'telegram_enabled': 'DEV_TELEGRAM_ENABLED',
         'paper_trading_enabled': 'PAPER_TRADING_ENABLED'}
 
 
 def initialize(db):
-    db.execute('CREATE TABLE IF NOT EXISTS local_runtime_settings(key TEXT PRIMARY KEY,value INTEGER NOT NULL)')
+    db.require_table('local_runtime_settings')
 
 
 def read(store=None):
@@ -32,12 +32,10 @@ def save(store, body):
     from telegram_routing import read as routing_read
     if body.get('telegram_enabled') and not (os.environ.get('TELEGRAM_BOT_TOKEN') and (os.environ.get('TELEGRAM_CHAT_ID') or routing_read(store)['routes']['general'])):
         raise ValueError('Configure TELEGRAM_BOT_TOKEN locally and a General Telegram destination before enabling delivery.')
-    if body.get('cloud_sync_enabled') and not (os.environ.get('CLOUD_SYNC_URL', '').startswith('https://') and os.environ.get('CLOUD_SYNC_TOKEN')):
-        raise ValueError('Configure an HTTPS CLOUD_SYNC_URL and CLOUD_SYNC_TOKEN locally before enabling sync.')
     if body.get('paper_trading_enabled') and not (os.environ.get('ALPACA_API_KEY') and os.environ.get('ALPACA_SECRET_KEY')):
         raise ValueError('Configure ALPACA_API_KEY and ALPACA_SECRET_KEY locally before enabling paper trading.')
     with store.connect() as db:
-        db.executemany('INSERT OR REPLACE INTO local_runtime_settings VALUES(?,?)', [(key, int(value)) for key, value in body.items()])
+        db.executemany('INSERT INTO local_runtime_settings VALUES(%s,%s) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [(key, int(value)) for key, value in body.items()])
     return read(store)
 
 

@@ -1,15 +1,16 @@
 """Telegram groups divergence comparisons without merging dashboard findings."""
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from platform_app import Store, delivery_worker, signal_alert_event
+from platform_app import delivery_worker, signal_alert_event
 from test_platform import candle_example as example
 
 
 @patch.dict('os.environ', {'DEV_TELEGRAM_ENABLED': 'true'}, clear=True)
-class SignalAlertGroupingTests(unittest.TestCase):
+class SignalAlertGroupingTests(PostgresTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -18,14 +19,11 @@ class SignalAlertGroupingTests(unittest.TestCase):
     def run_worker(self, count, coordinator=None, send=None, dry_run=False):
         stop = Mock()
         stop.is_set.side_effect = [False] * count + [True]
-        def coordinate(payload):
-            return {'status': {'acquire': 'acquired', 'renew': 'acquired',
-                               'complete': 'completed', 'release': 'released'}[payload['action']]}
+        cloud=Mock()
         with patch('local_settings.delivery_dry_run', return_value=dry_run), \
-             patch('telegram_delivery.coordinator', side_effect=coordinator or coordinate) as cloud, \
              patch('platform_app.send_telegram', send or Mock(return_value=42)) as sender:
             delivery_worker(self.store, '123:secret', '123', dry_run, stop)
-        return sender, cloud
+        return sender,cloud
 
     def test_three_reference_pivots_send_once_and_keep_all_findings(self):
         for offset in range(3):
@@ -114,6 +112,7 @@ class SignalAlertGroupingTests(unittest.TestCase):
         self.assertEqual(self.store.rows()[0][1], 'pending')
         with self.store.connect() as db:
             db.execute('UPDATE signals SET next_attempt=0')
+            db.execute('UPDATE telegram_delivery SET locked_until=0')
         send, _ = self.run_worker(1)
         send.assert_called_once()
         self.assertEqual(self.store.rows()[0][1], 'sent')

@@ -57,7 +57,9 @@ jobs:
       release_version: ${{ needs.prepare.outputs.version }}
   publish:
     needs: [prepare, linux, windows]
-    if: needs.prepare.outputs.publish == 'true'
+    # Migration artifacts must never enter the legacy auto-update release channel.
+    # A separately reviewed manual release/cutover workflow is required.
+    if: ${{ false }}
     runs-on: ubuntu-22.04
     permissions:
       contents: write

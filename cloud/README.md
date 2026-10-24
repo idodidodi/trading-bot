@@ -1,3 +1,5 @@
+> This migration branch uses Postgres as the only runtime database. Follow the [manual migration runbook](../POSTGRES_MIGRATION.md) before installation. Instructions below describe the preserved SQLite release where they conflict.
+
 # New Supabase and Cloudflare Pages projects
 
 The local app and online UI use the same web assets. Cloud deployment requires your accounts; nothing here creates a paid service or publishes credentials automatically.
