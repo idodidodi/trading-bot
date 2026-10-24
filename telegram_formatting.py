@@ -42,7 +42,7 @@ def presentation(text):
                                      'Second pivot closed:', 'All quote times ',
                                      'Gold/oil use ', 'Signal only ', 'One alert per ')):
                 kind = 'italic'
-            elif ':' in content or ' · ' in content:
+            elif not content.startswith(('Reference candle ', 'Signal candle ')) and (':' in content or ' · ' in content):
                 kind = 'bold'
         if kind and len(entities) < 100:
             entities.append(dict(type=kind,

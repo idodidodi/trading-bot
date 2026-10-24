@@ -244,12 +244,18 @@ def message(payload):
     provisional = payload.get('signal_status') == 'provisional'
     def stamp(value):
         return datetime.fromtimestamp(value / 1000, ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y at %H:%M (Israel time)') if value else 'unavailable in saved finding'
+    def candle_range(label, opened_at, closed_at):
+        opened = datetime.fromtimestamp(opened_at / 1000, ZoneInfo('Asia/Jerusalem'))
+        if closed_at:
+            closed = datetime.fromtimestamp(closed_at / 1000, ZoneInfo('Asia/Jerusalem'))
+            end = closed.strftime('%H:%M' if opened.date() == closed.date() else '%d.%m.%y %H:%M')
+        else:
+            end = 'unavailable in saved finding'
+        return f"{label} candle {opened:%d.%m.%y} between {opened:%H:%M} to {end}"
     first_close = payload.get('pivot1_closed_at')
     second_close = payload.get('pivot2_closed_at', payload.get('pivot_closed_at'))
-    timing = (f"Reference candle opened: {stamp(payload['pivot1'])}\n"
-              f"Reference candle closed: {stamp(first_close)}\n"
-              f"Signal candle opened: {stamp(payload['pivot2'])}\n"
-              f"Second pivot closed: {stamp(second_close)}")
+    timing = (candle_range('Reference', payload['pivot1'], first_close) + '\n'
+              + candle_range('Signal', payload['pivot2'], second_close))
     if payload.get('detected_at'):
         timing += f"\nDetected: {stamp(payload['detected_at'])}"
     if not provisional:

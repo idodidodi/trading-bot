@@ -171,7 +171,7 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(signal['pivot2'], bars[256].start)
             self.assertEqual(signal['pivot_closed_at'], bars[256].end)
             self.assertEqual(signal['signal_status'], 'provisional')
-            self.assertIn('Second pivot closed:', message(signal))
+            self.assertIn('Signal candle ', message(signal))
             self.assertNotIn('Confirmed:', message(signal))
             self.assertEqual(detect(check_candles(bars, bars[256].end-1), rules, 'test:EURUSD', '4h', provisional=True), [])
             # Later invalidation must not erase an alert already knowable at P2.
@@ -188,10 +188,9 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(clean['pivot1_closed_at'], bars[250].end)
         self.assertEqual(clean['pivot2_closed_at'], bars[256].end)
         text = message(clean | {'detected_at': bars[256].end + 16*60*1000})
-        for label in ('Reference candle opened:', 'Reference candle closed:',
-                      'Signal candle opened:', 'Second pivot closed:', 'Detected:'):
+        for label in ('Reference candle ', 'Signal candle ', 'Detected:'):
             self.assertIn(label, text)
-        self.assertEqual(text.count('(Israel time)'), 5)
+        self.assertEqual(text.count('(Israel time)'), 1)
         self.assertNotIn('subsequent candles can invalidate', text)
         self.assertNotIn('Signal only', text)
         self.assertNotIn('Confirmed:', text)
@@ -210,8 +209,7 @@ class EngineTests(unittest.TestCase):
         bars = [replace(c, start=c.start+shift, end=c.end+shift) for c in bars]
         signal = detect(bars[:257], load_rules(), 'alpaca:Alpaca-sip-split:META', '4h', provisional=True)[0]
         text = message(signal)
-        self.assertIn('Signal candle opened: 21 Oct 2026 at 23:00', text)
-        self.assertIn('Second pivot closed: 22 Oct 2026 at 03:00', text)
+        self.assertIn('Signal candle 21.10.26 between 23:00 to 22.10.26 03:00', text)
         self.assertEqual(signal['confirmed_at'], bars[256].end)
         self.assertEqual(detect(bars[:257], load_rules(), 'TEST', '4h'), [])
 
