@@ -44,29 +44,6 @@
       "tradingview_symbol": ""
     },
     {
-      "id": "BTCUSD",
-      "provider": "twelvedata",
-      "path": "data/candles/{asset}-{timeframe}.csv",
-      "symbol": "BTC/USD",
-      "exchange": "Binance",
-      "feed_confirmed": true,
-      "market": "crypto",
-      "enabled": true,
-      "timeframe_providers": {
-        "weekly": "kraken",
-        "daily": "kraken",
-        "4h": "kraken",
-        "1h": "kraken"
-      },
-      "timeframes": [
-        "monthly",
-        "weekly",
-        "daily",
-        "4h"
-      ],
-      "portfolio": true
-    },
-    {
       "id": "NEARUSD",
       "provider": "twelvedata",
       "path": "data/candles/{asset}-{timeframe}.csv",
@@ -172,29 +149,6 @@
       ],
       "tradingview_symbol": "",
       "market": "forex",
-      "portfolio": true
-    },
-    {
-      "id": "ETHUSD",
-      "symbol": "ETH/USD",
-      "provider": "twelvedata",
-      "exchange": "Binance",
-      "feed_confirmed": true,
-      "enabled": true,
-      "timeframes": [
-        "monthly",
-        "weekly",
-        "daily",
-        "4h"
-      ],
-      "tradingview_symbol": "",
-      "market": "crypto",
-      "timeframe_providers": {
-        "weekly": "kraken",
-        "daily": "kraken",
-        "4h": "kraken",
-        "1h": "kraken"
-      },
       "portfolio": true
     },
     {
