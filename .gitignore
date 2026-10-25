@@ -19,3 +19,5 @@ data.zip
 
 # Installation-specific Telegram destinations
 telegram-group-map.json
+output/pdf/
+tmp/pdfs/
