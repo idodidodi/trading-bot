@@ -9,7 +9,7 @@ COVERAGE_KEY = 'bb_pin_bars'
 
 
 def load_rules():
-    rules = dict(bb_period=20, bb_multiplier=2.0, ratio=2.0, max_short_wick_ratio=0.20,
+    rules = dict(bb_period=20, bb_multiplier=2.0, ratio=2.0, max_short_wick_ratio=0.66,
                  seed='20-close SMA and population deviation; includes signal close')
     rules['version'] = 'bb-pin-bars-v1-' + hashlib.sha256(json.dumps(rules, sort_keys=True).encode()).hexdigest()[:16]
     return rules
@@ -39,7 +39,7 @@ def bollinger(closes, period, multiplier):
     return result
 
 
-def direction(bar, lower_bb, upper_bb, ratio, max_short_wick_ratio=0.20):
+def direction(bar, lower_bb, upper_bb, ratio, max_short_wick_ratio=0.66):
     body = abs(bar.open-bar.close)
     lower = min(bar.open,bar.close)-bar.low
     upper = bar.high-max(bar.open,bar.close)

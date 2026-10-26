@@ -207,7 +207,7 @@ BEGIN
   SELECT payload::jsonb INTO current_value FROM scanner_status WHERE id=1;
   RETURN jsonb_build_object('strategy',substring(path FROM 6),'signals',CASE WHEN jsonb_array_length(items)>50 THEN items-50 ELSE items END,
    'has_more',jsonb_array_length(items)>50,'coverage',coalesce((SELECT jsonb_agg(v||coalesce(v->CASE WHEN prefix='pin_bar' THEN 'pin_bars' ELSE 'bb_pin_bars' END,'{}')) FROM jsonb_array_elements(current_value->'coverage') a(v)),'[]'),'scanned_at',current_value->'scanned_at',
-   'rules',coalesce((SELECT payload->'rules' FROM legacy_artifacts WHERE kind='summary' AND legacy_artifacts.key=substring(path FROM 6)||'-live'),CASE WHEN prefix='pin_bar' THEN '{"fast":8,"slow":21,"ratio":2,"max_short_wick_ratio":0.2}'::jsonb ELSE '{"bb_period":20,"bb_multiplier":2,"ratio":2,"max_short_wick_ratio":0.2}'::jsonb END));
+   'rules',CASE WHEN prefix='pin_bar' THEN '{"fast":8,"slow":21,"ratio":2,"max_short_wick_ratio":0.66}'::jsonb ELSE '{"bb_period":20,"bb_multiplier":2,"ratio":2,"max_short_wick_ratio":0.66}'::jsonb END);
  ELSIF path='/api/catchup' THEN
   PERFORM pg_advisory_xact_lock(714269001);
   IF input<>'{}' THEN

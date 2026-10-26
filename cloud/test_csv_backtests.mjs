@@ -4,11 +4,11 @@ import {execFileSync} from 'node:child_process';
 import {defaults} from './functions/csv-backtests/rules.mjs';
 import {detectBBPinBars} from './functions/csv-backtests/bb-engine.mjs';
 import {detectPinBars,parseCSV,replayCSV} from './functions/csv-backtests/engine.mjs';
-// The marked EURUSD candle now fails the nose limit; a shorter nose preserves the bullish override.
+// The marked EURUSD candle passes the relaxed 66% limit, including the bullish EMA override.
 const marked={start:22*14400000,end:23*14400000,open:1.11885,high:1.119349,low:1.1175,close:1.11876};
 const downtrend=Array.from({length:22},(_,i)=>({start:i*14400000,end:(i+1)*14400000,open:1.122-i*.0001,high:1.122-i*.0001,low:1.122-i*.0001,close:1.122-i*.0001}));
 const markedSignals=detectPinBars([...downtrend,marked],defaults['pin-bars'],'test','EURUSD','4h');
-assert.equal(markedSignals.length,0);
+assert.equal(markedSignals.at(-1).direction,'bullish');
 const qualifiedSignals=detectPinBars([...downtrend,{...marked,high:1.119}],defaults['pin-bars'],'test','EURUSD','4h');
 assert.equal(qualifiedSignals.at(-1).direction,'bullish');
 assert.ok(qualifiedSignals.at(-1).fast_ema<qualifiedSignals.at(-1).slow_ema);
@@ -49,14 +49,14 @@ console.log('BB Pin-Bars checks passed: independent direction, reports, warm-up 
 // Mirrored shape boundaries and zero-body candles must match local Python replay.
 for(const strategy of ['pin-bars','bb-pin-bars']){
  for(const mirror of [false,true]){
-  for(const nose of [0,1,2,2.001]){
+  for(const nose of [0,20,33,33.001]){
    for(const zeroBody of [false,true]){
-    const sample=Array.from({length:22},(_,i)=>({start:start+i*14400000,open:109,high:109,low:109,close:109}));
-    sample.push({start:start+22*14400000,open:110,high:(zeroBody?110:111)+nose,low:100,close:zeroBody?110:111});
+    const sample=Array.from({length:22},(_,i)=>({start:start+i*14400000,open:149,high:149,low:149,close:149}));
+    sample.push({start:start+22*14400000,open:150,high:(zeroBody?150:151)+nose,low:100,close:zeroBody?150:151});
     const candles=mirror?sample.map(b=>({...b,open:200-b.open,high:200-b.low,low:200-b.high,close:200-b.close})):sample;
     const input={...body,strategy,csv:'time,open,high,low,close\n'+candles.map(b=>`${b.start},${b.open},${b.high},${b.low},${b.close}`).join('\n')};
     const actual=await replayCSV(input,now);
-    assert.equal(actual.signal_count,nose<=2?1:0,`${strategy}, mirror=${mirror}, nose=${nose}, zeroBody=${zeroBody}`);
+    assert.equal(actual.signal_count,nose<=33?1:0,`${strategy}, mirror=${mirror}, nose=${nose}, zeroBody=${zeroBody}`);
     if(actual.signal_count)assert.equal(actual.signals[0].direction,mirror?'bearish':'bullish');
     const expected=JSON.parse(execFileSync('python3',['-c',`import sys,json;from csv_backtests import run;print(json.dumps(run(json.load(sys.stdin),${now})))`],{input:JSON.stringify(input),encoding:'utf8'}));
     assert.deepEqual(actual.signals,expected.signals);
@@ -74,4 +74,4 @@ for(const candle of [
  assert.equal(detectPinBars(history,defaults['pin-bars'],'test','USDJPY','4h').length,0);
  assert.equal(detectBBPinBars(history,defaults['bb-pin-bars'],'test','USDJPY','4h').length,0);
 }
-console.log('20% short-wick boundaries and USDJPY regressions passed for both strategies, with Python parity.');
+console.log('66% short-wick boundaries and USDJPY regressions passed for both strategies, with Python parity.');

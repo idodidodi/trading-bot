@@ -325,4 +325,17 @@ class PostgresTests(unittest.TestCase):
             self.assertNotIn('never-print-this',output.getvalue())
             self.assertIn('OperationalError',output.getvalue())
 
+    def test_imported_summary_does_not_override_current_pin_bar_rules(self):
+        from psycopg.types.json import Jsonb
+        from pin_bars import load_rules as ema_rules
+        from bb_pin_bars import load_rules as bb_rules
+        archived={'rules':{'max_short_wick_ratio':0.2}}
+        with self.store.connect() as db:
+            db.execute("INSERT INTO legacy_artifacts VALUES('summary','pin-bars-live',%s)",(Jsonb(archived),))
+            db.execute("INSERT INTO legacy_artifacts VALUES('summary','bb-pin-bars-live',%s)",(Jsonb(archived),))
+        for endpoint,rules in (('/api/pin-bars',ema_rules()),('/api/bb-pin-bars',bb_rules())):
+            self.assertEqual(self.api(endpoint)['rules']['max_short_wick_ratio'],rules['max_short_wick_ratio'])
+        with self.store.connect() as db:
+            self.assertEqual(db.execute("SELECT payload FROM legacy_artifacts WHERE key='pin-bars-live'").fetchone()[0],archived)
+
 if __name__=='__main__':unittest.main()
