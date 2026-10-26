@@ -33,13 +33,13 @@ def reset():
 
 
 class PostgresTestCase(unittest.TestCase):
-    def run(self,result=None):
+    def _callSetUp(self):
+        # unittest checks skip flags on the class/method, not the instance.
+        # This hook also runs when subclasses provide their own setUp method.
         if not os.environ.get('TRADING_TEST_DATABASE_URL'):
-            self.__unittest_skip__=True
-            self.__unittest_skip_why__='Use the explicit disposable Postgres test runner'
-            return super().run(result)
+            self.skipTest('Use the explicit disposable Postgres test runner')
         reset()
-        return super().run(result)
+        super()._callSetUp()
 
 
 class TestStore(RuntimeStore):
