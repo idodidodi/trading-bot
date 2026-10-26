@@ -153,18 +153,37 @@ def prepare(db, path, installation, resolutions=None, tiingo=None, sender=None, 
     tables['legacy_findings']=[dict(source=kind,id=key,payload=json.dumps(value)) for kind in ('live','backtest') for key,value in hosted.get(kind,{}).items()]
     # Imported summaries are archival artifacts, never a runtime snapshot pipeline.
     tables['legacy_artifacts']=[dict(kind=kind,key=key,payload=Jsonb(value)) for kind,records in hosted.items() if kind not in ('config','feedback','feedback_history','finding_state','live','backtest') for key,value in records.items()]
+    # These hosted tables are outside the old mirror record stream. Keep their
+    # complete evidence, including replay jobs and ambiguous delivery attempts.
+    for name in ('dashboard_followups','dashboard_backtest_jobs','telegram_delivery_attempts',
+                 'telegram_delivery_claims','telegram_sound_slots','telegram_routes'):
+        if db.execute('SELECT to_regclass(%s)',('public.'+name,)).fetchone()[0]:
+            for value, in db.execute(sql.SQL('SELECT to_jsonb(t) FROM public.{} t WHERE installation=%s').format(sql.Identifier(name)),(installation,)):
+                tables['legacy_artifacts'].append(dict(kind='hosted_table:'+name,key=hashlib.sha256(canonical(value).encode()).hexdigest(),payload=Jsonb(value)))
+    if db.execute("SELECT to_regclass('public.dashboard_followups')").fetchone()[0]:
+        followups={r['finding_id']:r for r in tables.get('finding_followup',[])}
+        for key,results,calculated in db.execute('SELECT finding_id,results,extract(epoch FROM calculated_at) FROM public.dashboard_followups WHERE installation=%s',(installation,)):
+            remote=dict(finding_id=key,results=canonical(results),calculated_at=float(calculated))
+            old=followups.get(key)
+            if old and json.loads(old['results'])==results:continue
+            followups[key]=resolve('finding_followup',key,old,remote)
+        tables['finding_followup']=list(followups.values())
     # Full hosted candle series, including historical CSVs absent from local cache.
+    candle_index={table:{(r['feed'],r['timeframe'],r['start']):r for r in tables.get(table,[])}
+                  for table in ('candle_cache','backtest_candle_cache')}
     for key,value in hosted.get('candle',{}).items():
         table='candle_cache' if value['source']=='live' else 'backtest_candle_cache'
         row=dict(feed=value['symbol'],timeframe=value['timeframe'],**{k:value[k] for k in ('start','end','open','high','low','close')})
         if table=='candle_cache':row['asset']=value.get('asset',value['symbol'])
         pk=(row['feed'],row['timeframe'],row['start'])
-        existing=next((r for r in tables.get(table,[]) if (r['feed'],r['timeframe'],r['start'])==pk),None)
+        existing=candle_index[table].get(pk)
         if existing:
             if any(existing[k]!=row[k] for k in ('end','open','high','low','close')):
                 selected=resolve(table,canonical(pk),existing,row)
                 if selected is row:existing.update(row)
-        else:tables.setdefault(table,[]).append(row)
+        else:
+            tables.setdefault(table,[]).append(row)
+            candle_index[table][pk]=row
     # Historical CSV files were never fully represented in operational SQLite.
     # Import every row explicitly, with no 500-finding/payload mirror cap.
     if history_dirs:
@@ -179,7 +198,11 @@ def prepare(db, path, installation, resolutions=None, tiingo=None, sender=None, 
                 for c in bars:
                     row=dict(feed=asset,timeframe=frame,start=c.start,end=c.end,open=c.open,high=c.high,low=c.low,close=c.close)
                     pair=(asset,frame,c.start);old=cache.get(pair)
-                    if old and old!=row:cache[pair]=resolve('backtest_candle_cache',canonical(pair),row,old)
+                    if old and old!=row:
+                        # Distinguish files contesting the same candle so each
+                        # decision and both originals get their own audit row.
+                        key=canonical(pair)+':csv:'+directory.name+'/'+file.name
+                        cache[pair]=resolve('backtest_candle_cache',key,row,old)
                     else:cache[pair]=row
             manifest=directory/'manifest.json'
             if manifest.is_file():tables['legacy_artifacts'].append(dict(kind='source_manifest',key=hashlib.sha256(manifest.read_bytes()).hexdigest(),payload=Jsonb(json.loads(manifest.read_text()))))

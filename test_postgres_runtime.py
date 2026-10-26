@@ -176,6 +176,27 @@ class PostgresTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT count(*) FROM migration_holds WHERE queue='signals'").fetchone()[0],1)
                 self.assertEqual(db.execute("SELECT local_value FROM migration_audit WHERE table_name='alert_reviews'").fetchone()[0], [{'slot':'legacy-review','completed':123.5}])
 
+    def test_conflicting_csv_files_keep_separate_decisions_and_audit_rows(self):
+        from migration.legacy import prepare,apply
+        with self.store.connect() as db:db.execute('UPDATE runtime_control SET enabled=false')
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'old.db'
+            with closing(sqlite3.connect(source)) as old,old:
+                old.execute('CREATE TABLE backtest_candle_cache(feed TEXT,timeframe TEXT,start INTEGER,end INTEGER,open REAL,high REAL,low REAL,close REAL)')
+                old.execute("INSERT INTO backtest_candle_cache VALUES('BTCUSD','weekly',1388361600000,1388966400000,737,980,737,904)")
+            directories=[Path(folder)/name for name in ('full','partial')]
+            for directory,opening,low in zip(directories,(742,737),(730,737)):
+                directory.mkdir()
+                (directory/'BTCUSD-weekly.csv').write_text('timestamp,closed_at,open,high,low,close\n2013-12-30T00:00:00+00:00,2014-01-06T00:00:00+00:00,'+str(opening)+',980,'+str(low)+',904\n')
+            prefix='backtest_candle_cache:["BTCUSD","weekly",1388361600000]:csv:'
+            choices={prefix+'full/BTCUSD-weekly.csv':'local',prefix+'partial/BTCUSD-weekly.csv':'hosted'}
+            with psycopg.connect(test_dsn(),options='-c search_path=bot_runtime,pg_catalog') as db:
+                plan=prepare(db,source,INST,resolutions=choices,history_dirs=directories)
+                self.assertEqual(plan['conflicts'],[])
+                self.assertEqual(apply(db,plan,INST)['mismatches'],[])
+                self.assertEqual(db.execute('SELECT open,low FROM backtest_candle_cache').fetchone(),(742,730))
+                self.assertEqual(db.execute("SELECT row_key FROM migration_audit WHERE table_name='backtest_candle_cache' ORDER BY row_key").fetchall(),[(k.split(':',1)[1],) for k in sorted(choices)])
+
     def test_hosted_replay_completes_without_linux_worker(self):
         from psycopg.types.json import Jsonb
         from finding_feedback import finding_id,save
@@ -244,20 +265,28 @@ class PostgresTests(unittest.TestCase):
             with closing(sqlite3.connect(source)) as old,old:
                 old.execute('CREATE TABLE managed_config(id INTEGER PRIMARY KEY,revision INTEGER,applied_revision INTEGER,payload TEXT)')
                 old.execute('INSERT INTO managed_config VALUES(1,1,1,?)',(json.dumps(local),))
+                old.execute('CREATE TABLE finding_followup(finding_id TEXT PRIMARY KEY,results TEXT,calculated_at REAL)')
+                old.execute('INSERT INTO finding_followup VALUES(?,?,?)',('reviewed-finding',json.dumps({'status':'local'}),1))
             snapshot(source,snap)
             with psycopg.connect(test_dsn(),options='-c search_path=bot_runtime,pg_catalog') as db:
                 db.execute("INSERT INTO public.dashboard_records(installation,kind,key,payload) VALUES(%s,'config','current',%s) ON CONFLICT(installation,kind,key) DO UPDATE SET payload=excluded.payload",(INST,Jsonb(dict(revision=2,applied_revision=1,config=hosted))))
+                db.execute("INSERT INTO public.dashboard_followups(installation,finding_id,results) VALUES(%s,'reviewed-finding',%s)",(INST,Jsonb({'status':'hosted'})))
                 plan=prepare(db,snap,INST)
                 self.assertEqual(plan['conflicts'][0]['key'],'managed_config:1')
-                plan=prepare(db,snap,INST,{'managed_config:1':'hosted'})
+                self.assertIn('finding_followup:reviewed-finding',[c['key'] for c in plan['conflicts']])
+                plan=prepare(db,snap,INST,{'managed_config:1':'hosted','finding_followup:reviewed-finding':'hosted'})
                 self.assertEqual(plan['conflicts'],[])
                 self.assertEqual(apply(db,plan,INST)['mismatches'],[])
                 self.assertEqual(json.loads(db.execute('SELECT payload FROM managed_config').fetchone()[0]),hosted)
                 left,right=db.execute("SELECT local_value,hosted_value FROM migration_audit WHERE table_name='managed_config'").fetchone()
                 self.assertEqual(json.loads(left['payload']),local)
                 self.assertEqual(json.loads(right['payload']),hosted)
+                self.assertEqual(json.loads(db.execute("SELECT results FROM finding_followup WHERE finding_id='reviewed-finding'").fetchone()[0]),{'status':'hosted'})
+                self.assertEqual(db.execute("SELECT payload->'results' FROM legacy_artifacts WHERE kind='hosted_table:dashboard_followups'").fetchone()[0],{'status':'hosted'})
             # Retain no public fixture edits for the next test.
-            with psycopg.connect(test_dsn()) as db:db.execute('DELETE FROM public.dashboard_records WHERE installation=%s',(INST,))
+            with psycopg.connect(test_dsn()) as db:
+                db.execute('DELETE FROM public.dashboard_records WHERE installation=%s',(INST,))
+                db.execute('DELETE FROM public.dashboard_followups WHERE installation=%s',(INST,))
 
     def test_recovery_exports_new_files_without_touching_fallback(self):
         from migration.recovery import export

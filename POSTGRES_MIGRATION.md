@@ -121,6 +121,8 @@ Create a local `resolutions.json` mapping each reported conflict key to `"local"
 
 Review each decision, especially hosted configuration and feedback edits. Both originals of conflicting edits remain in migration audit history. Resolve every reported conflict before importing.
 
+CSV candle conflict keys include `:csv:DIRECTORY/FILENAME`. For those keys, `local` selects that CSV row and `hosted` retains the candle already accumulated from the database or earlier files. Review each file's decision separately, especially a partial first week.
+
 ```bash
 "$MIGRATION_PY" scripts/migrate-postgres.py import \
   --source "${MIGRATION_DATA}/signals.snapshot.sqlite3" \
