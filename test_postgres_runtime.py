@@ -163,6 +163,8 @@ class PostgresTests(unittest.TestCase):
                 old.execute('INSERT INTO signals VALUES(?,?,?,?,?,?,?)',('stable-id',json.dumps(candle_example()),10,'pending',2,15,None))
                 old.execute('CREATE TABLE pin_bar_signals(id TEXT PRIMARY KEY,confirmed_at INTEGER,payload TEXT)')
                 old.executemany('INSERT INTO pin_bar_signals VALUES(?,?,?)',((str(i),i,json.dumps({'id':i})) for i in range(750)))
+                old.execute('CREATE TABLE alert_reviews(slot TEXT PRIMARY KEY,completed REAL)')
+                old.execute('INSERT INTO alert_reviews VALUES(?,?)',('legacy-review',123.5))
             snapshot(source,snap)
             with psycopg.connect(test_dsn(),options='-c search_path=bot_runtime,pg_catalog') as db:
                 plan=prepare(db,snap,INST);self.assertEqual(plan['conflicts'],[])
@@ -172,6 +174,7 @@ class PostgresTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT attempts FROM signals WHERE id='stable-id'").fetchone()[0],2)
                 self.assertEqual(db.execute('SELECT count(*) FROM pin_bar_signals').fetchone()[0],750)
                 self.assertEqual(db.execute("SELECT count(*) FROM migration_holds WHERE queue='signals'").fetchone()[0],1)
+                self.assertEqual(db.execute("SELECT local_value FROM migration_audit WHERE table_name='alert_reviews'").fetchone()[0], [{'slot':'legacy-review','completed':123.5}])
 
     def test_hosted_replay_completes_without_linux_worker(self):
         from psycopg.types.json import Jsonb

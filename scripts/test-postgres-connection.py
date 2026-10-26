@@ -25,8 +25,9 @@ def main():
         started=time.monotonic()
         with psycopg.connect(dsn,connect_timeout=8,autocommit=True,prepare_threshold=None) as db:
             connect_ms=(time.monotonic()-started)*1000
-            ssl=db.execute('SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()').fetchone()
-            if ssl!=(True,):raise ValueError('Server did not confirm TLS')
+            # pg_stat_ssl describes the pooler's upstream connection, not this
+            # client's TLS session. Check libpq's actual client connection.
+            if not db.pgconn.ssl_in_use:raise ValueError('Client connection did not confirm TLS')
             db.execute('BEGIN READ ONLY')
             latency=[]
             for _ in range(5):

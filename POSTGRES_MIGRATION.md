@@ -62,7 +62,7 @@ Edit this file with the worker URL and required provider credentials. URL-encode
 - Data: `/home/LINUX_USER/apps/trading-bot-postgres/data`
 - CA: `/home/LINUX_USER/.config/FamilyTradingBotPostgres/supabase-ca.crt`
 
-Save the trusted certificate as `supabase-ca.crt` beside the prepared environment file. Keep `DRY_RUN=true` and `PAPER_TRADING_ENABLED=false`. Do not reuse the fallback environment file or commit any credentials.
+Download the server root certificate from Supabase Database Settings as described in the [Supabase SSL instructions](https://supabase.com/docs/guides/database/psql). The system or certifi CA bundle alone may not trust Supabase's pooler. Save the trusted certificate as `supabase-ca.crt` beside the prepared environment file. Keep `DRY_RUN=true` and `PAPER_TRADING_ENABLED=false`. Do not reuse the fallback environment file or commit any credentials.
 
 A successful connection from the Mac does **not** establish connectivity from Linux; L2 is still required. When moving from rehearsal to production, provision the production role/schema here, update only the new worker environment/CA files, transfer them securely to Linux, and repeat L2 against production. Do not alter the fallback configuration or repeat the new-directory setup over existing files.
 

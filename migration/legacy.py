@@ -13,7 +13,9 @@ from contextlib import closing
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
-IGNORED = {'cloud_pending','cloud_seen','cloud_meta','cloud_conflicts','sqlite_sequence'}
+# Retired alert-review completion slots have no runtime consumer. Preserve every
+# row in migration_audit alongside retired mirror state rather than replaying it.
+IGNORED = {'cloud_pending','cloud_seen','cloud_meta','cloud_conflicts','sqlite_sequence','alert_reviews'}
 # Operational records remain byte-for-byte unless a named conflict is resolved.
 IDENTITIES = {'activity_log':'id','backtest_runs':'id','momentum_reports':'id',
               'momentum_reviews':'id','feedback_history':'sequence'}
