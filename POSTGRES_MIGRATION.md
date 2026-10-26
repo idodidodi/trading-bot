@@ -1,47 +1,51 @@
-# Manual Postgres-only migration
+# Linux installation guide: Postgres edition
 
-This branch is a prepared migration, not a deployed release. Nothing here installs a service, changes production, sends messages or orders, or removes the old installation automatically. Start with a disposable rehearsal database. One `bot_runtime` schema supports one installation UUID per database; use a separate database/project for rehearsal/development. This is not a multi-tenant worker schema.
+Install this version in a separate directory and keep the existing installation stopped as a fallback. Rehearse the migration in a disposable database before using production data.
 
-## What changes
+The commands below run from a checkout of the [Postgres branch](https://github.com/idodidodi/trading-bot/tree/codex/postgres-only-runtime). Replace `USER`, `INSTALLATION_UUID` and example paths with your own values. Keep credentials in protected local files; never enter them in browser configuration or commit them to Git.
 
-Python uses Psycopg 3 and one shared bounded pool of **three** connections, plus **one** dedicated ownership connection: maximum four per process. Use Supabase's **shared SESSION pooler**, IPv4 hostname and port from the Connect panel (normally 5432). Transaction pooling is unsupported: ownership uses a session advisory lock. Prepared statements are disabled. TLS must verify the server certificate (`sslmode=verify-full`, or `verify-ca` with an explicitly trusted CA). Do not use an owner/service-role credential for the worker. Browsers receive only public Supabase configuration and sign in through Supabase Auth/RPC; owner/editor/viewer boundaries remain enforced. Local browsers can run `python dashboard_server.py` with public configuration and **no database credentials or Linux worker**.
+## 1. Prepare the database and credentials
 
-All mutable runtime state lives in Postgres. No runtime imports SQLite or starts a sync thread. `cloud_sync.py` and `cloud/sync_once.py` reject the retired operation. `runtime_records` is a SQL projection of operational tables, not another stored mirror. Existing `public.dashboard_records` remains intact for pre-cutover compatibility and recovery; after activation, the dispatcher reads operational tables, and old ingestion and Telegram coordination are fenced out for that installation.
+Use a separate Supabase project/database for rehearsal. Each database supports one worker installation UUID. The destination needs the existing dashboard schema, Auth users, installation ownership and sharing permissions.
 
-Hosted replay remains independent of Linux. The updated backtests Edge Function reads canonical candle rows through `dashboard_replay_history`, computes results in the Edge runtime, and atomically saves a report, finding identities, outcomes and completed job through `dashboard_finish_backtest`. Local replay jobs use the same history/jobs tables and the Python worker. Existing hosted CSV replay writes the shared CSV report table. Linux is not required for hosted replay. The existing hosted per-series replay limit remains 100,000 candles; the importer and stored history have no 500-finding or summary-payload cap.
+As a database administrator, apply these files **in this order**, after the existing dashboard migrations:
 
-Python transactions are scoped to database work; provider and broker calls happen outside them. Tiingo reserves its shared request budget before making a request, including failed requests. Reservations survive restarts. Delivery and catch-up claims use atomic row locking/`SKIP LOCKED`; result and notification intent commit together. Paper orders retain their deterministic client IDs and submitting/reconciliation journal. Ambiguous submissions are looked up, never blindly reposted. A lost COMMIT reply is reread through durable identities; database transactions are not automatically replayed by the pool.
+1. [postgres-runtime.sql](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/cloud/postgres-runtime.sql)
+2. [postgres-dashboard.sql](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/cloud/postgres-dashboard.sql)
+3. [postgres-worker-role.sql](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/cloud/postgres-worker-role.sql)
 
-Ownership reconnects with the same persisted generation if no replacement took over. A process from an older ownership generation is permanently fenced out. Temporary database errors pause processing and retry with bounded delay. A different active worker is rejected. These checks cannot stop an unmodified old executable: stop and disable every old launcher before cutover. Loss of a session during an in-flight external call cannot be undone; delivery leases and deterministic broker IDs remain necessary.
+These files can be reapplied. Do not apply older dashboard migrations over them afterward. Leave runtime activation disabled during import.
 
-Telegram is **at least once on ambiguous sends**, not exactly once. A crash/timeout after Telegram accepts a message but before the acceptance is committed can repeat it after the 90-second lease. Accepted deliveries and per-destination sound slots are shared in Postgres. Imported pending work is held for explicit review; it is not silently discarded or replayed.
+The worker-role script creates `trading_worker` without login access. Enable its login and choose a private password interactively in psql:
 
-## State inventory and preserved material
+```sql
+ALTER ROLE trading_worker LOGIN;
+\password trading_worker
+```
 
-| State / entrypoints | Destination or treatment |
-|---|---|
-| `platform_app.Store`, scanner, schedules/checkpoints | `signals`, `scan_state`, `scan_schedule`, `scanner_status`; preserve IDs, attempts and baselines |
-| Pin-Bars, BB Pin-Bars | Full independent `*_signals` and `*_state`; no summary-size cap |
-| Momentum, reviews and tracking | `momentum_runs/history/reports/feeds/reviews`, `paper_trades/status`; retain issued evidence and execution identities |
-| Managed assets and changing universes | `managed_config`, `config_history`, `daily_universe`, `weekly_stock_screen`, `stock_screen_history` |
-| Feedback / workspace / follow-ups | `finding_feedback`, immutable `feedback_history`, `finding_state`, `finding_followup`; hosted conflicts require an explicit decision |
-| Candle and replay state | `candle_cache`, `backtest_candle_cache`, **all** `backtest_runs`, `backtest_jobs`, `csv_backtest_runs`; import raw historical CSV directories too |
-| Commands and notifications | `scanner_commands`, `catchup_findings`, `notification_queue`, durable routes and deliveries; imported pending/running rows are held |
-| Tiingo cache / quota SQLite | `tiingo_requests`, `tiingo_responses`; import its separate snapshot |
-| Telegram sender SQLite | Snapshot retained; optional `TELEGRAM_SENDER_ID` preserves original UUID; otherwise shared per-device identity in Postgres |
-| Hosted routing | Existing `public.telegram_routes` is authoritative, read directly through a restricted worker function |
-| Retired `cloud_*` queues/conflicts | Archived in `migration_audit`; never processed by the runtime |
-| Hosted-only legacy findings/artifacts | `legacy_findings` / `legacy_artifacts` are frozen migration archives, queried directly when appropriate; no runtime snapshot writer |
-| Env/secrets, raw CSV source files, Markdown rules, logs, review exports | Files remain explicit configuration, inputs or exports, not a database fallback; copy required CSV inputs to the new directory and review configured paths |
-| Activation/maintenance tools, launchers, packaging | Postgres SQL; no SQLite backup creation or file-existence gates. Take an admin `pg_dump` before maintenance. Separate packaged roots `FamilyTradingBotPostgres`; all updater entrypoints and legacy stable-release publishing disabled |
+Use this dedicated role for the worker, rather than a database owner or service-role credential. Obtain the custom-role username, IPv4 hostname and port for the **shared SESSION pooler** from Supabase Connect. Transaction pooling is unsupported. Use verified TLS: `sslmode=verify-full` and the appropriate trusted CA certificate path.
 
-`finding_keys` indexes evidence hashes and original finding IDs; it stores no second copy of the evidence. Hosted and Python-created identities remain attached to their original feedback. The importer archives both sides of conflicting edits, including divergent same-revision feedback, rather than dropping the losing original. The chosen current revision stays in the operational table; the alternative remains in protected migration audit history.
+Copy the [worker environment template](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/.env.postgres.example) into a new configuration directory:
 
-## Before installation: Linux connection test
+```bash
+mkdir -p /home/USER/.config/FamilyTradingBotPostgres
+chmod 700 /home/USER/.config/FamilyTradingBotPostgres
+cp .env.postgres.example /home/USER/.config/FamilyTradingBotPostgres/worker.env
+chmod 600 /home/USER/.config/FamilyTradingBotPostgres/worker.env
+```
 
-Use a new secrets file, e.g. `/home/USER/.config/FamilyTradingBotPostgres/worker.env`, copied from `.env.postgres.example`. Enter only the dedicated worker connection URL, verified CA path and provider settings you need. Protect the directory/file with modes 700/600. Obtain the **session** pooler hostname and username for the custom role from Supabase Connect. Do not guess the region/project suffix. Do not put database credentials in browser config.
+Edit that local file. Set `TRADING_DATABASE_URL`, the trusted CA path and required provider credentials. URL-encode special characters in the URL password. Initially keep:
 
-Before installing the application, run from the reviewed checkout:
+```ini
+DRY_RUN=true
+PAPER_TRADING_ENABLED=false
+```
+
+Do not reuse the fallback installation's environment file or data directory.
+
+## 2. Test the connection from Linux before installation
+
+Use the [read-only connection test](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/scripts/test-postgres-connection.py):
 
 ```bash
 python3 -m venv /tmp/trading-pg-preflight
@@ -50,60 +54,89 @@ python3 -m venv /tmp/trading-pg-preflight
   --env-file /home/USER/.config/FamilyTradingBotPostgres/worker.env
 ```
 
-This command reads the URL without executing the file as shell code, connects with verified TLS, confirms TLS server-side, runs five `SELECT 1` probes in a read-only transaction, and prints handshake/median/max milliseconds. It prints no URL, credentials, remote error body or traceback. It changes no schema/data and does not load the scanner. A failure needs DNS/IPv4, pooler username, password, CA, firewall or project-availability correction before installation. No remote connectivity benchmark was run during implementation.
+Require a successful verified-TLS connection. The command reports handshake and query latency without printing credentials or changing schema/data. If it fails, correct the pooler username, password, CA, DNS/IPv4 access or firewall before continuing.
 
-A schema owner must provision the worker role before this preflight. Use `cloud/postgres-worker-role.sql` after the schema/API migration, then manually `ALTER ROLE trading_worker LOGIN` and `\password trading_worker` in psql. Alternatively make a separate login a member of only this role. Do not grant it owner, service-role, superuser, bypass-RLS or schema-creation privileges. The script intentionally creates the role with NOLOGIN and never embeds a password.
+## 3. Preserve the fallback and prepare a rehearsal
 
-## Rehearsal and additive schema preparation
+Save the existing Linux executable/source, environment, data directory, service unit and autostart settings. Preserve the current dashboard deployment ID and Edge Function sources/settings so you can restore them.
 
-1. Preserve a copy of the current **dashboard static release** and Edge Function sources/settings. Keep the prior Cloudflare deployment ID available. Preserve the old Linux executable/source checkout, environment file, data directory, service unit and autostart configuration. Record the exact fallback version/commit. Do not run the old updater against the new directory or vice versa.
-2. Use a separate disposable Postgres/Supabase project and installation UUID. Its Auth user/member rows and existing latest dashboard schema must exist before the new adapter. For a purely local test database, `scripts/setup-postgres-tests.py` provisions the current baseline with an Auth stub; **never use the stub in Supabase/production**. Historic one-time description rewrites are already incorporated in the current base and must not be blindly replayed.
-3. A schema owner manually applies, in order: `cloud/postgres-runtime.sql`, `cloud/postgres-dashboard.sql`, `cloud/postgres-worker-role.sql`. Apply the adapter after the currently deployed dashboard migrations (including sharing, follow-ups, Pin-Bars, BB Pin-Bars, CSV backtests, sorting and Telegram routing/delivery). It clones current asset validation; it deliberately fails if prerequisites are missing. These three new files are repeatable. Do not subsequently reapply older dispatcher migrations over the new wrapper.
-4. Deploy the updated `cloud/functions/backtests` **before activating** Postgres routing. It works with inactive legacy installations through the new history RPC as well. No CSV Edge Function code change is needed. Preserve existing JWT verification/auth behavior. This is a manual operator step; nothing in this task deployed it.
-5. Copy complete consistent snapshots and required historical CSVs into a protected rehearsal directory. To rehearse hosted edit reconciliation, restore a consistent authorized export of the existing hosted records/routing/CSV/feedback/outcome tables into the disposable project too. An empty hosted rehearsal cannot establish reconciliation correctness for your real data.
+Deploy the [backtests Edge Function](https://github.com/idodidodi/trading-bot/tree/codex/postgres-only-runtime/cloud/functions/backtests) after applying the SQL files and **before activating** Postgres routing. Preserve its existing authentication settings. Hosted backtests can run independently of Linux.
 
-For an admin connection, prefer a protected libpq service file and `.pgpass`, e.g. `service=trading_migration sslmode=verify-full`, rather than placing passwords in command arguments. Set `TRADING_MIGRATION_URL` in the operator environment; it is intentionally separate from the least-privileged worker URL. CLI tools never read an implicit production destination.
+For rehearsal, copy consistent legacy snapshots and all required historical CSV directories into a protected directory. Also restore an authorized, consistent export of the hosted records, routing, feedback, CSV reports and outcomes into the disposable project. Rehearsing with empty hosted data does not test reconciliation of your actual hosted edits.
 
-Snapshot using SQLite's backup API (not `cp signals.sqlite3` while a WAL writer is active):
+Use the [migration tool](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/scripts/migrate-postgres.py) for snapshots. It uses SQLite's backup API; do not copy a running WAL database as an ordinary file.
 
 ```bash
-python scripts/migrate-postgres.py snapshot \
-  --source /path/to/old/data/signals.sqlite3 --output /secure/rehearsal/signals.snapshot.sqlite3
-python scripts/migrate-postgres.py snapshot \
-  --source /path/to/old/data/tiingo-cache.sqlite3 --output /secure/rehearsal/tiingo.snapshot.sqlite3
-python scripts/migrate-postgres.py snapshot \
-  --source /path/to/old/data/telegram-sender.sqlite3 --output /secure/rehearsal/sender.snapshot.sqlite3
+python3 -m venv /tmp/trading-pg-migration
+/tmp/trading-pg-migration/bin/pip install -r requirements-runtime.txt
 ```
 
-Snapshots are internally consistent individually. For the final cutover all old writers must be stopped while taking **all** of them. If a separate cache/sender file does not exist, omit that argument. Do not omit an existing Tiingo budget file. Repeat `--tiingo` for every old worker using the same provider credential; their reservations are conservatively combined.
-
-Plan, resolve and import (replace `INSTALLATION_UUID` with the rehearsal destination's UUID):
+The dependencies are listed in [requirements-runtime.txt](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/requirements-runtime.txt). Use `/tmp/trading-pg-migration/bin/python` for the remaining migration commands.
 
 ```bash
-python scripts/migrate-postgres.py plan --source /secure/rehearsal/signals.snapshot.sqlite3 \
-  --tiingo /secure/rehearsal/tiingo.snapshot.sqlite3 --sender /secure/rehearsal/sender.snapshot.sqlite3 \
+/tmp/trading-pg-migration/bin/python scripts/migrate-postgres.py snapshot \
+  --source /path/to/old/data/signals.sqlite3 \
+  --output /secure/rehearsal/signals.snapshot.sqlite3
+/tmp/trading-pg-migration/bin/python scripts/migrate-postgres.py snapshot \
+  --source /path/to/old/data/tiingo-cache.sqlite3 \
+  --output /secure/rehearsal/tiingo.snapshot.sqlite3
+/tmp/trading-pg-migration/bin/python scripts/migrate-postgres.py snapshot \
+  --source /path/to/old/data/telegram-sender.sqlite3 \
+  --output /secure/rehearsal/sender.snapshot.sqlite3
+```
+
+Omit cache/sender arguments only if those files do not exist. Include every existing Tiingo budget snapshot; repeat `--tiingo` when multiple old workers used the same provider credential. For the final production snapshots, stop **all** writers before taking any of them.
+
+## 4. Plan, resolve conflicts and verify the import
+
+Set `TRADING_MIGRATION_URL` explicitly for the destination administrator connection. Keep it separate from the worker URL. A protected libpq service file and password file avoid putting administrator passwords in command arguments; for example, the URL setting can be `service=trading_migration sslmode=verify-full`.
+
+Run the plan against the rehearsal destination:
+
+```bash
+/tmp/trading-pg-migration/bin/python scripts/migrate-postgres.py plan \
+  --source /secure/rehearsal/signals.snapshot.sqlite3 \
+  --tiingo /secure/rehearsal/tiingo.snapshot.sqlite3 \
+  --sender /secure/rehearsal/sender.snapshot.sqlite3 \
   --history-dir /secure/rehearsal/historical-2020 \
   --installation INSTALLATION_UUID --output /secure/rehearsal/plan.json
 ```
 
-The plan writes complete conflicts and counts, exits 2 when choices are needed, and makes no destination writes. Protect the report: it contains private evidence/comments. Create `resolutions.json`, mapping each reported conflict key to `"local"` or `"hosted"`, for example `{"managed_config:1":"hosted"}`. Review hosted edits first; never choose all local simply to suppress conflicts. Repeat `--history-dir` for every historical directory. A conflict at the same feedback revision retains both originals in audit; reconcile any `feedback-final:*` inconsistency before proceeding.
+Repeat `--history-dir` for every historical CSV directory. The plan makes no destination writes and exits with code 2 when conflicts need review. Protect its output because it contains private evidence and comments.
+
+Create a local `resolutions.json` mapping each reported conflict key to `"local"` or `"hosted"`, for example:
+
+```json
+{"managed_config:1":"hosted"}
+```
+
+Review each decision, especially hosted configuration and feedback edits. Both originals of conflicting edits remain in migration audit history. Resolve every reported conflict before importing.
 
 ```bash
-python scripts/migrate-postgres.py import --source /secure/rehearsal/signals.snapshot.sqlite3 \
-  --tiingo /secure/rehearsal/tiingo.snapshot.sqlite3 --sender /secure/rehearsal/sender.snapshot.sqlite3 \
-  --history-dir /secure/rehearsal/historical-2020 --resolutions /secure/rehearsal/resolutions.json \
-  --installation INSTALLATION_UUID --writers-stopped --output /secure/rehearsal/import.json
-python scripts/migrate-postgres.py verify --source /secure/rehearsal/signals.snapshot.sqlite3 \
-  --tiingo /secure/rehearsal/tiingo.snapshot.sqlite3 --sender /secure/rehearsal/sender.snapshot.sqlite3 \
-  --history-dir /secure/rehearsal/historical-2020 --resolutions /secure/rehearsal/resolutions.json \
+/tmp/trading-pg-migration/bin/python scripts/migrate-postgres.py import \
+  --source /secure/rehearsal/signals.snapshot.sqlite3 \
+  --tiingo /secure/rehearsal/tiingo.snapshot.sqlite3 \
+  --sender /secure/rehearsal/sender.snapshot.sqlite3 \
+  --history-dir /secure/rehearsal/historical-2020 \
+  --resolutions /secure/rehearsal/resolutions.json \
+  --installation INSTALLATION_UUID --writers-stopped \
+  --output /secure/rehearsal/import.json
+/tmp/trading-pg-migration/bin/python scripts/migrate-postgres.py verify \
+  --source /secure/rehearsal/signals.snapshot.sqlite3 \
+  --tiingo /secure/rehearsal/tiingo.snapshot.sqlite3 \
+  --sender /secure/rehearsal/sender.snapshot.sqlite3 \
+  --history-dir /secure/rehearsal/historical-2020 \
+  --resolutions /secure/rehearsal/resolutions.json \
   --installation INSTALLATION_UUID --output /secure/rehearsal/verify.json
 ```
 
-Require zero conflicts and zero mismatches; review per-table source/destination counts, original IDs, every feedback revision/audit original, schedules/baselines, current config revision and paper client order IDs. Re-run import into the **same disabled destination**: it must verify without adding duplicates. Import is a single atomic admin transaction, with a snapshot hash and manifest receipt. An interrupted uncommitted import can restart; a lost commit reply is detected by its receipt. This is intentionally a stopped-writer operation, not an online incremental replication mechanism. It loads migration material into memory; large imports need more RAM than the worker. Do not reuse the populated rehearsal destination for final production import.
+Require **zero conflicts and zero mismatches**. Review counts, original finding IDs, feedback revisions, configuration, schedules/baselines, pending deliveries and paper client order IDs. Re-run the import with a new report filename against the same disabled destination; it must verify without duplicating records.
 
-The tooling refuses unmapped SQLite tables and incompatible pre-existing destination values. Missing raw CSVs, legacy operational tables or hosted exports cannot be inferred from capped summaries. Resolve omissions before final import. Keep the original snapshots unchanged.
+Keep snapshots unchanged. If an import loses its connection during COMMIT, do not assume it rolled back: rerun verify/import with the same inputs to inspect its durable receipt. Large imports retain migration material in memory, so allow sufficient RAM.
 
-## Prepare the new installation, without starting it
+## 5. Prepare the separate application directory
+
+Run the [installation preparation script](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/scripts/prepare-postgres-install.sh):
 
 ```bash
 bash scripts/prepare-postgres-install.sh \
@@ -111,31 +144,48 @@ bash scripts/prepare-postgres-install.sh \
   /home/USER/.config/FamilyTradingBotPostgres/worker.env
 ```
 
-The destination must not exist. The script copies reviewed source/public assets, creates a separate virtual environment, installs requirements, and does **not** install or start services. Keep required raw CSV source inputs in this new tree; never copy any `*.sqlite*`, WAL/SHM files or the old `.env` into it. Review CSV paths through the authenticated Assets editor to avoid depending on writable files in the fallback installation. The normal runtime has no SQLite fallback even when the URL/server is unavailable.
+The destination must not exist. The script copies the application, creates separate dependencies and leaves services stopped.
 
-For a local browser only, use `python dashboard_server.py` from the reviewed source. It serves only public assets/config on loopback and sends browser requests through Supabase Auth. Add the loopback origin to Supabase's authorized redirect URLs if using emailed sign-in links. It starts no worker and needs no database URL. The worker's local HTTP server serves the same authenticated browser bundle; unauthenticated local `/api/*` mutations are disabled.
+Copy required raw CSV inputs into the new tree and review their configured paths. Do not copy SQLite databases, WAL/SHM files or the old environment file into the new installation. Automatic updates are disabled; keep the old installation's updater and startup mechanisms separate.
 
-## Final write pause and manual cutover
+## 6. Perform the final production import
 
-1. Arrange a maintenance window. Stop **all** old scanner processes on Linux and other machines. Stop/disable their systemd services, desktop autostarts, timers and updater/installer processes. The old installation is a stopped fallback, not a concurrent worker. Discover the actual unit/process names (`systemctl --user list-units`, `systemctl list-units`, `pgrep -af FamilyTradingBot`); do not assume this repository owns a particular pre-existing unit. Record exactly how to restore them. Keep the executable/data untouched.
-2. Pause dashboard edits and active hosted replay/CSV jobs. Let already in-flight requests finish. Take an admin database backup (including schema/functions/Auth membership and hosted tables), final stopped SQLite/cache/sender snapshots and historical-file copies. This final write pause is mandatory; a morning rehearsal snapshot is not a cutover snapshot.
-3. Apply the three additive SQL files to production manually if not staged earlier. Run plan/import/verify against the final snapshots and the production hosted edits, using a new production destination schema with `runtime_control.enabled=false`. Resolve every conflict. Existing public records and the old dispatcher remain available while disabled. If abandoning a partial rehearsal schema in production, back it up and explicitly have an admin clear it; the importer does not silently overwrite it.
-4. Confirm pending work remains held:
+Arrange a maintenance window after the rehearsal passes:
+
+1. Stop all old scanner processes on Linux and other machines. Disable their services, autostarts, timers and updater/installer processes. Record how to restore them; retain the executable and data unchanged.
+2. Pause dashboard edits and hosted replay/CSV jobs. Let in-flight requests finish.
+3. Take an administrator database backup, final stopped SQLite/cache/sender snapshots and historical-file copies.
+4. Apply the SQL prerequisites to production if they were not staged earlier. Repeat plan, conflict resolution, import and verification using the final snapshots and production hosted edits. Keep `runtime_control.enabled=false` throughout import. Do not reuse the populated rehearsal database as production.
+
+Before activation, inspect held work and paper states:
 
 ```sql
 select queue,count(*) from bot_runtime.migration_holds group by queue;
 select id,payload::jsonb->>'state' from bot_runtime.paper_trades;
 ```
 
-Review held alerts/notifications/commands **by identity**. Retain the holds until you decide whether to cancel or deliver each item; removing a hold authorizes processing that original pending item. Expired paper candidates should be skipped by existing execution rules; ambiguous journal states must reconcile against Alpaca before any new order. Do not reset baselines or delete delivery history to “start clean”.
-5. Set `DRY_RUN=true` and `PAPER_TRADING_ENABLED=false` in the **new** environment, keep `effects_enabled=false`, then activate routing manually:
+Keep imported pending work held until you review each identity. Do not reset baselines, erase delivery history or bulk-release pending messages. Reconcile ambiguous paper submissions with Alpaca before allowing new orders.
+
+## 7. Activate and start in dry-run mode
+
+Confirm the new environment still has `DRY_RUN=true` and `PAPER_TRADING_ENABLED=false`. Activate dashboard routing while keeping external effects paused:
 
 ```sql
-update bot_runtime.runtime_control set enabled=true,effects_enabled=false where id=1;
+update bot_runtime.runtime_control
+set enabled=true,effects_enabled=false where id=1;
 ```
 
-This switches the same public API to direct operational records and fences old ingestion/coordinator calls. The original dashboard bundle remains API-compatible; preserve its deployment for reversal. Verify owner and shared accounts, both browser origins, complete paginated strategy histories, saved feedback/config, candles, follow-ups, and an independent hosted replay while Linux is stopped.
-6. Copy/adapt `scripts/trading-bot-postgres.service.example` to a **new** user unit. Replace all absolute paths and confirm the old unit/autostart stays disabled. Only now, manually run `systemctl --user daemon-reload` and `systemctl --user start trading-bot-postgres.service`. Do not enable boot startup until dry-run verification passes. A manual foreground alternative is:
+Verify owner and shared-account access, both browser origins, paginated strategy histories, saved feedback/configuration, candles, follow-ups and a hosted replay while Linux remains stopped.
+
+Adapt the [systemd service template](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/scripts/trading-bot-postgres.service.example) into a **new** user unit at `~/.config/systemd/user/trading-bot-postgres.service`. Replace every absolute path. Confirm the old service/autostart is disabled, then run:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user start trading-bot-postgres.service
+journalctl --user -u trading-bot-postgres.service -f
+```
+
+Alternatively, start the [application entrypoint](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/platform_app.py) in the foreground:
 
 ```bash
 TRADING_BOT_ENV=prod \
@@ -144,44 +194,52 @@ TRADING_BOT_ENV_FILE=/home/USER/.config/FamilyTradingBotPostgres/worker.env \
 /home/USER/apps/trading-bot-postgres/platform_app.py
 ```
 
-7. After reviewing dry-run/new findings and reconciling the broker, explicitly authorize effects: change delivery/paper flags in the new config as desired, enable `effects_enabled=true` with an admin, and restart the new service. Releasing a specific reviewed hold uses `delete from bot_runtime.migration_holds where queue='notification_queue' and key='EXACT_REVIEWED_ID';`. Cancel unwanted legacy work by updating its status while retaining its history, then removing that hold. Do not bulk-delete holds as an initialization step.
+Do not enable startup at boot until dry-run checks pass. Verify that only one worker installation is active.
 
-Dry-run processing marks newly processed alerts `dry-run`; it does not later send them automatically. Review this when choosing the dry-run window. The effects gate blocks automatic Telegram/broker writes even if an imported saved paper setting was enabled. Manual Telegram tests are explicit sends and should not be used during a no-message rehearsal.
-
-## Stop, recover, or roll back
-
-Before any new writes/effects, stop the new process, leave it disabled, set `enabled=false,effects_enabled=false`, restore the preserved dashboard deployment/Edge Function release as needed, then manually restart the untouched fallback. The new schema does not remove old public records. This branch also disables the legacy stable-release publish job, so a future main/tag build cannot accidentally feed these incompatible binaries to the stopped fallback updater. Do not start two installations or re-enable an old updater accidentally.
-
-**After new writes, orders or alerts, a branch/binary rollback is insufficient. Prefer pausing and forward-fixing.** Stop workers and dashboard writes, set both runtime flags false, take a fresh admin backup, and compare every paper client ID/submission/exit/cancel state against the broker's current orders, fills, positions and account. Record accepted Telegram message IDs and ambiguous attempts; an ambiguous Telegram acceptance cannot be proven absent by a database export. Never blindly retry a `submission unknown` order or silently deliver all pending messages.
-
-A supported offline recovery export creates NEW legacy files from current Postgres state, without modifying the stopped fallback:
+For a browser-only installation, run the [dashboard server](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/dashboard_server.py) from the checkout:
 
 ```bash
-python scripts/migrate-postgres.py rollback-export \
+python3 dashboard_server.py
+```
+
+It uses public Supabase configuration and authenticated browser APIs; it needs no database credentials and starts no scanner. Add the loopback origin to Supabase's authorized redirect URLs when using emailed sign-in links.
+
+## 8. Enable alerts and paper execution deliberately
+
+After reviewing dry-run findings and broker state, set the desired delivery/paper flags in the new environment, enable the external-effects gate as an administrator, and restart the new service:
+
+```sql
+update bot_runtime.runtime_control set effects_enabled=true where id=1;
+```
+
+Release only individually reviewed pending work. For example:
+
+```sql
+delete from bot_runtime.migration_holds
+where queue='notification_queue' and key='EXACT_REVIEWED_ID';
+```
+
+Cancel unwanted legacy work by updating its status while retaining its history, then remove its hold. Dry-run alerts are recorded as `dry-run` and are not automatically resent when delivery is enabled.
+
+Telegram delivery can repeat a message after an ambiguous timeout/crash; it is not exactly once. Keep ambiguous broker submissions under reconciliation rather than blindly retrying them. Manual Telegram connection tests send actual messages, so avoid them during a no-message rehearsal.
+
+## Recovery and rollback
+
+**Before new writes or external effects:** stop the new process, set both runtime flags false, restore the preserved dashboard/Edge Function release as needed, and manually restart the untouched fallback. Keep the new worker stopped.
+
+**After new writes, orders or alerts:** pause workers and dashboard writes, disable both runtime flags, and take a fresh administrator backup. Prefer repairing the Postgres installation. A branch rollback alone does not reconcile data or broker state.
+
+Before using the [recovery export tool](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/scripts/migrate-postgres.py), compare every paper client ID, submission, exit, cancellation, fill and position against Alpaca. Record accepted Telegram message IDs and ambiguous attempts. Then export into a new directory:
+
+```bash
+/tmp/trading-pg-migration/bin/python scripts/migrate-postgres.py rollback-export \
   --source /secure/final/signals.snapshot.sqlite3 \
   --installation INSTALLATION_UUID --writers-stopped --broker-reconciled \
   --output /secure/recovery-after-postgres
 ```
 
-Use the baseline from the preserved current release (`1da8910` schema). The exporter initializes compatible missing legacy tables, transfers current operational/config/feedback/queue/strategy/paper state and Tiingo quota/cache, resets paper enablement in the recovery copy, cancels held work **in that copy only**, clears retired mirror queues, and runs SQLite integrity checking. Review its manifest and `unmapped-history.json` before restoring copies into a separate recovery data directory. Keep original fallback data unchanged. Configure the preserved release against the reviewed recovery directory, disable its auto-updater/autostart, and keep mirror credentials empty until intentionally reconciling the old dashboard store. Do not claim that restarting stale SQLite reconciles anything.
+Use the snapshot matching the preserved release's [supported recovery schema](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/migration/legacy-schema.sql), based on commit `1da8910`. Review the generated manifest and `unmapped-history.json` before restoring copies into a separate recovery data directory. The exporter leaves the original fallback untouched, disables paper execution in the recovery copy and cancels held work in that copy.
 
-Post-write rollback limitations are explicit: hosted-only archived findings and newer hosted finding IDs/outcome artifacts may not be displayable by the old Python/dashboard release. They remain preserved in Postgres plus `unmapped-history.json`; older code cannot attach every such ID to its locally recomputed evidence. An older fallback schema than the preserved release is unsupported without a reviewed custom conversion. Ambiguous external effects still require operator/broker reconciliation; `--broker-reconciled` records an operator attestation, not a live automated broker verification. If these limitations affect required history or safety, keep the old worker stopped and forward-fix Postgres. Keep the authoritative backup until all displays and external state have been reconciled.
+Keep the fallback updater/autostart disabled and its mirror credentials empty until intentionally reconciling the old dashboard store. Never restart it against stale original SQLite data after Postgres has accepted new writes.
 
-## Validation and memory
-
-Use Python 3.10+ and `requirements-runtime.txt`. For local integration tests, create an EMPTY loopback database named **trading_bot_test** and set `TRADING_TEST_DATABASE_URL` explicitly. The fixture refuses other names/hosts. Then run:
-
-```bash
-python scripts/setup-postgres-tests.py
-python -m unittest discover -q
-node --test web/*.test.mjs
-node cloud/test_backtest_function.mjs
-```
-
-Without the explicit test DSN, database regression fixtures skip rather than creating SQLite. The SQL Auth stub exists only in that disposable test setup. Tests use mocked provider, Telegram and broker calls. Linux CI provisions its own disposable Postgres service; Windows verifies pure behavior and browser-only packaged startup. Frozen builds and physical Linux/Supabase TLS connectivity still require the operator's acceptance run; they were not deployed or remotely exercised here.
-
-Do not promise a RAM reduction. Removing the sync snapshot thread removes its serialization/queue work, but strategy candle arrays, indicator calculations, replay results, HTTP handling, provider responses and browser charts still use memory. Pool/driver buffers also cost memory. Measure worker RSS on Linux under comparable data/coverage and record browser memory separately. The connection preflight measures only connectivity, not scanner throughput or memory. Rehearsal/import verification intentionally retains complete migration material in memory and is not representative of runtime RSS.
-
-A local macOS development smoke measured process peak RSS at 39.8 MiB after runtime imports and 40.5 MiB after opening Store and three simultaneous pooled connections. This excludes real scanner/provider/replay workloads and the browser, and is not a Linux before/after measurement. It establishes no production RAM saving.
-
-Implementation validation on 24 October 2026: 308 Python tests passed with one platform-dependent skip against a disposable local Postgres database; 25 browser tests passed; the hosted replay Edge Function authentication/background-completion checks passed. The three new SQL files were reapplied successfully. Compile, shell syntax and diff-whitespace checks passed. Provider/broker/Telegram calls were mocked; physical Linux connectivity, production data reconciliation, frozen build execution and live cutover remain operator acceptance steps.
+Some hosted-only archived findings and newer hosted finding IDs/outcomes cannot be displayed or attached to feedback by the old release. They remain preserved in Postgres and the recovery archive. Older fallback schemas require a reviewed conversion. The `--broker-reconciled` flag is an operator attestation, not an automated live broker check; ambiguous Telegram acceptance also remains uncertain. If these limitations prevent a safe recovery, leave the fallback stopped and repair Postgres instead.
