@@ -288,6 +288,31 @@ class PostgresTests(unittest.TestCase):
                 db.execute('DELETE FROM public.dashboard_records WHERE installation=%s',(INST,))
                 db.execute('DELETE FROM public.dashboard_followups WHERE installation=%s',(INST,))
 
+    def test_import_mixed_feedback_ids_preserves_existing_and_allocates_after_max(self):
+        from migration.legacy import prepare,apply
+        from psycopg.types.json import Jsonb
+        evidence=json.dumps({'asset':'TEST'})
+        with self.store.connect() as db:db.execute('UPDATE runtime_control SET enabled=false')
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'old.db'
+            with closing(sqlite3.connect(source)) as old,old:
+                old.execute('CREATE TABLE feedback_history(sequence INTEGER PRIMARY KEY,finding_id TEXT,source TEXT,evidence TEXT,rating INTEGER,comment TEXT,revision INTEGER,updated_at REAL)')
+                old.executemany('INSERT INTO feedback_history VALUES(?,?,?,?,?,?,?,?)',[(1,'unchanged','live',evidence,3,'unchanged',1,1),(100,'existing','live',evidence,3,'old',1,1)])
+            try:
+                with psycopg.connect(test_dsn(),options='-c search_path=bot_runtime,pg_catalog') as db:
+                    for key in ('existing','hosted-only'):
+                        payload=dict(finding_id=key,source='live',evidence=json.loads(evidence),rating=4,comment='hosted',revision=1,updated_at=2)
+                        db.execute("INSERT INTO public.dashboard_records(installation,kind,key,payload) VALUES(%s,'feedback_history',%s,%s)",(INST,key+':1',Jsonb(payload)))
+                    plan=prepare(db,source,INST,{'feedback_history:existing:1':'hosted'})
+                    self.assertEqual(plan['conflicts'],[])
+                    # Exercise generated IDs even when their group arrives first.
+                    plan['tables']['feedback_history'].sort(key=lambda r:'sequence' in r)
+                    self.assertEqual(apply(db,plan,INST)['mismatches'],[])
+                    self.assertEqual(db.execute('SELECT finding_id,sequence FROM feedback_history ORDER BY sequence').fetchall(),[('unchanged',1),('existing',100),('hosted-only',101)])
+                    self.assertEqual(apply(db,plan,INST)['mismatches'],[])
+            finally:
+                with psycopg.connect(test_dsn()) as db:db.execute("DELETE FROM public.dashboard_records WHERE installation=%s AND kind='feedback_history' AND key IN ('existing:1','hosted-only:1')",(INST,))
+
     def test_recovery_exports_new_files_without_touching_fallback(self):
         from migration.recovery import export
         from migration.legacy import snapshot

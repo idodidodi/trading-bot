@@ -137,6 +137,7 @@ def prepare(db, path, installation, resolutions=None, tiingo=None, sender=None, 
             if selected is normalized:continue
             # Retain local original in audit and selected hosted canonical revision.
             value=selected
+            if 'sequence' in old:value=value|{'sequence':old['sequence']}
         history[pair]=value
     # Current feedback must also have its final immutable history record.
     for r in tables.get('finding_feedback',[]):
@@ -257,7 +258,13 @@ def apply(db, prepared, installation):
     for table,rows in prepared['tables'].items():
         groups=defaultdict(list)
         for row in rows:groups[tuple(row)].append(tuple(row.values()))
-        for columns,values in groups.items():
+        identity=IDENTITIES.get(table)
+        ordered=sorted(groups.items(),key=lambda item:identity not in item[0]) if identity else groups.items()
+        for columns,values in ordered:
+            if identity and identity not in columns:
+                # Explicit legacy IDs must land before allocating hosted-only
+                # IDs. Sequence increments survive transaction rollback.
+                db.execute(sql.SQL("SELECT setval(pg_get_serial_sequence(%s,%s),GREATEST(COALESCE(max({}),0),1),count(*)>0) FROM bot_runtime.{}").format(sql.Identifier(identity),sql.Identifier(table)),('bot_runtime.'+table,identity))
             query=sql.SQL('INSERT INTO bot_runtime.{} ({}) VALUES ({}) ON CONFLICT DO NOTHING').format(sql.Identifier(table),sql.SQL(',').join(map(sql.Identifier,columns)),sql.SQL(',').join(sql.Placeholder() for _ in columns))
             with db.cursor() as cursor:
                 cursor.executemany(query,values)
