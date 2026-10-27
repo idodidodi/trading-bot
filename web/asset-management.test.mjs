@@ -79,7 +79,7 @@ test('empty timeframe selection stays in modal and sends no mutation; cancel sen
 test('strategy selections start from saved settings and save added and removed strategies with the timeframes',async()=>{
  const {context,get,requests}=setup(settings);
  await vm.runInContext("openAssetManager({symbol:'BTCUSD'})",context);
- const form=formFor(get),strategies=descendants(form).filter(e=>e.tag==='input'&&['rsi','pin-bars','bb-pin-bars'].includes(e.value));
+ const form=formFor(get),strategies=descendants(form).filter(e=>e.tag==='input'&&['rsi','pin-bars','bb-pin-bars','rsi-pb'].includes(e.value));
  assert.deepEqual(strategies.filter(i=>i.checked).map(i=>i.value),['rsi','bb-pin-bars']);
  for(const input of strategies)input.checked=['pin-bars','bb-pin-bars'].includes(input.value);
  await submit(form);
@@ -94,8 +94,8 @@ test('legacy assets show default strategies; empty strategy selection sends no m
  const legacy={...asset};delete legacy.scan_strategies;
  const {context,get,requests}=setup({...settings,config:{...settings.config,assets:[legacy]}});
  await vm.runInContext("openAssetManager({symbol:'BTCUSD'})",context);
- const form=formFor(get),strategies=descendants(form).filter(e=>e.tag==='input'&&['rsi','pin-bars','bb-pin-bars'].includes(e.value));
- assert.deepEqual(strategies.filter(i=>i.checked).map(i=>i.value),['rsi','pin-bars']);
+ const form=formFor(get),strategies=descendants(form).filter(e=>e.tag==='input'&&['rsi','pin-bars','bb-pin-bars','rsi-pb'].includes(e.value));
+ assert.deepEqual(strategies.filter(i=>i.checked).map(i=>i.value),['rsi','pin-bars','rsi-pb']);
  for(const input of strategies)input.checked=false;
  await submit(form);
  assert.match(text(form),/Choose at least one scan strategy/);

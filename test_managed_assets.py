@@ -46,7 +46,7 @@ class AssetsTests(unittest.TestCase):
     def test_strategy_defaults_validation_and_sync(self):
         from managed_assets import validate_asset
         asset=get(self.store)['config']['assets'][0]
-        self.assertEqual(asset['scan_strategies'],['rsi','pin-bars'])
+        self.assertEqual(asset['scan_strategies'],['rsi','pin-bars','rsi-pb'])
         for choices in (['rsi'],['pin-bars'],['rsi','pin-bars']):
             asset['scan_strategies']=choices
             saved=change(self.store,dict(action='save',revision=get(self.store)['revision'],asset=asset))
@@ -60,7 +60,7 @@ class AssetsTests(unittest.TestCase):
         validate_asset(legacy)
         with self.store.connect() as db:
             db.execute('UPDATE managed_config SET payload=? WHERE id=1',(json.dumps(dict(self.config,assets=[legacy])),))
-        self.assertEqual(get(self.store)['config']['assets'][0]['scan_strategies'],['rsi','pin-bars'])
+        self.assertEqual(get(self.store)['config']['assets'][0]['scan_strategies'],['rsi','pin-bars','rsi-pb'])
 
     def test_strategy_selection_gates_scanners_and_invalidates_schedule(self):
         from test_pin_bars import bars

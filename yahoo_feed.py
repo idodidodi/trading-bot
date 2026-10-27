@@ -144,6 +144,8 @@ def candles_from_chart(result, timeframe, now, symbol='^GDAXI'):
     if excluded:
         notes.append(f'{excluded} non-candle quote snapshot(s) excluded')
     result = ProviderCandles(closed, notes)
+    # Preserve the provider's session schedule for next-candle strategy checks.
+    result.sessions = sorted((int(start*1000),int(end*1000)) for start,end in sessions.values())
     # Recheck shortly after the next actual boundary, including delayed publication.
     future = [c.end + DELAY_MS for c in bars if c.end + DELAY_MS > now]
     if timeframe in ('weekly', 'monthly') and bars:

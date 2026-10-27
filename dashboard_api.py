@@ -25,12 +25,14 @@ def read(store, path):
         page=int(param('page','0'))
         if not 0<=page<=10000:raise ValueError('Invalid page')
         strategy=param('strategy') or None
-        if strategy not in (None,'pin-bars','bb-pin-bars','confirmed','warmup'):raise ValueError('Invalid strategy')
+        if strategy not in (None,'pin-bars','bb-pin-bars','rsi-pb','confirmed','warmup'):raise ValueError('Invalid strategy')
         return view(store,param('id') or None,page,strategy)
-    if url.path in ('/api/pin-bars','/api/bb-pin-bars'):
+    if url.path in ('/api/pin-bars','/api/bb-pin-bars','/api/rsi-pb'):
         from pin_bars import view
         if url.path=='/api/bb-pin-bars':
             from bb_pin_bars import view
+        if url.path=='/api/rsi-pb':
+            from rsi_pb import view
         page = int(param('page','0'))
         if not 0 <= page <= 10000:raise ValueError('Invalid page')
         return view(store,page)

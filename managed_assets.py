@@ -8,7 +8,7 @@ DEFAULTS = ['monthly', 'weekly', 'daily', '4h']
 SUPPORTED_TIMEFRAMES = DEFAULTS + ['1h']
 LIMIT = 100
 PROVIDERS = ('csv', 'twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca', 'fmp', 'yahoo')
-SCAN_STRATEGIES = ['rsi', 'pin-bars']
+SCAN_STRATEGIES = ['rsi', 'pin-bars', 'rsi-pb']
 SUPPORTED_SCAN_STRATEGIES = SCAN_STRATEGIES + ['bb-pin-bars']
 TOKEN = re.compile(r'[A-Za-z0-9_^=:.!/\-]{1,100}')
 
@@ -26,6 +26,10 @@ def ensure(store, config):
         asset.setdefault('enabled', True)
         asset.setdefault('scan_strategies', SCAN_STRATEGIES.copy())
         asset.setdefault('tradingview_symbol', '')
+    value['rsi_pb_defaults_applied'] = True
+    for asset in value['assets']:
+        if 'rsi' in asset['scan_strategies'] and 'rsi-pb' not in asset['scan_strategies']:
+            asset['scan_strategies'].append('rsi-pb')
     with store.connect() as db:
         initialize(db)
         db.execute('INSERT OR IGNORE INTO managed_config VALUES(1,1,0,?)', (json.dumps(value),))
@@ -33,6 +37,7 @@ def ensure(store, config):
 
 
 def get(store):
+    migrate_rsi_pb(store)
     with store.connect() as db:
         row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
     if not row:
@@ -47,6 +52,30 @@ def get(store):
             result['conflicts']=db.execute('SELECT count(*) FROM cloud_conflicts').fetchone()[0]
             result['configuration_conflict']=bool(db.execute("SELECT 1 FROM cloud_conflicts WHERE id='config'").fetchone())
     return result
+
+
+def migrate_rsi_pb(store):
+    """One revisioned upgrade; explicit opt-outs survive every later restart."""
+    with store.connect() as db:
+        row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
+        if not row or json.loads(row[2]).get('rsi_pb_defaults_applied'):
+            return
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
+        config = json.loads(row[2])
+        if config.get('rsi_pb_defaults_applied'):
+            return
+        for asset in config['assets']:
+            strategies = asset.setdefault('scan_strategies',['rsi','pin-bars'])
+            if 'rsi' in strategies and 'rsi-pb' not in strategies:
+                strategies.append('rsi-pb')
+        config['rsi_pb_defaults_applied'] = True
+        revision,payload = row[0]+1,json.dumps(config)
+        db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1',(revision,payload))
+        db.execute('INSERT INTO config_history VALUES(?,?,?)',(revision,payload,time.time()))
+        from cloud_sync import initialize as init_sync, enqueue
+        init_sync(db)
+        enqueue(db,'config','current',dict(revision=revision,applied_revision=row[1],config=config))
 
 
 def validate_asset(asset):
@@ -147,11 +176,14 @@ def change(store, body):
         if not row or row[0]!=body['revision']:
             raise LookupError('Assets changed in another session. Reload before saving.')
         config=json.loads(row[1]);assets=config['assets'];results=[]
+        old_assets=copy.deepcopy(assets)
         if body.get('action')=='accept_online':
             remote=db.execute("SELECT payload FROM cloud_conflicts WHERE id='config'").fetchone()
             if not remote:raise ValueError('No online configuration conflict')
             cloud=json.loads(remote[0])
             for asset in cloud['config']['assets']:validate_asset(asset)
+            from rsi_pb import cancel_changed
+            cancel_changed(db,old_assets,cloud['config'])
             db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1',(cloud['revision'],json.dumps(cloud['config'])))
             db.execute("DELETE FROM cloud_pending WHERE kind='config'")
             db.execute("DELETE FROM cloud_seen WHERE kind='config'")
@@ -194,6 +226,8 @@ def change(store, body):
             current.setdefault('path','data/candles/{asset}-{timeframe}.csv')
             results=[dict(ticker=current['id'],status='saved')]
         else:raise ValueError('Invalid asset operation')
+        from rsi_pb import cancel_changed
+        cancel_changed(db,old_assets,config)
         payload=json.dumps(config);revision=row[0]+1
         db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1',(revision,payload))
         db.execute('INSERT INTO config_history VALUES(?,?,?)',(revision,payload,time.time()))

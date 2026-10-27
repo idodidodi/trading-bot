@@ -261,8 +261,10 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     from managed_assets import effective, cache_candles, for_timeframe
     import pin_bars
     import bb_pin_bars
+    import rsi_pb
     pin_rules = pin_bars.load_rules()
     bb_rules = bb_pin_bars.load_rules()
+    combined_rules = rsi_pb.load_rules(rules)
     from kraken_feed import fetch_kraken
     from oanda_feed import fetch_oanda
     from fmp_feed import fetch_fmp
@@ -270,11 +272,13 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     from tiingo_feed import fetch_tiingo
     from alpaca_feed import fetch_alpaca
     config, config_revision = effective(store, config)
+    configured = config
     now = int(time.time() * 1000) if now is None else now
     from weekly_stock_screen import resolve as resolve_weekly_stocks
     config, stock_selection = resolve_weekly_stocks(store, config, rules, now)
     from daily_universe import resolve
     config, selection = resolve(store, config, now)
+    config = rsi_pb.retain_pending(store, config, configured,combined_rules['version'])
     # Independent daily strategy: RSI rules and alert state remain separate.
     from momentum import scan as scan_momentum
     if run_momentum:
@@ -315,7 +319,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
             continue
         for timeframe in configured_asset.get('timeframes', config['timeframes']):
             asset = for_timeframe(configured_asset, timeframe)
-            strategies = configured_asset.get('scan_strategies', ['rsi', 'pin-bars'])
+            from managed_assets import SCAN_STRATEGIES
+            strategies = configured_asset.get('scan_strategies', SCAN_STRATEGIES)
             provider = asset['provider']
             row = dict(asset=asset['id'], timeframe=timeframe, provider=provider,
                        exchange=asset.get('exchange', ''), symbol=asset.get('symbol', asset['id']),
@@ -331,7 +336,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 coverage.append(row|dict(status='weekday only',reason='Stock scans paused Saturday/Sunday',checked_at=now,next_close_at=next_scan(now)))
                 continue
             from scan_schedule import identity, saved, save, next_due, provider_lag
-            schedule_key=identity(asset,timeframe,rules | dict(skill_hash=rules['skill_hash'] + pin_rules['version'] + bb_rules['version']))
+            schedule_key=identity(asset,timeframe,rules | dict(skill_hash=rules['skill_hash'] + pin_rules['version'] + bb_rules['version'] + combined_rules['version']))
             previous=saved(store,schedule_key,now)
             if previous:
                 coverage.append(previous)
@@ -387,6 +392,16 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     row['next_close_at'] = candles[-1].end + ((now - candles[-1].end) // period + 1) * period
                 cache_candles(store, asset, timeframe, candles)
                 if candles:row['last_closed_at']=candles[-1].end
+                if 'rsi-pb' not in strategies:
+                    row['rsi_pb'] = dict(status='disabled',reason='RSI + PB scanning disabled for this asset')
+                elif is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
+                    row['rsi_pb'] = dict(status='excluded',reason='Stock below $5 minimum')
+                else:
+                    selection_start = selection['starts_at'] if asset.get('daily_selected') and selection and not catchup else None
+                    if asset.get('weekly_screen_selected'):
+                        selection_start = asset.get('weekly_screen_since',asset['weekly_screen_week_start'])
+                    combined_asset = asset | dict(_rsi_pb_sessions=getattr(raw,'sessions',[]))
+                    row['rsi_pb'] = rsi_pb.scan(store,combined_asset,timeframe,candles,combined_rules,now,selection_start,catchup=bool(catchup))
                 if 'pin-bars' not in strategies:
                     row['pin_bars'] = dict(status='disabled', reason='Pin-Bars scanning disabled for this asset')
                 elif is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
@@ -409,7 +424,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     row.update(status='excluded',candles=len(candles),reason='Stock below $5 minimum; no signals generated')
                 elif 'rsi' not in strategies:
                     # Top-level counts belong to RSI; Pin-Bars counts stay nested.
-                    row.update({k: v for k, v in (row['pin_bars'] if 'pin-bars' in strategies else row['bb_pin_bars']).items() if k not in ('new_signals', 'historical_matches')})
+                    primary = row['pin_bars'] if 'pin-bars' in strategies else row['bb_pin_bars'] if 'bb-pin-bars' in strategies else row['rsi_pb']
+                    row.update({k: v for k, v in primary.items() if k not in ('new_signals', 'historical_matches')})
                     row.update(candles=len(candles), new_signals=0, historical_matches=0,
                                rsi_status='disabled')
                 elif len(candles) < minimum_history(rules):

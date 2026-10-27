@@ -29,8 +29,9 @@ def saved(store, key, now):
         row=db.execute('SELECT next_due,payload FROM scan_schedule WHERE key=?',(key,)).fetchone()
     if row and now<row[0]:
         result = json.loads(row[1]) | dict(check_state='waiting for candle close',next_close_at=row[0],new_signals=0)
-        if 'pin_bars' in result:
-            result['pin_bars']['new_signals'] = 0
+        for strategy in ('pin_bars','bb_pin_bars','rsi_pb'):
+            if strategy in result:
+                result[strategy]['new_signals'] = 0
         return result
     return None
 

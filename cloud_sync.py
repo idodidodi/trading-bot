@@ -103,12 +103,18 @@ def snapshot(store):
     while bb_live['signals'] and len(canonical(bb_live).encode()) > 180000:
         bb_live['signals'].pop()
     bb_live['mirror_limit'] = len(bb_live['signals'])
+    from rsi_pb import view as combined_view
+    combined_live=combined_view(store,page_size=500)
+    while combined_live['signals'] and len(canonical(combined_live).encode()) > 180000:
+        combined_live['signals'].pop()
+    combined_live['mirror_limit'] = len(combined_live['signals'])
     momentum_live=momentum_view(store)
     momentum_backtest=momentum_view(store,'backtest')
     with store.connect() as db:
         db.execute('PRAGMA query_only=ON')
         queue.add('summary','pin-bars-live',pin_live)
         queue.add('summary','bb-pin-bars-live',bb_live)
+        queue.add('summary','rsi-pb-live',combined_live)
         queue.add('summary','momentum-live',momentum_live)
         queue.add('summary','momentum-backtest',momentum_backtest)
         config=db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
@@ -181,7 +187,7 @@ def snapshot(store):
 def batch(store):
     with store.connect() as db:
         initialize(db)
-        rows=db.execute("SELECT kind,key,event_id,payload FROM cloud_pending ORDER BY CASE WHEN kind='summary' AND (key IN ('scanner','selections','pin-bars-live','bb-pin-bars-live','momentum-live','momentum-backtest') OR key LIKE 'catchup:%') THEN -1 ELSE CASE kind WHEN 'config' THEN 0 WHEN 'live' THEN 1 WHEN 'backtest' THEN 2 WHEN 'feedback' THEN 3 ELSE 4 END END,key LIMIT 100").fetchall()
+        rows=db.execute("SELECT kind,key,event_id,payload FROM cloud_pending ORDER BY CASE WHEN kind='summary' AND (key IN ('scanner','selections','pin-bars-live','bb-pin-bars-live','rsi-pb-live','momentum-live','momentum-backtest') OR key LIKE 'catchup:%') THEN -1 ELSE CASE kind WHEN 'config' THEN 0 WHEN 'live' THEN 1 WHEN 'backtest' THEN 2 WHEN 'feedback' THEN 3 ELSE 4 END END,key LIMIT 100").fetchall()
         base=int(meta(db,'config_base'));cursor=int(meta(db,'feedback_cursor'));state_cursor=int(meta(db,'state_cursor'))
     out=[];size=128
     for kind,key,event,raw in rows:
@@ -212,6 +218,8 @@ def apply(store,response):
             for asset in cfg['config']['assets']:validate_asset(asset)
             local=db.execute('SELECT revision,payload FROM managed_config WHERE id=1').fetchone()
             if local and (local[0] != cfg['revision'] or json.loads(local[1])!=cfg['config']):
+                from rsi_pb import cancel_changed
+                cancel_changed(db,json.loads(local[1])['assets'],cfg['config'])
                 db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1',(cfg['revision'],json.dumps(cfg['config'])))
             db.execute('INSERT OR REPLACE INTO cloud_meta VALUES(?,?)',('config_base',str(cfg['revision'])))
             # Mark imported config as seen; application acknowledgement is a later change.

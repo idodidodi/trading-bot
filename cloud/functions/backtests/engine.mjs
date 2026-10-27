@@ -40,7 +40,7 @@ export function detect(candles,rules,symbol,timeframe,provisional=false){
    const rsiMatch=improvement>0||(tolerance>0&&improvement>=-tolerance);
    const divergence=direction==='bullish'?prices[i]<prices[first]&&rsiMatch:prices[i]>prices[first]&&rsiMatch;
    if(!divergence||!bandTouch)continue;
-   const s={symbol,timeframe,direction,price1:prices[first],price2:prices[i],rsi1:rsi[first],rsi2:rsi[i],band1:bands[first],band2:bands[i],band_touch_price:touch,pivot1:candles[first].start,pivot2:candles[i].start,confirmed_at:candles[event].end,spacing,rules};
+   const s={symbol,timeframe,direction,price1:prices[first],price2:prices[i],rsi1:rsi[first],rsi2:rsi[i],band1:bands[first],band2:bands[i],band_touch_price:touch,pivot1:candles[first].start,pivot2:candles[i].start,pivot1_closed_at:candles[first].end,pivot2_closed_at:candles[i].end,confirmed_at:candles[event].end,spacing,rules};
    if(provisional)Object.assign(s,{signal_status:'provisional',alert_timing:'pivot_close',pivot_closed_at:candles[i].end});
    signals.push(s);
    }

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — RSI + PB
+
+- Add RSI Divergence and PinBars: current RSI divergence followed by exactly one opposite shape-only pinbar, retaining the RSI direction.
+- Persist independent waiting setups and results, recover after restart/rotation, and reject missing-candle substitutions.
+- Add independent asset controls, Signals/coverage, local and hosted CSV replay, and four market-specific Telegram routes. Upgrade RSI asset defaults once while preserving later opt-outs.
+- Preserve compact pivot candle intervals in both Python and hosted divergence evidence.
+
+
 ## Unreleased — 2026-10-23
 
 - Connect ES to Yahoo-selected E-mini S&P 500 futures, gold XAU/USD to Tiingo, and FET/USD spot to Kraken (with Twelve Data monthly candles). Keep futures, gold and crypto feed identities separate.

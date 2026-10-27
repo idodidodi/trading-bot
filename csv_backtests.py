@@ -12,10 +12,11 @@ from platform_app import load_rules
 from scanner import Candle, check_candles, detect, interval_end, minimum_history, timestamp
 import pin_bars
 import bb_pin_bars
+import rsi_pb
 
 MAX_BYTES = 2_000_000
 MAX_ROWS = 20_000
-STRATEGIES = ('pin-bars', 'bb-pin-bars', 'confirmed', 'warmup')
+STRATEGIES = ('pin-bars', 'bb-pin-bars', 'rsi-pb', 'confirmed', 'warmup')
 
 
 def parse_time(value):
@@ -58,12 +59,15 @@ def run(body, now=None):
     if not isinstance(symbol,str) or not re.fullmatch(r'[A-Za-z0-9_:./!\-]{1,100}',symbol):
         raise ValueError('Enter an exact symbol or instrument label')
     bars,excluded,alignment=parse(body.get('csv'),frame,now)
-    engine={'pin-bars':pin_bars,'bb-pin-bars':bb_pin_bars}.get(strategy)
+    engine={'pin-bars':pin_bars,'bb-pin-bars':bb_pin_bars,'rsi-pb':rsi_pb}.get(strategy)
     rules=engine.load_rules() if engine else load_rules()
     minimum=engine.minimum_history(rules) if engine else minimum_history(rules)
     if len(bars)<minimum:raise ValueError(f'Need {minimum} completed candles; CSV has {len(bars)}')
     source='uploaded-csv:'+hashlib.sha256(body['csv'].encode()).hexdigest()[:16]
-    signals=engine.detect(bars,rules,source,symbol,frame) if engine else detect(bars,rules,symbol,frame,provisional=strategy=='warmup')
+    market=body.get('market','crypto')
+    if market not in ('crypto','forex','stock'):raise ValueError('Select a supported market calendar')
+    signals=(rsi_pb.detect(bars,rules,source,symbol,frame,dict(market=market)) if strategy=='rsi-pb' else
+             engine.detect(bars,rules,source,symbol,frame) if engine else detect(bars,rules,symbol,frame,provisional=strategy=='warmup'))
     # Outcomes describe the next 5/10 closed candles, without inventing trade rules.
     starts=[b.start for b in bars]
     for signal in signals:
@@ -80,13 +84,13 @@ def run(body, now=None):
                     directional_close_pct=d*(window[-1].close/close-1)*100,
                     favorable_pct=max(0,max(d*((b.high if d==1 else b.low)/close-1)*100 for b in window)),
                     adverse_pct=max(0,max(-d*((b.low if d==1 else b.high)/close-1)*100 for b in window)))
-    report=dict(strategy=strategy,symbol=symbol,timeframe=frame,source=source,
+    report=dict(strategy=strategy,symbol=symbol,timeframe=frame,source=source,market=market,
         filename=str(body.get('filename','upload.csv'))[:200],start_at=bars[0].start,end_at=bars[-1].end,
         candles=len(bars),excluded_open_candles=excluded,warmup_candles=minimum-1 if engine else minimum,
         limited_history=len(bars)<250,alignment=alignment,rules=rules,signals=signals,
         generated_at=now,signal_count=len(signals),
         note='Signal replay and subsequent price movement; no entry/exit rules, trading returns or win rate are defined. Uploaded indicator columns are ignored.')
-    report['id']=hashlib.sha256(json.dumps([source,strategy,symbol,frame,rules,report['end_at']],sort_keys=True).encode()).hexdigest()
+    report['id']=hashlib.sha256(json.dumps([source,strategy,symbol,frame,rules,report['end_at']]+([market] if strategy=='rsi-pb' else []),sort_keys=True).encode()).hexdigest()
     return report
 
 
