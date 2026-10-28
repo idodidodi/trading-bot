@@ -23,6 +23,39 @@ def fixture():
 
 
 class EngineTests(unittest.TestCase):
+    def test_index_and_futures_signals_survive_validation_after_baseline(self):
+        # Feed activation alone did not exercise signal validation: ^ and =
+        # were rejected only when a new divergence was actually found.
+        feeds = [('SPX', 'fmp', 'INDEX', '^GSPC'),
+                 ('DAX', 'yahoo', 'XETRA', '^GDAXI'),
+                 ('ES', 'yahoo', 'CME', 'ES=F'),
+                 ('CL', 'yahoo', 'NYM', 'CL=F')]
+        bars = fixture()
+        start = bars[0].start
+        bars = [replace(c, start=start + i * 86400000, end=start + (i + 1) * 86400000)
+                for i, c in enumerate(bars)]
+        for ticker, provider, exchange, symbol in feeds:
+            with self.subTest(ticker=ticker), tempfile.TemporaryDirectory() as folder:
+                store = Store(Path(folder) / 'db.sqlite3'); prepare_store(store)
+                asset = dict(id=ticker, provider=provider, exchange=exchange, symbol=symbol,
+                             market='index' if ticker in ('SPX', 'DAX') else 'futures',
+                             scan_strategies=['rsi'])
+                config = dict(timeframes=['daily'], assets=[asset])
+                with patch(provider + '_feed.fetch_' + provider, return_value=bars[:256]):
+                    baseline = scan_once(store, config, load_rules(), bars[255].end)
+                self.assertEqual(baseline[0]['status'], 'baseline set')
+                self.assertEqual(store.rows(), [])
+                with patch(provider + '_feed.fetch_' + provider, return_value=bars[:257]):
+                    result = scan_once(store, config, load_rules(), bars[256].end)
+                    repeat = scan_once(store, config, load_rules(), bars[256].end)
+                self.assertEqual(result[0]['status'], 'scanned', result)
+                self.assertEqual(result[0]['new_signals'], 1)
+                self.assertEqual(repeat[0]['new_signals'], 0)
+                rows = store.rows()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0][1], 'pending')
+                self.assertEqual(json.loads(rows[0][0])['symbol'], f'{provider}:{exchange}:{symbol}')
+
     def test_corrupt_provider_prefix_is_quarantined_without_changing_prices(self):
         bars = fixture()
         bars[20] = replace(bars[20], close=bars[20].low - .01)

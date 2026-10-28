@@ -24,7 +24,7 @@ The scanner reads numeric defaults from [the Markdown skill](skills/rsi-divergen
 
 ## Data-provider recommendation
 
-**Twelve Data** supplies candle feeds through `/time_series`. The permanent forex set is EUR/USD, USD/JPY, USD/CNY, GBP/USD and USD/CHF, based on the [BIS 2025 turnover survey](https://www.bis.org/publications/202509-commentary-otc-derivatives). The permanent crypto set is BTC/USD, ETH/USD, SOL/USD, NEAR/USD and DOGE/USD (Kraken spot for 4h/daily/weekly; Binance via Twelve Data for monthly). The requested NEAR and DOGE are included within the five permanent crypto slots; this is a chosen core, not a claim that all five lead global volume. Existing NVDA and the DAX cash index (Yahoo delayed OHLC) are retained. The dollar index is excluded from the active asset list.
+**Twelve Data** supplies candle feeds through `/time_series`. The permanent forex set is EUR/USD, USD/JPY, USD/CNY, GBP/USD and USD/CHF, based on the [BIS 2025 turnover survey](https://www.bis.org/publications/202509-commentary-otc-derivatives). The permanent crypto set is BTC/USD, ETH/USD, SOL/USD, NEAR/USD and DOGE/USD (Kraken spot for 4h/daily/weekly; Binance via Twelve Data for monthly). The requested NEAR and DOGE are included within the five permanent crypto slots; this is a chosen core, not a claim that all five lead global volume. Existing NVDA and the DAX cash index (Yahoo delayed OHLC) are retained. The dollar index uses Yahoo delayed cash-index candles (`DX-Y.NYB`).
 
 The morning routine adding five forex and five crypto pairs is disabled. Scans use configured assets and the separately configured stock screen. Candle polling remains paced by each provider's request limits. Credentials stay in local `.env`.
 
@@ -353,7 +353,7 @@ Restart the scanner to load these rules; its new rules hash establishes a fresh 
 
 ## FMP S&P 500 cash index
 
-SPX uses FMP's exact `^GSPC` cash index on exchange `INDEX`, with `FMP_API_KEY` in local `.env`. The verified subscription includes quotes and daily OHLC history; DAX (`^GDAXI`) and intraday candles return HTTP 402. SPX therefore scans daily, weekly and monthly candles only. Weekly/monthly OHLC is aggregated from daily rows; incomplete calendar periods are excluded. Session dates use conservative UTC midnight boundaries, so daily signals become eligible after midnight UTC, rather than at the US market close. Quotes are never converted into candles.
+The optional FMP route supplies SPX using FMP's exact `^GSPC` cash index on exchange `INDEX`, with `FMP_API_KEY` in local `.env`. The verified subscription includes quotes and daily OHLC history; DAX (`^GDAXI`) and intraday candles return HTTP 402. The FMP route scans daily, weekly and monthly candles only; the default Yahoo route also supports intraday candles. Weekly/monthly OHLC is aggregated from daily rows; incomplete calendar periods are excluded. Session dates use conservative UTC midnight boundaries, so daily signals become eligible after midnight UTC, rather than at the US market close. Quotes are never converted into candles.
 
 For existing managed configurations, run `.venv/bin/python scripts/activate-fmp.py --database data/dev/signals.sqlite3` (or your production database path). Activation verifies sufficient history, backs up the database, enables only SPX's supported timeframes, warms its candle cache and exports CSVs plus a manifest and replay config to `data/historical-fmp/`. Existing feed signals retain their separate identities. Restart the app after installing the new provider module. The backtest dialog offers FMP cash indices; choose daily, weekly or monthly. The existing `cloud/providers.sql` migration must be reapplied before online asset editing accepts FMP.
 
@@ -401,6 +401,12 @@ shared destination can receive several labelled tests. The original `test`
 command and local dashboard Telegram test use the cached General destination.
 Deploy the routing migration and updated sync endpoint before restarting upgraded
 scanners; see `cloud/README.md`.
+
+### Five permanent index and commodity feeds
+
+SPX (`^GSPC`, exchange `SNP`), DAX (`^GDAXI`, `XETRA`) and the US Dollar Index (`DX-Y.NYB`, `NYB`) use Yahoo delayed cash-index OHLC, including hourly and 4h candles. A 16-minute publication margin applies. Empty dollar-index Sunday placeholders are omitted without invalidating entire weekly/monthly periods; actual missing source rows still exclude affected aggregates. Gold uses Tiingo `XAU/USD`; US oil keeps Tiingo `USOIL/USD` (a tokenized derived WTI series). All are separate from futures instruments.
+
+For an existing installation, run `.venv/bin/python scripts/activate-market-feeds.py --database /absolute/path/to/signals.sqlite3` after upgrading the app. This verifies every selected timeframe, backs up the saved database, and changes only these five assets. Selected strategies and timeframes are retained; new entries use monthly, weekly, daily and 4h. Use `--config saved-config.json --output verified.json` for a verification-only deployment plan. Saved production settings must be activated separately from development. New feeds establish a baseline and then scan newly completed candles according to provider deadlines; historical matches do not trigger an alert flood.
 
 ### Yahoo delayed DAX cash-index scanning
 

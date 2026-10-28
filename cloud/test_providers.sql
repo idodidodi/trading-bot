@@ -1,4 +1,19 @@
 -- Scratch database only: auth stub, schema, test_api, backtests, providers first.
+do $$
+declare candidate jsonb;
+begin
+ -- Cash index names must not be silently accepted as futures or another venue.
+ foreach candidate in array array[
+  '{"id":"SPX","provider":"yahoo","exchange":"SNP","symbol":"^GSPC","market":"index","enabled":true,"feed_confirmed":true,"timeframes":["1h","4h","monthly"]}'::jsonb,
+  '{"id":"DOLLAR_INDEX","provider":"yahoo","exchange":"NYB","symbol":"DX-Y.NYB","market":"index","enabled":true,"feed_confirmed":true,"timeframes":["1h","4h","monthly"]}'::jsonb
+ ] loop
+  perform dashboard_validate_provider_asset(candidate);
+  begin
+   perform dashboard_validate_provider_asset(candidate||'{"exchange":"XETRA"}'::jsonb);
+   raise exception 'Wrong Yahoo index venue accepted';
+  exception when raise_exception then if sqlerrm='Wrong Yahoo index venue accepted' then raise;end if;end;
+ end loop;
+end $$;
 set test.auth_uid='00000000-0000-0000-0000-000000000001';
 set role authenticated;
 do $$

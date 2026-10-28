@@ -85,7 +85,8 @@ def validate_signal(body, rules):
     if body.get('rules') != rules:
         raise ValueError('Rules differ; restart the scanner with the current Markdown settings.')
     for key in ('symbol', 'timeframe'):
-        if not isinstance(body.get(key), str) or not re.fullmatch(r'[A-Za-z0-9_:./!\-]{1,100}', body[key]):
+        pattern = r'[A-Za-z0-9_^=:./!\-]{1,100}' if key == 'symbol' else r'[A-Za-z0-9_:./!\-]{1,100}'
+        if not isinstance(body.get(key), str) or not re.fullmatch(pattern, body[key]):
             raise ValueError(f'Invalid {key}')
     if body.get('direction') not in ('bullish', 'bearish'):
         raise ValueError('Invalid direction')

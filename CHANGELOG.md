@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — five live market feeds
+
+- Connect SPX and the US Dollar Index to Yahoo delayed cash-index OHLC, alongside DAX and the existing Tiingo gold and US oil feeds. Add verified, backup-protected activation of only these five assets while preserving the rest of the portfolio.
+- Omit empty dollar-index Sunday placeholders so weekly/monthly history remains usable without inventing candles.
+- Accept index and futures symbols containing `^` or `=` when validating RSI signals. Previously, feeds such as FMP `^GSPC`, Yahoo `^GDAXI` and `ES=F` could fetch candles and establish a baseline but failed with `Invalid symbol` when a new divergence appeared.
+- Verify new signals enter the delivery queue after baselining and remain deduplicated on repeated scans.
+
 ## Unreleased — RSI + PB
 
 - Add RSI Divergence and PinBars: current RSI divergence followed by exactly one opposite shape-only pinbar, retaining the RSI direction.

@@ -14,6 +14,10 @@ BERLIN = ZoneInfo('Europe/Berlin')
 UTC = timezone.utc
 _cache = {}
 INSTRUMENTS = {
+    '^GSPC': dict(exchange='SNP', market='index', currency='USD', kind='INDEX',
+                  venue='SNP', zone='America/New_York', label='S&P 500 cash index'),
+    'DX-Y.NYB': dict(exchange='NYB', market='index', currency='USD', kind='INDEX',
+                     venue='NYB', zone='America/New_York', label='US Dollar Index'),
     '^GDAXI': dict(exchange='XETRA', market='index', currency='EUR', kind='INDEX',
                    venue='GER', zone='Europe/Berlin', label='DAX cash index'),
     'ES=F': dict(exchange='CME', market='futures', currency='USD', kind='FUTURE',
@@ -90,6 +94,7 @@ def candles_from_chart(result, timeframe, now, symbol='^GDAXI'):
                     sessions[datetime.fromtimestamp(start, zone).date()] = (start, end)
         bars, rejected_dates = [], set()
         excluded = 0
+        empty_weekend_dates = 0
         for i, stamp in enumerate(stamps):
             local = datetime.fromtimestamp(stamp, zone)
             values = [prices[k][i] for k in ('open', 'high', 'low', 'close')]
@@ -107,6 +112,13 @@ def candles_from_chart(result, timeframe, now, symbol='^GDAXI'):
             else:
                 day = datetime.combine(local.date(), datetime.min.time(), UTC)
                 start, end = int(day.timestamp()*1000), int((day+timedelta(days=1)).timestamp()*1000)
+            # DX-Y.NYB includes an entirely empty Sunday daily slot each week.
+            # It is not a candle and must not invalidate every weekly/monthly
+            # aggregate. Partial rows and empty weekdays remain missing data.
+            if (symbol == 'DX-Y.NYB' and interval == '1d' and local.weekday() >= 5
+                    and all(v is None for v in values)):
+                empty_weekend_dates += 1
+                continue
             if any(type(v) not in (int, float) or not math.isfinite(v) for v in values):
                 rejected_dates.add(local.date())
                 continue
@@ -141,6 +153,8 @@ def candles_from_chart(result, timeframe, now, symbol='^GDAXI'):
         notes.append('Yahoo-selected futures contracts; provider-defined roll and adjustment convention; roll gaps possible; no local back-adjustment')
     if rejected_dates:
         notes.append(f'{len(rejected_dates)} source date(s) with missing OHLC excluded; affected aggregate periods omitted')
+    if empty_weekend_dates:
+        notes.append(f'{empty_weekend_dates} empty weekend daily slot(s) excluded; no candles synthesized')
     if excluded:
         notes.append(f'{excluded} non-candle quote snapshot(s) excluded')
     result = ProviderCandles(closed, notes)
