@@ -3,6 +3,8 @@
   "compatibility_date": "2026-10-06",
   "workers_dev": true,
   "preview_urls": true,
+  "previews": {},
+  "build": { "command": "node cloud/build.mjs" },
   "observability": { "enabled": true },
   "assets": {
     "directory": "./dist",
