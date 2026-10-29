@@ -7,7 +7,7 @@ import urllib.request
 
 _cache_lock = RLock()
 
-ROUTES = ('general',) + tuple(f'{m}.{s}' for m in ('forex', 'crypto', 'stocks', 'other') for s in ('rsi', 'pin-bars'))
+ROUTES = ('general',) + tuple(f'{m}.{s}' for m in ('forex', 'crypto', 'stocks', 'other') for s in ('rsi', 'pin-bars', 'rsi-pb'))
 
 
 def validate(routes):
@@ -56,7 +56,7 @@ def recover(db, payload):
             if asset.get('market') not in (None, '', 'unknown'):
                 return asset['market']
     # Rotating US stock feeds may no longer be in configured assets.
-    if payload.get('symbol', '').startswith('alpaca:'):
+    if payload.get('symbol', '').startswith('alpaca:') or payload.get('source','').startswith('alpaca:'):
         return 'stock'
     return payload.get('market') or None
 
@@ -71,17 +71,17 @@ def select(store, event, general, payload=None, notification_key=None):
             return row[2], row[3]
         market, strategy = (row[0], row[1]) if row else (None, None)
         if payload is not None and market in (None, '', 'unknown'):
-            strategy, market = 'rsi', recover(db, payload)
+            strategy, market = strategy or 'rsi', recover(db, payload)
         if notification_key and (not strategy or market in (None, '', 'unknown')):
             prefix, _, key = notification_key.partition(':')
-            if prefix in ('pin-bars', 'bb-pin-bars'):
-                table = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals'}[prefix]
+            if prefix in ('pin-bars', 'bb-pin-bars', 'rsi-pb'):
+                table = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals','rsi-pb':'rsi_pb_signals'}[prefix]
                 exists = db.execute('SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=%s', (table,)).fetchone()
                 signal = db.execute(f'SELECT payload FROM {table} WHERE id=%s', (key,)).fetchone() if exists else None
                 if signal:
                     strategy, market = prefix, recover(db, json.loads(signal[0]))
         fallback = routes['general'] or general
-        route = f'{market_group(market)}.{"pin-bars" if strategy in ("pin-bars", "bb-pin-bars") else "rsi"}' if strategy and market else 'general'
+        route = f'{market_group(market)}.{"pin-bars" if strategy in ("pin-bars", "bb-pin-bars") else "rsi-pb" if strategy=="rsi-pb" else "rsi"}' if strategy and market else 'general'
         chat = routes.get(route) or fallback
         if not chat:
             raise RuntimeError('Configure a General Telegram destination')

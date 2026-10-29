@@ -40,8 +40,24 @@ REVOKE ALL ON bot_runtime.runtime_findings,bot_runtime.runtime_records FROM PUBL
 
 CREATE OR REPLACE FUNCTION bot_runtime.write_config_view() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=bot_runtime,pg_catalog AS $$
+DECLARE old_asset jsonb; current_asset jsonb; frame text; saved_feed text;
 BEGIN
  IF OLD.kind<>'config' OR OLD.key<>'current' OR NEW.kind<>OLD.kind OR NEW.key<>OLD.key THEN RAISE EXCEPTION 'Read-only projection';END IF;
+ FOR old_asset IN SELECT value FROM jsonb_array_elements(OLD.payload->'config'->'assets') LOOP
+  SELECT value INTO current_asset FROM jsonb_array_elements(NEW.payload->'config'->'assets') WHERE value->>'id'=old_asset->>'id';
+  FOR frame IN SELECT jsonb_array_elements_text(coalesce(old_asset->'timeframes',OLD.payload->'config'->'timeframes','["monthly","weekly","daily","4h"]')) LOOP
+   IF current_asset IS NULL OR NOT coalesce((current_asset->>'enabled')::boolean,true)
+    OR NOT coalesce(current_asset->'timeframes',NEW.payload->'config'->'timeframes','[]') ? frame
+    OR NOT coalesce(current_asset->'scan_strategies','["rsi","pin-bars","rsi-pb"]') ? 'rsi-pb'
+    OR (old_asset->'provider',old_asset->'symbol',old_asset->'exchange',old_asset->'timeframe_providers'->frame)
+       IS DISTINCT FROM (current_asset->'provider',current_asset->'symbol',current_asset->'exchange',current_asset->'timeframe_providers'->frame) THEN
+    FOR saved_feed IN SELECT feed FROM rsi_pb_state WHERE timeframe=frame AND left(feed,length(old_asset->>'id')+1)=old_asset->>'id'||'@' LOOP
+     DELETE FROM rsi_pb_pending WHERE feed=saved_feed AND timeframe=frame;
+     DELETE FROM rsi_pb_state WHERE feed=saved_feed AND timeframe=frame;
+    END LOOP;
+   END IF;
+  END LOOP;
+ END LOOP;
  UPDATE managed_config SET revision=(NEW.payload->>'revision')::bigint,payload=(NEW.payload->'config')::text WHERE id=1;
  INSERT INTO config_history VALUES((NEW.payload->>'revision')::bigint,(NEW.payload->'config')::text,extract(epoch FROM now()));
  RETURN NEW;
@@ -201,13 +217,13 @@ BEGIN
   windows:=jsonb_build_object('recovery',public.dashboard_calculate_followup(sig,bars,'recovery'),'all',public.dashboard_calculate_followup(sig,bars,'all'));
   INSERT INTO finding_followup VALUES(key,windows::text,extract(epoch FROM now())) ON CONFLICT(finding_id) DO UPDATE SET results=excluded.results,calculated_at=excluded.calculated_at;
   RETURN jsonb_build_object('signal',sig,'followup',windows->mode);
- ELSIF path IN ('/api/pin-bars','/api/bb-pin-bars') THEN
-  prefix:=CASE path WHEN '/api/pin-bars' THEN 'pin_bar' ELSE 'bb_pin_bar' END;
+ ELSIF path IN ('/api/pin-bars','/api/bb-pin-bars','/api/rsi-pb') THEN
+  prefix:=CASE path WHEN '/api/pin-bars' THEN 'pin_bar' WHEN '/api/rsi-pb' THEN 'rsi_pb' ELSE 'bb_pin_bar' END;
   EXECUTE format('SELECT coalesce(jsonb_agg(payload::jsonb),''[]'') FROM (SELECT payload FROM bot_runtime.%I ORDER BY confirmed_at DESC,id LIMIT 51 OFFSET $1) v',prefix||'_signals') INTO items USING page*50;
   SELECT payload::jsonb INTO current_value FROM scanner_status WHERE id=1;
   RETURN jsonb_build_object('strategy',substring(path FROM 6),'signals',CASE WHEN jsonb_array_length(items)>50 THEN items-50 ELSE items END,
-   'has_more',jsonb_array_length(items)>50,'coverage',coalesce((SELECT jsonb_agg(v||coalesce(v->CASE WHEN prefix='pin_bar' THEN 'pin_bars' ELSE 'bb_pin_bars' END,'{}')) FROM jsonb_array_elements(current_value->'coverage') a(v)),'[]'),'scanned_at',current_value->'scanned_at',
-   'rules',CASE WHEN prefix='pin_bar' THEN '{"fast":8,"slow":21,"ratio":2,"max_short_wick_ratio":0.66}'::jsonb ELSE '{"bb_period":20,"bb_multiplier":2,"ratio":2,"max_short_wick_ratio":0.66}'::jsonb END);
+   'has_more',jsonb_array_length(items)>50,'coverage',coalesce((SELECT jsonb_agg(v||coalesce(v->CASE prefix WHEN 'pin_bar' THEN 'pin_bars' WHEN 'rsi_pb' THEN 'rsi_pb' ELSE 'bb_pin_bars' END,'{}')) FROM jsonb_array_elements(current_value->'coverage') a(v)),'[]'),'scanned_at',current_value->'scanned_at',
+   'rules',CASE WHEN prefix='pin_bar' THEN '{"fast":8,"slow":21,"ratio":2,"max_short_wick_ratio":0.66}'::jsonb WHEN prefix='rsi_pb' THEN '{"max_short_wick_ratio": 0.66, "ratio": 2.0, "rsi": {"bb_multiplier": 2.0, "bb_period": 20, "max_spacing": 60, "min_spacing": 2, "pivot_left": 2, "pivot_right": 1, "price_source": "close", "rsi_period": 3, "rsi_tolerance": 1.0, "skill_hash": "b4b8c578656c86fb"}, "seed": "RSI candle-close divergence; next candle only; opposite wick shape; no EMA filters", "version": "rsi-pb-v1-242ec67c5c9037c1"}'::jsonb ELSE '{"bb_period":20,"bb_multiplier":2,"ratio":2,"max_short_wick_ratio":0.66}'::jsonb END);
  ELSIF path='/api/catchup' THEN
   PERFORM pg_advisory_xact_lock(714269001);
   IF input<>'{}' THEN

@@ -54,3 +54,7 @@ CREATE TABLE IF NOT EXISTS app_migrations(name TEXT PRIMARY KEY,applied REAL NOT
 CREATE TABLE IF NOT EXISTS finding_state (
         finding_id TEXT PRIMARY KEY, status TEXT NOT NULL CHECK(status IN ('active','archived','deleted')),
         revision INTEGER NOT NULL, updated_at REAL NOT NULL);
+
+CREATE TABLE IF NOT EXISTS rsi_pb_state(feed TEXT,timeframe TEXT,last_end INTEGER,PRIMARY KEY(feed,timeframe));
+CREATE TABLE IF NOT EXISTS rsi_pb_signals(id TEXT PRIMARY KEY,confirmed_at INTEGER,payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS rsi_pb_pending(id TEXT PRIMARY KEY,feed TEXT,timeframe TEXT,payload TEXT NOT NULL);

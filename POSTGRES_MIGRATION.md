@@ -31,6 +31,8 @@ Preserve the current dashboard deployment ID and Edge Function sources/settings 
 
 Use a separate Supabase project/database for rehearsal. Each destination supports one worker installation UUID and needs the existing dashboard schema, Auth users, installation ownership and sharing permissions.
 
+Include the current [RSI + PB dashboard prerequisite](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/cloud/rsi-pb.sql) when provisioning a fresh rehearsal database. Preserve the deployed production prerequisites and defaults. The runtime scripts install schema version 2, including `rsi_pb_state`, `rsi_pb_pending` and `rsi_pb_signals`; import their saved IDs, versioned waits and baselines without resetting them.
+
 From the Mac, using the SQL editor or an administrator connection, apply these files **in order**, after the existing dashboard migrations:
 
 1. [postgres-runtime.sql](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/cloud/postgres-runtime.sql)
@@ -213,7 +215,7 @@ For post-write recovery, compare every paper client ID, submission, exit, cancel
   --output "$HOME/trading-postgres-recovery"
 ```
 
-Use a baseline matching the preserved release's [supported recovery schema](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/migration/legacy-schema.sql), based on commit `1da8910`. Review the generated manifest and `unmapped-history.json` before securely transferring the recovery directory to Linux. It leaves the original fallback untouched, disables paper execution in the recovery copy and cancels held work in that copy.
+Use a baseline matching the preserved release's [supported recovery schema](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/migration/legacy-schema.sql) and verify it matches the captured current production release, including RSI + PB tables. Review the generated manifest and `unmapped-history.json` before securely transferring the recovery directory to Linux. It leaves the original fallback untouched, disables paper execution in the recovery copy and cancels held work in that copy.
 
 Some hosted-only archived findings and newer hosted IDs/outcomes cannot be displayed or attached to feedback by the old release. They remain preserved in Postgres and the recovery archive. Older fallback schemas need a reviewed conversion. `--broker-reconciled` is your attestation, not an automated live broker check; ambiguous Telegram acceptance remains uncertain. If these limitations prevent safe recovery, leave the fallback stopped and repair Postgres.
 

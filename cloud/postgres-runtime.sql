@@ -94,7 +94,11 @@ CREATE TABLE IF NOT EXISTS telegram_routes(id BIGINT PRIMARY KEY CHECK(id=1),rev
 CREATE TABLE IF NOT EXISTS weekly_stock_screen(day TEXT PRIMARY KEY, week TEXT NOT NULL, payload TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS schema_version(id integer PRIMARY KEY CHECK(id=1),version integer NOT NULL);
-INSERT INTO schema_version VALUES(1,1) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS rsi_pb_state(feed TEXT,timeframe TEXT,last_end BIGINT,PRIMARY KEY(feed,timeframe));
+CREATE TABLE IF NOT EXISTS rsi_pb_signals(id TEXT PRIMARY KEY,confirmed_at BIGINT,payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS rsi_pb_pending(id TEXT PRIMARY KEY,feed TEXT,timeframe TEXT,payload TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS rsi_pb_confirmed ON rsi_pb_signals(confirmed_at DESC,id);
+INSERT INTO schema_version VALUES(1,2) ON CONFLICT(id) DO UPDATE SET version=excluded.version;
 CREATE TABLE IF NOT EXISTS runtime_control(id integer PRIMARY KEY CHECK(id=1),installation uuid UNIQUE NOT NULL,enabled boolean NOT NULL DEFAULT false);
 CREATE TABLE IF NOT EXISTS finding_keys(source text NOT NULL,evidence_hash bytea NOT NULL,finding_id text NOT NULL,PRIMARY KEY(source,evidence_hash),UNIQUE(source,finding_id));
 CREATE TABLE IF NOT EXISTS tiingo_requests(at double precision NOT NULL);

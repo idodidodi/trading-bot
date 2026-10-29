@@ -104,6 +104,54 @@ class MarketSummaryTests(PostgresTestCase):
                         with self.assertRaises(ValueError):
                             summary.quote(instrument, self.now)
 
+    def test_changes_compare_displayed_prices_with_previous_report(self):
+        old = ['100.00','100.00','100.00','100.00','100.00','1.10000']
+        current = ['110.00','90.00','100.00','100.01','99.99','1.10001']
+        prior = '\n'.join(f'{i[1]}: {p} {i[2]}' for i,p in zip(summary.INSTRUMENTS,old))
+        prices = {i[0]:p for i,p in zip(summary.INSTRUMENTS,current)}
+        def fetch(instrument, now):
+            return f'{instrument[1]}: {prices[instrument[0]]} {instrument[2]}\n  As of 18 Oct 10:15'
+        with patch('market_summary.quote',side_effect=fetch):
+            text = summary.snapshot(self.now,dict(day='2026-10-17',text=prior))
+        for change in ['+10.00 points (+10.00%)','-10.00 points (-10.00%)',
+                       '0.00 USD (0.00%)','+0.01 USD/troy oz (+0.01%)',
+                       '-0.01 USD/barrel (-0.01%)','+0.00001 USD per EUR (0.00%)']:
+            self.assertIn('Change: '+change,text)
+        self.assertIn('Changes vs previous report · 17 Oct 2026',text)
+        self.assertEqual(text.count('As of 18 Oct 10:15'),6)
+
+    def test_previous_delivered_report_survives_restart_and_skips_unsent_days(self):
+        with self.store.connect() as db:
+            summary.initialize(db)
+            db.executemany('INSERT INTO notification_queue(id,text,status) VALUES(%s,%s,%s)',[
+                ('market-summary:2026-10-14','older','sent'),
+                ('market-summary:2026-10-15','S&P 500: 7,722.60 points','sent'),
+                ('market-summary:2026-10-16','another sender may have sent different prices','suppressed'),
+                ('market-summary:2026-10-17','not delivered','pending'),
+                ('market-summary:2026-10-17-dry-run','simulated','dry-run'),
+                ('unrelated-notification','ignore','sent')])
+        self.store = Store(self.path)
+        with patch('market_summary.snapshot',return_value='today') as build:
+            self.assertTrue(self.queue())
+        build.assert_called_once_with(self.now,dict(day='2026-10-15',text='S&P 500: 7,722.60 points'))
+        with self.store.connect() as db:
+            db.execute("UPDATE notification_queue SET status='sent' WHERE id='market-summary:2026-10-18'")
+        with patch('market_summary.snapshot',return_value='tomorrow') as build:
+            self.assertTrue(self.queue(self.now+86400))
+        self.assertEqual(build.call_args.args[1],dict(day='2026-10-18',text='today'))
+
+    def test_missing_previous_prices_are_explicit_and_do_not_use_older_assets(self):
+        instrument = summary.INSTRUMENTS[0]
+        current = 'S&P 500: 7,722.60 points\n  As of 18 Oct 10:15 · older quote'
+        self.assertIn('no previous delivered report',summary.change_line(current,instrument,None))
+        for text in ['S&P 500: unavailable','S&P 500: 0 points','S&P 500: 100 USD']:
+            self.assertIn('no price in previous report',summary.change_line(current,instrument,dict(text=text)))
+        self.assertIn('Change: 0.00 points (0.00%)',
+                      summary.change_line(current,instrument,dict(text=current)))
+        smaller = 'S&P 500: 7,722.59 points'
+        self.assertIn('Change: -0.01 points (0.00%)',
+                      summary.change_line(smaller,instrument,dict(text=current)))
+
     @patch.dict(os.environ, {'TRADING_BOT_ENV': 'prod'})
     def test_existing_delivery_queue_retries_and_respects_dry_run(self):
         with patch('market_summary.snapshot', return_value='Morning prices'):

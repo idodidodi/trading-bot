@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from platform_app import Store,load_rules
+from platform_app import load_rules
 from managed_assets import ensure,change,get
 from scanner import prepare_store,scan_once
 from candle_views import detail
@@ -43,6 +43,23 @@ class AssetsTests(PostgresTestCase):
         with self.assertRaisesRegex(ValueError,'Invalid asset market'):
             change(self.store,dict(action='save',revision=state['revision'],asset=saved|dict(market='unknown')))
 
+    def test_strategy_defaults_validation_and_sync(self):
+        from managed_assets import validate_asset
+        asset=get(self.store)['config']['assets'][0]
+        self.assertEqual(asset['scan_strategies'],['rsi','pin-bars','rsi-pb'])
+        for choices in (['rsi'],['pin-bars'],['rsi','pin-bars']):
+            asset['scan_strategies']=choices
+            saved=change(self.store,dict(action='save',revision=get(self.store)['revision'],asset=asset))
+            self.assertEqual(saved['config']['assets'][0]['scan_strategies'],choices)
+            self.assertEqual(get(self.store)['config']['assets'][0]['scan_strategies'],choices)
+        for bad in ([],['unknown'],['rsi','rsi'],'rsi',None,[{}]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                validate_asset(asset | dict(scan_strategies=bad))
+        legacy=dict(asset);legacy.pop('scan_strategies')
+        validate_asset(legacy)
+        with self.store.connect() as db:
+            db.execute('UPDATE managed_config SET payload=%s WHERE id=1',(json.dumps(dict(self.config,assets=[legacy])),))
+        self.assertEqual(get(self.store)['config']['assets'][0]['scan_strategies'],['rsi','pin-bars','rsi-pb'])
 
     def test_strategy_selection_gates_scanners_and_invalidates_schedule(self):
         from test_pin_bars import bars

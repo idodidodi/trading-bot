@@ -71,6 +71,44 @@ class YahooTests(PostgresTestCase):
         self.assertEqual(bars[0].start,timestamp('2026-10-01T00:00:00Z'))
         self.assertTrue(any('missing OHLC' in n for n in bars.notes))
 
+    def test_sp500_and_dollar_index_require_exact_instrument_metadata(self):
+        for symbol, venue in [('^GSPC', 'SNP'), ('DX-Y.NYB', 'NYB')]:
+            asset = self.asset | dict(symbol=symbol, exchange=venue)
+            validate_asset(asset)
+            data = self.chart(['2026-10-21T04:00:00Z'])
+            data['meta'].update(symbol=symbol, currency='USD', exchangeName=venue,
+                                exchangeTimezoneName='America/New_York')
+            bars = yahoo.candles_from_chart(data, 'daily', timestamp('2026-10-23T01:00:00Z'), symbol)
+            self.assertEqual(len(bars), 1)
+            data['meta']['exchangeName'] = 'GER'
+            with self.assertRaisesRegex(ValueError, 'different instrument'):
+                yahoo.candles_from_chart(data, 'daily', timestamp('2026-10-23T01:00:00Z'), symbol)
+            with self.assertRaises(ValueError):
+                validate_asset(asset | dict(market='forex'))
+
+    def test_dollar_index_empty_sundays_do_not_erase_weekly_and_monthly_history(self):
+        data = self.chart(['2026-09-01T04:00:00Z', '2026-09-06T04:00:00Z',
+                           '2026-09-07T04:00:00Z', '2026-09-08T04:00:00Z',
+                           '2026-09-13T04:00:00Z', '2026-10-01T04:00:00Z'])
+        data['meta'].update(symbol='DX-Y.NYB', currency='USD', exchangeName='NYB',
+                            exchangeTimezoneName='America/New_York')
+        for key in ('open', 'high', 'low', 'close'):
+            for i in (1, 4):
+                data['indicators']['quote'][0][key][i] = None
+        now = timestamp('2026-11-01T01:00:00Z')
+        monthly = yahoo.candles_from_chart(data, 'monthly', now, 'DX-Y.NYB')
+        weekly = yahoo.candles_from_chart(data, 'weekly', now, 'DX-Y.NYB')
+        self.assertEqual(len(monthly), 2)
+        self.assertEqual(len(weekly), 2)
+        self.assertTrue(any('2 empty weekend' in n for n in monthly.notes))
+        # A partial Sunday row or missing weekday still invalidates its period.
+        data['indicators']['quote'][0]['close'][1] = 12
+        self.assertEqual(len(yahoo.candles_from_chart(data, 'monthly', now, 'DX-Y.NYB')), 1)
+        data['indicators']['quote'][0]['close'][1] = None
+        for key in ('open', 'high', 'low', 'close'):
+            data['indicators']['quote'][0][key][3] = None
+        self.assertEqual(len(yahoo.candles_from_chart(data, 'monthly', now, 'DX-Y.NYB')), 1)
+
     def test_wrong_instrument_interval_and_bad_candles_rejected(self):
         for field,value in [('symbol','DAX'),('currency','USD'),('instrumentType','ETF'),
                             ('exchangeName','NMS'),('exchangeTimezoneName','UTC'),('dataGranularity','3mo')]:

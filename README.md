@@ -26,7 +26,7 @@ The scanner reads numeric defaults from [the Markdown skill](skills/rsi-divergen
 
 ## Data-provider recommendation
 
-**Twelve Data** supplies candle feeds through `/time_series`. The permanent forex set is EUR/USD, USD/JPY, USD/CNY, GBP/USD and USD/CHF, based on the [BIS 2025 turnover survey](https://www.bis.org/publications/202509-commentary-otc-derivatives). The permanent crypto set is BTC/USD, ETH/USD, SOL/USD, NEAR/USD and DOGE/USD (Kraken spot for 4h/daily/weekly; Binance via Twelve Data for monthly). The requested NEAR and DOGE are included within the five permanent crypto slots; this is a chosen core, not a claim that all five lead global volume. Existing NVDA and the DAX cash index (Yahoo delayed OHLC) are retained. The dollar index is excluded from the active asset list.
+**Twelve Data** supplies candle feeds through `/time_series`. The permanent forex set is EUR/USD, USD/JPY, USD/CNY, GBP/USD and USD/CHF, based on the [BIS 2025 turnover survey](https://www.bis.org/publications/202509-commentary-otc-derivatives). The permanent crypto set is BTC/USD, ETH/USD, SOL/USD, NEAR/USD and DOGE/USD (Kraken spot for 4h/daily/weekly; Binance via Twelve Data for monthly). The requested NEAR and DOGE are included within the five permanent crypto slots; this is a chosen core, not a claim that all five lead global volume. Existing NVDA and the DAX cash index (Yahoo delayed OHLC) are retained. The dollar index uses Yahoo delayed cash-index candles (`DX-Y.NYB`).
 
 The morning routine adding five forex and five crypto pairs is disabled. Scans use configured assets and the separately configured stock screen. Candle polling remains paced by each provider's request limits. Credentials stay in local `.env`.
 
@@ -121,6 +121,13 @@ delayed. Each line includes the provider's quote time in Israel time; quotes ove
 one hour old are marked **older quote**, including last available closed-market
 prices. Individual failed quotes appear as unavailable; if every quote fails,
 the app retries once per minute. The chart service can change or rate-limit requests.
+
+Each available price also shows its absolute and percentage change from the
+previous delivered morning report, using the prices displayed in that report.
+The comparison date is included, so a missed day does not appear to be a daily
+market change. Pending and dry-run reports are excluded. If the previous report
+had no price for an asset, its change is shown as unavailable. Existing saved
+reports provide the baseline after an upgrade or restart.
 
 Keep the app online for delivery. Starting after 10:30 queues today's summary;
 missed earlier days are not generated. Daily queue identities survive restarts,
@@ -355,7 +362,7 @@ Restart the scanner to load these rules; its new rules hash establishes a fresh 
 
 ## FMP S&P 500 cash index
 
-SPX uses FMP's exact `^GSPC` cash index on exchange `INDEX`, with `FMP_API_KEY` in local `.env`. The verified subscription includes quotes and daily OHLC history; DAX (`^GDAXI`) and intraday candles return HTTP 402. SPX therefore scans daily, weekly and monthly candles only. Weekly/monthly OHLC is aggregated from daily rows; incomplete calendar periods are excluded. Session dates use conservative UTC midnight boundaries, so daily signals become eligible after midnight UTC, rather than at the US market close. Quotes are never converted into candles.
+The optional FMP route supplies SPX using FMP's exact `^GSPC` cash index on exchange `INDEX`, with `FMP_API_KEY` in local `.env`. The verified subscription includes quotes and daily OHLC history; DAX (`^GDAXI`) and intraday candles return HTTP 402. The FMP route scans daily, weekly and monthly candles only; the default Yahoo route also supports intraday candles. Weekly/monthly OHLC is aggregated from daily rows; incomplete calendar periods are excluded. Session dates use conservative UTC midnight boundaries, so daily signals become eligible after midnight UTC, rather than at the US market close. Quotes are never converted into candles.
 
 For existing managed configurations, run `.venv/bin/python scripts/activate-fmp.py --database data/dev/signals.sqlite3` (or your production database path). Activation verifies sufficient history, backs up the database, enables only SPX's supported timeframes, warms its candle cache and exports CSVs plus a manifest and replay config to `data/historical-fmp/`. Existing feed signals retain their separate identities. Restart the app after installing the new provider module. The backtest dialog offers FMP cash indices; choose daily, weekly or monthly. The existing `cloud/providers.sql` migration must be reapplied before online asset editing accepts FMP.
 
@@ -404,6 +411,12 @@ command and local dashboard Telegram test use the cached General destination.
 Deploy the routing migration and updated sync endpoint before restarting upgraded
 scanners; see `cloud/README.md`.
 
+### Five permanent index and commodity feeds
+
+SPX (`^GSPC`, exchange `SNP`), DAX (`^GDAXI`, `XETRA`) and the US Dollar Index (`DX-Y.NYB`, `NYB`) use Yahoo delayed cash-index OHLC, including hourly and 4h candles. A 16-minute publication margin applies. Empty dollar-index Sunday placeholders are omitted without invalidating entire weekly/monthly periods; actual missing source rows still exclude affected aggregates. Gold uses Tiingo `XAU/USD`; US oil keeps Tiingo `USOIL/USD` (a tokenized derived WTI series). All are separate from futures instruments.
+
+For an existing installation, run `.venv/bin/python scripts/activate-market-feeds.py --postgres` with the explicit worker Postgres connection after upgrading the app. This verifies every selected timeframe, saves a private JSON configuration backup plus transactional configuration history, and changes only these five assets. Selected strategies and timeframes are retained; new entries use monthly, weekly, daily and 4h. Use `--config saved-config.json --output verified.json` for a verification-only deployment plan. Saved production settings must be activated separately from development. New feeds establish a baseline and then scan newly completed candles according to provider deadlines; historical matches do not trigger an alert flood.
+
 ### Yahoo delayed DAX cash-index scanning
 
 DAX uses Yahoo Finance's exact `^GDAXI` cash index, currency EUR, exchange `XETRA`, market `index`. No API key is required. Yahoo quotes are delayed about 15 minutes; the scanner waits 16 minutes after each candle's close before evaluating it. This is delayed scanning, not a real-time exchange feed. The public chart endpoint can change or throttle requests; failures are shown as unavailable and retried.
@@ -421,3 +434,15 @@ Gold is a separate `XAUUSD` asset with Tiingo symbol `XAU/USD`, exchange `Tiingo
 FETUSD uses exact FET/USD spot candles: Twelve Data/Binance for monthly and explicit Kraken overrides for weekly, daily and 4h (hourly is also available). No FET/USDT or other token is substituted. Kraken's final uncommitted bar is excluded. Each venue keeps its own history and alert baseline.
 
 For saved installations, stop the scanner, then run `.venv/bin/python scripts/activate-portfolio-feeds.py --database /absolute/path/to/signals.sqlite3` and restart. This verifies closed history for every selected timeframe, backs up SQLite and activates only ES, XAUUSD and FETUSD; existing unrelated entries and disabled futures placeholders remain unchanged. All candidate verification must succeed before configuration is changed. Add `--yahoo-oil` only when choosing Yahoo `CL=F` WTI selected-contract futures for the USOIL asset in place of its Tiingo derived series. Yahoo does not provide an exact USOIL symbol in the tested chart endpoint. The oil option changes the instrument basis to futures, labels that basis explicitly, clears chart mappings, and starts a separate signal baseline. Cloud editing requires the updated provider SQL and browser assets; production executables require an updated build and saved-portfolio activation.
+
+## RSI + PB — RSI Divergence and PinBars
+
+**RSI + PB** (`rsi-pb`) follows the existing RSI candle-close divergence rules. Only the immediately following completed candle on the same feed/timeframe can qualify: bullish divergence requires a bearish pinbar, and bearish divergence requires a bullish pinbar. The signal direction remains the RSI direction. P2 need not remain a structurally confirmed pivot. Pinbar shape uses a dominant wick strictly greater than twice the body, an opposite wick at most 66% of the dominant wick, and no EMA or additional BB filters. Body color is irrelevant.
+
+The initial upgrade enables it wherever RSI runs; independent asset checkboxes preserve later opt-outs. Results, waiting setups, checkpoints and alert identities are separate from RSI and Pin-Bars. Waiting setups survive restarts and automatic asset rotation; explicit disable/removal/feed changes cancel affected waits. Activation baselines history silently but retains a qualifying latest divergence for its next candle. Missing expected candles stay unavailable pending backfill rather than accepting a later pinbar. Exchange gaps use the existing US/forex calendars and Yahoo intraday session metadata; unverified closures are treated conservatively as missing coverage.
+
+Signals and uploaded CSV Backtests have a dedicated strategy selector. Evidence contains every qualifying reference pair, both candle intervals, RSI/BB values and pinbar OHLC/wicks. CSV replay uses completed candles only, never sends alerts, and measures subsequent 5/10-candle movement from the pinbar close in the RSI direction. Select the CSV source market calendar when replaying session-based data. The live API is `/api/rsi-pb`; hosted snapshots use `rsi-pb-live`.
+
+Four destinations, `{forex,crypto,stocks,other}.rsi-pb`, route to **Forex / Crypto / Stocks / Other · RSI + PB**. They use the existing General fallback, coordinated delivery retries and per-minute sound policy. Installation-specific IDs remain in the ignored `telegram-group-map.json`; bot credentials stay private.
+
+For deployment, run `python3 scripts/deploy-rsi-pb.py` with the existing Supabase CLI login, then `python3 scripts/deploy-telegram-routing.py` with the verified group map. Publish `node cloud/build.mjs` output through the existing Cloudflare pipeline and publish the coordinated standalone release. The additive migration supports older hosted installations without BB Pin-Bars, preserves the authenticated dispatcher chain, and upgrades asset defaults once with a revision marker. Private pre-upgrade API/configuration backups are retained under `data/backups/`. Upgrade scanner installations before claiming live activation. The standalone Linux updater checks daily at 05:00 Israel time; Windows checks at startup and hourly.

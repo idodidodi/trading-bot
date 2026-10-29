@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased — changes since the previous morning report
+
+- Show each market's absolute and percentage price change from the previous delivered morning report, with the comparison date. Reuse saved reports across restarts and upgrades; skip pending and dry-run reports.
+- Keep missing comparisons explicit when the previous report had no price for an asset, and retain quote timestamps and delayed/closed-market labels.
+
+## Unreleased — five live market feeds
+
+- Connect SPX and the US Dollar Index to Yahoo delayed cash-index OHLC, alongside DAX and the existing Tiingo gold and US oil feeds. Add verified, backup-protected activation of only these five assets while preserving the rest of the portfolio.
+- Omit empty dollar-index Sunday placeholders so weekly/monthly history remains usable without inventing candles.
+- Accept index and futures symbols containing `^` or `=` when validating RSI signals. Previously, feeds such as FMP `^GSPC`, Yahoo `^GDAXI` and `ES=F` could fetch candles and establish a baseline but failed with `Invalid symbol` when a new divergence appeared.
+- Verify new signals enter the delivery queue after baselining and remain deduplicated on repeated scans.
+
+## Unreleased — RSI + PB
+
+- Add RSI Divergence and PinBars: current RSI divergence followed by exactly one opposite shape-only pinbar, retaining the RSI direction.
+- Persist independent waiting setups and results, recover after restart/rotation, and reject missing-candle substitutions.
+- Add independent asset controls, Signals/coverage, local and hosted CSV replay, and four market-specific Telegram routes. Upgrade RSI asset defaults once while preserving later opt-outs.
+- Preserve compact pivot candle intervals in both Python and hosted divergence evidence.
+
+
 ## Unreleased — 2026-10-23
 
 - Connect ES to Yahoo-selected E-mini S&P 500 futures, gold XAU/USD to Tiingo, and FET/USD spot to Kraken (with Twelve Data monthly candles). Keep futures, gold and crypto feed identities separate.

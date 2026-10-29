@@ -46,6 +46,16 @@ class EnvTests(PostgresTestCase):
 
 
 class RulesTests(PostgresTestCase):
+    def test_symbol_supports_index_and_futures_punctuation_but_rejects_markup(self):
+        for symbol in ('fmp:INDEX:^GSPC', 'yahoo:XETRA:^GDAXI', 'yahoo:CME:ES=F'):
+            with self.subTest(symbol=symbol):
+                self.assertEqual(validate_signal(example() | dict(symbol=symbol), load_rules())['symbol'], symbol)
+        for symbol in ('<script>', 'ES=F?token=secret', 'ES=F\n', '', 'A' * 101):
+            with self.subTest(symbol=symbol), self.assertRaisesRegex(ValueError, 'Invalid symbol'):
+                validate_signal(example() | dict(symbol=symbol), load_rules())
+        with self.assertRaisesRegex(ValueError, 'Invalid timeframe'):
+            validate_signal(example() | dict(timeframe='^daily='), load_rules())
+
     def test_bullish_and_bearish(self):
         p = example()
         clean = validate_signal(p, load_rules())

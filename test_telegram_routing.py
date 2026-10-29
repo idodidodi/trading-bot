@@ -29,12 +29,12 @@ class RoutingTests(PostgresTestCase):
 
     def test_matrix(self):
         for market, group in [('forex','forex'), ('crypto','crypto'), ('stock','stocks'), ('stocks','stocks'), ('equity','stocks'), ('equities','stocks'), ('etf','stocks'), ('index','other'), ('commodity','other'), ('futures','other'), ('unknown','other')]:
-            for strategy in ('rsi', 'pin-bars', 'bb-pin-bars'):
+            for strategy in ('rsi', 'pin-bars', 'bb-pin-bars', 'rsi-pb'):
                 event = market+strategy
                 with self.store.connect() as db:
                     routing.remember(db, event, market, strategy)
                 chat, general = routing.select(self.store,event,'legacy')
-                self.assertEqual(chat,self.routes[f'{group}.{"rsi" if strategy=="rsi" else "pin-bars"}'])
+                self.assertEqual(chat,self.routes[f'{group}.{strategy if strategy in ("rsi","rsi-pb") else "pin-bars"}'])
                 self.assertEqual(general,self.routes['general'])
         for kind in ('market-summary', 'catchup', 'momentum'):
             self.assertEqual(routing.select(self.store,kind,'legacy')[0],self.routes['general'])
@@ -151,7 +151,7 @@ class RoutingTests(PostgresTestCase):
             self.assertEqual(send.call_args.args[1],self.routes['forex.rsi'])
             send.reset_mock()
             with patch.dict(os.environ,{'TELEGRAM_BOT_TOKEN':'123:secret'}), patch('sys.argv',['telegram_setup.py','test','--all']):telegram_setup.main()
-            self.assertEqual(send.call_count,9)
+            self.assertEqual(send.call_count,len(routing.ROUTES))
 
     def test_cloud_general_can_enable_delivery_without_local_chat_id(self):
         import local_settings

@@ -8,7 +8,7 @@ DEFAULTS = ['monthly', 'weekly', 'daily', '4h']
 SUPPORTED_TIMEFRAMES = DEFAULTS + ['1h']
 LIMIT = 100
 PROVIDERS = ('csv', 'twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca', 'fmp', 'yahoo')
-SCAN_STRATEGIES = ['rsi', 'pin-bars']
+SCAN_STRATEGIES = ['rsi', 'pin-bars', 'rsi-pb']
 SUPPORTED_SCAN_STRATEGIES = SCAN_STRATEGIES + ['bb-pin-bars']
 TOKEN = re.compile(r'[A-Za-z0-9_^=:.!/\-]{1,100}')
 
@@ -26,6 +26,10 @@ def ensure(store, config):
         asset.setdefault('enabled', True)
         asset.setdefault('scan_strategies', SCAN_STRATEGIES.copy())
         asset.setdefault('tradingview_symbol', '')
+    value['rsi_pb_defaults_applied'] = True
+    for asset in value['assets']:
+        if 'rsi' in asset['scan_strategies'] and 'rsi-pb' not in asset['scan_strategies']:
+            asset['scan_strategies'].append('rsi-pb')
     with store.connect() as db:
         initialize(db)
         db.execute('INSERT INTO managed_config VALUES(1,1,0,%s) ON CONFLICT DO NOTHING', (json.dumps(value),))
@@ -33,6 +37,7 @@ def ensure(store, config):
 
 
 def get(store):
+    migrate_rsi_pb(store)
     with store.connect() as db:
         row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
     if not row:
@@ -41,6 +46,28 @@ def get(store):
     for asset in result['config']['assets']:
         asset.setdefault('scan_strategies', SCAN_STRATEGIES.copy())
     return result
+
+
+def migrate_rsi_pb(store):
+    """One revisioned upgrade; explicit opt-outs survive every later restart."""
+    with store.connect() as db:
+        row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
+        if not row or json.loads(row[2]).get('rsi_pb_defaults_applied'):
+            return
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
+        row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
+        config = json.loads(row[2])
+        if config.get('rsi_pb_defaults_applied'):
+            return
+        for asset in config['assets']:
+            strategies = asset.setdefault('scan_strategies',['rsi','pin-bars'])
+            if 'rsi' in strategies and 'rsi-pb' not in strategies:
+                strategies.append('rsi-pb')
+        config['rsi_pb_defaults_applied'] = True
+        revision,payload = row[0]+1,json.dumps(config)
+        db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1',(revision,payload))
+        db.execute('INSERT INTO config_history VALUES(%s,%s,%s)',(revision,payload,time.time()))
+
 
 
 def validate_asset(asset):
@@ -141,6 +168,7 @@ def change(store, body):
         if not row or row[0]!=body['revision']:
             raise LookupError('Assets changed in another session. Reload before saving.')
         config=json.loads(row[1]);assets=config['assets'];results=[]
+        old_assets=copy.deepcopy(assets)
         if body.get('action')=='bulk':
             text=body.get('tickers')
             if not isinstance(text,str) or len(text)>10000:
@@ -176,6 +204,8 @@ def change(store, body):
             current.setdefault('path','data/candles/{asset}-{timeframe}.csv')
             results=[dict(ticker=current['id'],status='saved')]
         else:raise ValueError('Invalid asset operation')
+        from rsi_pb import cancel_changed
+        cancel_changed(db,old_assets,config)
         payload=json.dumps(config);revision=row[0]+1
         db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1',(revision,payload))
         db.execute('INSERT INTO config_history VALUES(%s,%s,%s)',(revision,payload,time.time()))

@@ -41,7 +41,13 @@
       "market": "index",
       "feed_confirmed": true,
       "timeframe_providers": {},
-      "tradingview_symbol": ""
+      "tradingview_symbol": "",
+      "name": "DAX cash index \u2014 Yahoo delayed",
+      "scan_strategies": [
+        "rsi",
+        "pin-bars",
+        "rsi-pb"
+      ]
     },
     {
       "id": "NEARUSD",
@@ -199,19 +205,27 @@
     },
     {
       "id": "SPX",
-      "provider": "fmp",
+      "provider": "yahoo",
       "enabled": true,
       "timeframes": [
         "monthly",
         "weekly",
-        "daily"
+        "daily",
+        "4h"
       ],
-      "tradingview_symbol": "SP:SPX",
+      "tradingview_symbol": "",
       "portfolio": true,
       "symbol": "^GSPC",
-      "exchange": "INDEX",
+      "exchange": "SNP",
       "market": "index",
-      "feed_confirmed": true
+      "feed_confirmed": true,
+      "name": "S&P 500 cash index \u2014 Yahoo delayed",
+      "timeframe_providers": {},
+      "scan_strategies": [
+        "rsi",
+        "pin-bars",
+        "rsi-pb"
+      ]
     },
     {
       "id": "MRVL",
@@ -449,7 +463,12 @@
       "tradingview_symbol": "",
       "portfolio": true,
       "feed_confirmed": true,
-      "timeframe_providers": {}
+      "timeframe_providers": {},
+      "scan_strategies": [
+        "rsi",
+        "pin-bars",
+        "rsi-pb"
+      ]
     },
     {
       "id": "XAUUSD",
@@ -468,7 +487,12 @@
       "symbol": "XAU/USD",
       "provider": "tiingo",
       "exchange": "Tiingo",
-      "market": "commodity"
+      "market": "commodity",
+      "scan_strategies": [
+        "rsi",
+        "pin-bars",
+        "rsi-pb"
+      ]
     },
     {
       "id": "FETUSD",
@@ -493,6 +517,30 @@
       "provider": "twelvedata",
       "exchange": "Binance",
       "market": "crypto"
+    },
+    {
+      "name": "US Dollar Index \u2014 Yahoo delayed",
+      "provider": "yahoo",
+      "symbol": "DX-Y.NYB",
+      "exchange": "NYB",
+      "market": "index",
+      "id": "DOLLAR_INDEX",
+      "enabled": true,
+      "feed_confirmed": true,
+      "portfolio": true,
+      "timeframe_providers": {},
+      "tradingview_symbol": "",
+      "timeframes": [
+        "monthly",
+        "weekly",
+        "daily",
+        "4h"
+      ],
+      "scan_strategies": [
+        "rsi",
+        "pin-bars",
+        "rsi-pb"
+      ]
     }
   ],
   "request_spacing_seconds": 8,

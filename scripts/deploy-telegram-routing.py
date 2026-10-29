@@ -27,7 +27,7 @@ mapping=json.loads(args.group_map.read_text())
 routes=validate(mapping['routes'])
 assert set(mapping['routes'])==set(ROUTES) and all(routes.values())
 assert {g['route']:g['chat_id'] for g in mapping['groups']}==routes
-assert len(set(routes.values()))==9
+assert len(set(routes.values()))==len(ROUTES)
 
 token=os.environ.get('SUPABASE_ACCESS_TOKEN','').strip()
 if not token:
@@ -60,7 +60,7 @@ assert identity.get('ok') and identity['result']['username'].lower()==mapping['b
 for group in mapping['groups']:
  chat=request_json('https://api.telegram.org/bot'+bot+'/getChat',{'chat_id':group['chat_id']})
  assert chat.get('ok') and str(chat['result']['id'])==group['chat_id'], 'Group unavailable'
-print('Verified bot identity and read access to all nine Telegram groups; no messages sent.')
+print('Verified bot identity and read access to all configured Telegram groups; no messages sent.')
 
 checks=query("select id,owner_id from public.dashboard_installations where id="+literal(installation)+'::uuid')
 assert len(checks)==1, 'Installation is not present'
@@ -69,11 +69,12 @@ backup_dir=root/'data/backups';backup_dir.mkdir(exist_ok=True)
 backup_path=backup_dir/'before-telegram-routing-deploy.json'
 if not backup_path.exists():backup_path.write_text(json.dumps(backup))
 query((root/'cloud/telegram-routing.sql').read_text())
+query((root/'cloud/rsi-pb.sql').read_text())
 saved=query("begin; insert into public.telegram_routes as r(installation,revision,routes) values("+literal(installation)+"::uuid,1,"+literal(json.dumps(routes))+"::jsonb) on conflict on constraint telegram_routes_pkey do update set revision=r.revision+1,routes=excluded.routes where r.routes is distinct from excluded.routes; select public.telegram_read_routes("+literal(installation)+"::uuid) as routing; commit;")
-verified=query("select public.telegram_read_routes("+literal(installation)+"::uuid) as routing, not has_function_privilege('authenticated','public.telegram_read_routes(uuid)','execute') as machine_private, not has_table_privilege('authenticated','public.telegram_routes','select') as table_private, position('dashboard_api_before_telegram_routing' in pg_get_functiondef('public.dashboard_api(uuid,text,jsonb)'::regprocedure))>0 as api_ready")
+verified=query("select public.telegram_read_routes("+literal(installation)+"::uuid) as routing, not has_function_privilege('authenticated','public.telegram_read_routes(uuid)','execute') as machine_private, not has_table_privilege('authenticated','public.telegram_routes','select') as table_private, position('dashboard_api_before_rsi_pb' in pg_get_functiondef('public.dashboard_api(uuid,text,jsonb)'::regprocedure))>0 as api_ready")
 assert len(verified)==1 and all(verified[0][k] for k in ('machine_private','table_private','api_ready'))
 assert validate(verified[0]['routing']['routes'])==routes
-print('Supabase migration applied; nine routes saved at revision',verified[0]['routing']['revision'],'and access restrictions verified.')
+print('Supabase migration applied; all routes saved at revision',verified[0]['routing']['revision'],'and access restrictions verified.')
 with tempfile.TemporaryDirectory(prefix='telegram-routing-sync-') as folder:
  target=Path(folder)/'supabase/functions/sync'
  target.parent.mkdir(parents=True)
@@ -91,4 +92,4 @@ except SystemExit as exc:
  if 'HTTP 401' not in str(exc):raise
 response=request_json(endpoint,{'routing_only':True},os.environ['CLOUD_SYNC_TOKEN'])
 assert validate(response['telegram_routing']['routes'])==routes
-print('Live sync verification passed: unauthorized rejected and authenticated read returns all nine routes.')
+print('Live sync verification passed: unauthorized rejected and authenticated read returns all configured routes.')

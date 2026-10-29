@@ -16,6 +16,8 @@ begin
    if provider in ('twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo') and (coalesce(asset->>'symbol','')='' or asset->>'feed_confirmed' is distinct from 'true') then raise exception 'Confirm exact feed';end if;
    if provider='yahoo' then
     if not coalesce(((asset->>'symbol'='^GDAXI' and asset->>'exchange'='XETRA' and asset->>'market'='index')
+         or (asset->>'symbol'='^GSPC' and asset->>'exchange'='SNP' and asset->>'market'='index')
+         or (asset->>'symbol'='DX-Y.NYB' and asset->>'exchange'='NYB' and asset->>'market'='index')
          or (asset->>'symbol'='ES=F' and asset->>'exchange'='CME' and asset->>'market'='futures')
          or (asset->>'symbol'='CL=F' and asset->>'exchange'='NYMEX' and asset->>'market'='futures')), false) then raise exception 'Confirm a supported exact Yahoo index or futures symbol, exchange and market';end if;
    end if;

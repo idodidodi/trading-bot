@@ -1,8 +1,10 @@
 """Daily Israel-time market snapshot, delivered by the existing Telegram queue."""
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from decimal import Decimal
 import json
 import math
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -50,10 +52,42 @@ def quote(instrument, now):
     return f'{label}: {price:,.{precision}f} {unit}\n  As of {stamp}{age}'
 
 
-def snapshot(now):
+def reported_price(text, instrument):
+    """Read the displayed price, including reports queued before comparisons existed."""
+    _, label, unit, _ = instrument
+    match = re.search(r'^' + re.escape(label) + r': ([0-9][0-9,]*(?:\.[0-9]+)?) '
+                      + re.escape(unit) + r'$', text, re.MULTILINE)
+    if match:
+        value = Decimal(match[1].replace(',', ''))
+        if value > 0:
+            return value
+    return None
+
+
+def change_line(text, instrument, previous):
+    current = reported_price(text, instrument)
+    if current is None:
+        return text
+    if previous is None:
+        return text + '\n  Change: unavailable (no previous delivered report)'
+    old = reported_price(previous['text'], instrument)
+    if old is None:
+        return text + '\n  Change: unavailable (no price in previous report)'
+    change = current - old
+    percent = change / old * 100
+    precision = 5 if instrument[0] == 'EURUSD=X' else 2
+    # Avoid a misleading negative zero when a small percentage rounds to zero.
+    if percent.quantize(Decimal('.01')) == 0:
+        percent = Decimal(0)
+    amount = f'{change:+,.{precision}f}' if change else f'{change:,.{precision}f}'
+    percentage = f'{percent:+.2f}' if percent else '0.00'
+    return text + f'\n  Change: {amount} {instrument[2]} ({percentage}%)'
+
+
+def snapshot(now, previous=None):
     def fetch(instrument):
         try:
-            return quote(instrument, now), True
+            return change_line(quote(instrument, now), instrument, previous), True
         except Exception:
             # Provider exceptions/URLs must never leak into Telegram or logs.
             return f'{instrument[1]}: unavailable', False
@@ -65,8 +99,12 @@ def snapshot(now):
     local = datetime.fromtimestamp(now, ISRAEL)
     stamp = local.strftime('%d %b %Y %H:%M')
     greeting = 'Good morning, traders! ☀️\n\n' if local.hour < 12 else ''
+    comparison = ('\nChanges vs previous report · '
+                  + datetime.strptime(previous['day'], '%Y-%m-%d').strftime('%d %b %Y')
+                  if previous else '')
     return (greeting + f'Morning market prices · {stamp} (Israel time)\n\n'
-            + '\n'.join(text for text, _ in rows)
+            + '\n\n'.join(text for text, _ in rows)
+            + comparison
             + '\n\nSource: Yahoo Finance · quotes may be delayed.'
             + '\nAll quote times are Israel time. Closed markets show the last available quote.'
             + '\nGold/oil use Yahoo-selected futures contracts.')
@@ -82,7 +120,11 @@ def enqueue_due(store, now):
         initialize(db)
         if db.execute('SELECT 1 FROM notification_queue WHERE id=%s', (key,)).fetchone():
             return False
-    text = snapshot(now)
+        prior = db.execute("""SELECT id,text FROM notification_queue
+            WHERE id LIKE 'market-summary:____-__-__' AND id<%s
+              AND status='sent' ORDER BY id DESC LIMIT 1""", (key,)).fetchone()
+    previous = dict(day=prior[0].split(':',1)[1],text=prior[1]) if prior else None
+    text = snapshot(now, previous)
     # If a request crossed midnight, let the next iteration handle the new day.
     if session(time.time())[0] != day:
         return False

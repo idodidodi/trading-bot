@@ -85,7 +85,8 @@ def validate_signal(body, rules):
     if body.get('rules') != rules:
         raise ValueError('Rules differ; restart the scanner with the current Markdown settings.')
     for key in ('symbol', 'timeframe'):
-        if not isinstance(body.get(key), str) or not re.fullmatch(r'[A-Za-z0-9_:./!\-]{1,100}', body[key]):
+        pattern = r'[A-Za-z0-9_^=:./!\-]{1,100}' if key == 'symbol' else r'[A-Za-z0-9_:./!\-]{1,100}'
+        if not isinstance(body.get(key), str) or not re.fullmatch(pattern, body[key]):
             raise ValueError(f'Invalid {key}')
     if body.get('direction') not in ('bullish', 'bearish'):
         raise ValueError('Invalid direction')
@@ -144,7 +145,7 @@ class Store:
         self.guard = None
         with self.connect() as db:
             version = db.execute('SELECT version FROM schema_version WHERE id=1').fetchone()
-            if version != (1,):
+            if version != (2,):
                 raise RuntimeError('Apply the prepared Postgres schema before starting')
 
     def connect(self):
@@ -322,7 +323,7 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             key,text,attempts=note
             try:
                 # Strategy alerts share RSI's sound policy, even overnight.
-                is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:'))
+                is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:', 'rsi-pb:'))
                 outcome = 'dry-run' if current_dry_run else deliver_routed(store, token, chat_id, text, 'notification:' + key, send_telegram, silent=not is_signal and quiet_hours(), notification_key=key)
                 with store.connect() as db:db.execute('UPDATE notification_queue SET status=%s WHERE id=%s',(outcome,key))
                 store.log('Queued notification delivered',outcome)
@@ -423,7 +424,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 from local_settings import read
                 self.respond(200, read(store))
                 return
-            if route in ('/api/telegram-routing', '/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/bb-pin-bars', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions'):
+            if route in ('/api/telegram-routing', '/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/bb-pin-bars', '/api/rsi-pb', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions'):
                 from dashboard_api import read
                 try:
                     self.respond(200, read(store, self.path))

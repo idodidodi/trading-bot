@@ -1,5 +1,6 @@
 import {detect,validateCandles} from '../backtests/engine.mjs';
 import {detectBBPinBars} from './bb-engine.mjs';
+import {detectRSIPB} from './rsi-pb-engine.mjs';
 import {defaults} from './rules.mjs';
 export function detectPinBars(bars,rules,source,symbol,timeframe){
  let fast=bars[0]?.close,slow=fast;const signals=[];
@@ -53,12 +54,14 @@ export function parseCSV(text,frame,now){
 async function hash(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))).map(v=>v.toString(16).padStart(2,'0')).join('');}
 export async function replayCSV(body,now=Date.now(),parameters=defaults){
  const strategy=body.strategy||'pin-bars',symbol=body.symbol,frame=body.timeframe;
- if(!['pin-bars','bb-pin-bars','confirmed','warmup'].includes(strategy))throw Error('Select Pin-Bars, BB Pin-Bars or RSI divergence');
+ if(!['pin-bars','bb-pin-bars','rsi-pb','confirmed','warmup'].includes(strategy))throw Error('Select Pin-Bars, BB Pin-Bars or RSI divergence');
  if(typeof symbol!=='string'||!/^[A-Za-z0-9_:./!\-]{1,100}$/.test(symbol))throw Error('Enter an exact symbol or instrument label');
- const {bars,excluded,alignment}=parseCSV(body.csv,frame,now),rules=parameters[['pin-bars','bb-pin-bars'].includes(strategy)?strategy:'rsi'];
- const minimum=strategy==='bb-pin-bars'?rules.bb_period:strategy==='pin-bars'?rules.slow+1:Math.max(rules.bb_period+rules.pivot_left+rules.pivot_right,rules.max_spacing+rules.pivot_left+rules.pivot_right+1,rules.rsi_period+1);
+ const {bars,excluded,alignment}=parseCSV(body.csv,frame,now),rules=parameters[['pin-bars','bb-pin-bars','rsi-pb'].includes(strategy)?strategy:'rsi'];
+ const rsi=strategy==='rsi-pb'?rules.rsi:rules;
+ const minimum=strategy==='bb-pin-bars'?rules.bb_period:strategy==='pin-bars'?rules.slow+1:Math.max(rsi.bb_period+rsi.pivot_left+rsi.pivot_right,rsi.max_spacing+rsi.pivot_left+rsi.pivot_right+1,rsi.rsi_period+1);
  if(bars.length<minimum)throw Error(`Need ${minimum} completed candles; CSV has ${bars.length}`);
- const source='uploaded-csv:'+(await hash(body.csv)).slice(0,16),signals=strategy==='bb-pin-bars'?detectBBPinBars(bars,rules,source,symbol,frame):strategy==='pin-bars'?detectPinBars(bars,rules,source,symbol,frame):detect(bars,rules,symbol,frame,strategy==='warmup');
+ const market=body.market||'crypto';if(!['crypto','forex','stock'].includes(market))throw Error('Select a supported market calendar');
+ const source='uploaded-csv:'+(await hash(body.csv)).slice(0,16),signals=strategy==='rsi-pb'?detectRSIPB(bars,rules,source,symbol,frame,market):strategy==='bb-pin-bars'?detectBBPinBars(bars,rules,source,symbol,frame):strategy==='pin-bars'?detectPinBars(bars,rules,source,symbol,frame):detect(bars,rules,symbol,frame,strategy==='warmup');
  for(const s of signals){let lo=0,hi=bars.length;while(lo<hi){const mid=Math.floor((lo+hi)/2);if(bars[mid].start<s.confirmed_at)lo=mid+1;else hi=mid;}const following=bars.slice(lo,lo+10),d=s.direction==='bullish'?1:-1,close=s.close??s.price2;s.forward={};for(const h of [5,10]){const w=following.slice(0,h);s.forward[h]=w.length<h||close===0?{status:'incomplete',candles:w.length}:{status:'complete',candles:h,directional_close_pct:d*(w.at(-1).close/close-1)*100,favorable_pct:Math.max(0,...w.map(b=>d*((d===1?b.high:b.low)/close-1)*100)),adverse_pct:Math.max(0,...w.map(b=>-d*((d===1?b.low:b.high)/close-1)*100))};}}
- return {id:await hash(JSON.stringify([source,strategy,symbol,frame,rules,bars.at(-1).end])),strategy,symbol,timeframe:frame,source,filename:String(body.filename||'upload.csv').slice(0,200),start_at:bars[0].start,end_at:bars.at(-1).end,candles:bars.length,excluded_open_candles:excluded,warmup_candles:['pin-bars','bb-pin-bars'].includes(strategy)?minimum-1:minimum,limited_history:bars.length<250,alignment,rules,signals,generated_at:now,signal_count:signals.length,note:'Signal replay and subsequent price movement; no entry/exit rules, trading returns or win rate are defined. Uploaded indicator columns are ignored.'};
+ return {id:await hash(JSON.stringify([source,strategy,symbol,frame,rules,bars.at(-1).end,...(strategy==='rsi-pb'?[market]:[])])),strategy,symbol,timeframe:frame,source,market,filename:String(body.filename||'upload.csv').slice(0,200),start_at:bars[0].start,end_at:bars.at(-1).end,candles:bars.length,excluded_open_candles:excluded,warmup_candles:['pin-bars','bb-pin-bars','rsi-pb'].includes(strategy)?minimum-1:minimum,limited_history:bars.length<250,alignment,rules,signals,generated_at:now,signal_count:signals.length,note:'Signal replay and subsequent price movement; no entry/exit rules, trading returns or win rate are defined. Uploaded indicator columns are ignored.'};
 }

@@ -114,6 +114,45 @@ class PostgresTests(unittest.TestCase):
         signal=candle_example();self.store.insert(signal)
         self.api('/api/finding-state',dict(source='live',finding_id=finding_id('live',signal),revision=0,action='delete'))
         self.assertEqual(self.api('/api/findings')['findings'],[])
+
+    def test_rsi_pb_hosted_pagination_and_owner_edits_cancel_pending_setups(self):
+        from managed_assets import ensure,get
+        cfg=dict(timeframes=['4h'],assets=[dict(id='TEST',provider='csv',enabled=False,path='test.csv',timeframes=['4h'])])
+        ensure(self.store,cfg)
+        with self.store.connect() as db:
+            db.executemany('INSERT INTO rsi_pb_signals VALUES(%s,%s,%s)',[(str(i),i,json.dumps({'strategy':'rsi-pb','confirmed_at':i})) for i in range(73)])
+            db.execute("INSERT INTO rsi_pb_state VALUES('TEST@csv@v1','4h',123)")
+            db.execute("INSERT INTO rsi_pb_pending VALUES('waiting','TEST@csv@v1','4h','{}')")
+        self.assertEqual(len(self.api('/api/rsi-pb?page=0')['signals']),50)
+        second=self.api('/api/rsi-pb?page=1')
+        self.assertEqual(len(second['signals']),23)
+        self.assertFalse(second['has_more'])
+        import rsi_pb
+        self.assertEqual(second['rules'],rsi_pb.load_rules())
+        asset=get(self.store)['config']['assets'][0]|dict(scan_strategies=['rsi'])
+        self.api('/api/assets',dict(action='save',revision=1,asset=asset))
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM rsi_pb_pending').fetchone()[0],0)
+            self.assertEqual(db.execute('SELECT count(*) FROM rsi_pb_state').fetchone()[0],0)
+            self.assertEqual(db.execute('SELECT count(*) FROM rsi_pb_signals').fetchone()[0],73)
+
+    def test_import_preserves_rsi_pb_baselines_pending_setups_and_history(self):
+        from migration.legacy import prepare,apply
+        with self.store.connect() as db:db.execute('UPDATE runtime_control SET enabled=false')
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/'old.db'
+            with closing(sqlite3.connect(source)) as old,old:
+                old.executescript('CREATE TABLE rsi_pb_state(feed TEXT,timeframe TEXT,last_end INTEGER,PRIMARY KEY(feed,timeframe)); CREATE TABLE rsi_pb_pending(id TEXT PRIMARY KEY,feed TEXT,timeframe TEXT,payload TEXT); CREATE TABLE rsi_pb_signals(id TEXT PRIMARY KEY,confirmed_at INTEGER,payload TEXT);')
+                old.execute("INSERT INTO rsi_pb_state VALUES('saved-feed','4h',123)")
+                old.execute("INSERT INTO rsi_pb_pending VALUES('waiting','saved-feed','4h','{\"version\":\"saved-v1\"}')")
+                old.execute("INSERT INTO rsi_pb_signals VALUES('original-id',100,'{\"confirmed_at\":100}')")
+            with psycopg.connect(test_dsn(),options='-c search_path=bot_runtime,pg_catalog') as db:
+                plan=prepare(db,source,INST)
+                self.assertEqual(apply(db,plan,INST)['mismatches'],[])
+                self.assertEqual(db.execute('SELECT last_end FROM rsi_pb_state').fetchone()[0],123)
+                self.assertEqual(db.execute('SELECT id,payload FROM rsi_pb_pending').fetchone(),('waiting','{"version":"saved-v1"}'))
+                self.assertEqual(db.execute('SELECT id FROM rsi_pb_signals').fetchone()[0],'original-id')
+                self.assertEqual(db.execute('SELECT count(*) FROM notification_queue').fetchone()[0],0)
     def test_all_strategies_scan_and_history_is_not_capped(self):
         from scanner import scan_once
         from pin_bars import scan as pin_scan,load_rules as pin_rules
