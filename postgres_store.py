@@ -52,6 +52,11 @@ class Connection(psycopg.Connection):
         return None
 
 
+def configure_connection(db):
+    db.execute('SET extra_float_digits=3')
+    db.commit()
+
+
 def pool():
     global _pool
     with _lock:
@@ -62,7 +67,7 @@ def pool():
                     options='-c search_path=bot_runtime,pg_catalog -c statement_timeout=15000 '
                             '-c lock_timeout=5000 -c idle_in_transaction_session_timeout=20000',
                     application_name='trading-bot-postgres'),
-                check=ConnectionPool.check_connection)
+                configure=configure_connection, check=ConnectionPool.check_connection)
         return _pool
 
 

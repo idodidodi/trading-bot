@@ -192,6 +192,11 @@ class PostgresTests(unittest.TestCase):
             db.execute('SET LOCAL ROLE trading_worker')
             db.execute('SELECT * FROM bot_runtime.signals')
             with self.assertRaises(psycopg.Error):db.execute('UPDATE bot_runtime.runtime_control SET enabled=false')
+    def test_runtime_float_output_preserves_full_precision(self):
+        value=1.9973369999999998
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('SHOW extra_float_digits').fetchone(),('3',))
+            self.assertEqual(db.execute('SELECT %s::float8',(value,)).fetchone(),(value,))
     def test_snapshot_import_rerun_preserves_ids_and_holds_delivery(self):
         from migration.legacy import snapshot,prepare,apply,verify
         with self.store.connect() as db:db.execute('UPDATE runtime_control SET enabled=false')
@@ -199,7 +204,7 @@ class PostgresTests(unittest.TestCase):
             source=Path(folder)/'legacy.db';snap=Path(folder)/'consistent.db'
             with closing(sqlite3.connect(source)) as old,old:
                 old.execute('CREATE TABLE signals(id TEXT PRIMARY KEY,payload TEXT NOT NULL,received REAL NOT NULL,status TEXT,attempts INTEGER,next_attempt REAL,error TEXT)')
-                old.execute('INSERT INTO signals VALUES(?,?,?,?,?,?,?)',('stable-id',json.dumps(candle_example()),10,'pending',2,15,None))
+                old.execute('INSERT INTO signals VALUES(?,?,?,?,?,?,?)',('stable-id',json.dumps(candle_example()),10.123456789012345,'pending',2,15,None))
                 old.execute('CREATE TABLE pin_bar_signals(id TEXT PRIMARY KEY,confirmed_at INTEGER,payload TEXT)')
                 old.executemany('INSERT INTO pin_bar_signals VALUES(?,?,?)',((str(i),i,json.dumps({'id':i})) for i in range(750)))
                 old.execute('CREATE TABLE alert_reviews(slot TEXT PRIMARY KEY,completed REAL)')
@@ -209,6 +214,7 @@ class PostgresTests(unittest.TestCase):
                     ((str(i),json.dumps({'note':'preserved é','value':i})) for i in range(1501)))
             snapshot(source,snap)
             with psycopg.connect(test_dsn(),options='-c search_path=bot_runtime,pg_catalog') as db:
+                db.execute('SET LOCAL extra_float_digits=0')
                 plan=prepare(db,snap,INST);self.assertEqual(plan['conflicts'],[])
                 self.assertEqual(apply(db,plan,INST)['mismatches'],[])
             with psycopg.connect(test_dsn(),options='-c search_path=bot_runtime,pg_catalog') as db:

@@ -108,6 +108,8 @@ def hosted_rows(db, installation):
 
 
 def prepare(db, path, installation, resolutions=None, tiingo=None, sender=None, history_dirs=None):
+    # Hosted session poolers can default to lossy float text output (0).
+    db.execute('SET LOCAL extra_float_digits=3')
     resolutions=resolutions or {}
     local=read_snapshot(path)
     digest=hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -330,12 +332,15 @@ def apply(db, prepared, installation):
     for table,column in IDENTITIES.items():
         db.execute(sql.SQL("SELECT setval(pg_get_serial_sequence(%s,%s),GREATEST(COALESCE((SELECT max({}) FROM bot_runtime.{}),0),1),COALESCE((SELECT max({}) FROM bot_runtime.{}),0)>0)").format(sql.Identifier(column),sql.Identifier(table),sql.Identifier(column),sql.Identifier(table)),('bot_runtime.'+table,column))
     result=verify(db,prepared)
-    if result['mismatches']:raise ValueError('Destination differs from snapshot; import rolled back. Use a fresh rehearsal database or resolve destination conflicts.')
+    if result['mismatches']:
+        details = ', '.join(f"{r['table']}:{r['different_rows']}" for r in result['mismatches'])
+        raise ValueError('Destination differs from snapshot; import rolled back. Different rows: ' + details)
     db.execute('INSERT INTO bot_runtime.migration_runs(snapshot_hash,manifest) VALUES(%s,%s)',(digest,Jsonb(result)))
     return result
 
 
 def verify(db,prepared):
+    db.execute('SET LOCAL extra_float_digits=3')
     verify_archives(db, prepared['snapshot_hash'])
     from decimal import Decimal
     def freeze(value):

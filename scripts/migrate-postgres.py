@@ -34,7 +34,7 @@ def main():
     options=conninfo_to_dict(dsn)
     if not dsn:raise ValueError('TRADING_MIGRATION_URL must explicitly select the admin destination')
     if options.get('host') not in ('127.0.0.1','localhost','/private/tmp','/tmp') and options.get('sslmode') not in ('verify-full','verify-ca'):raise ValueError('Migration connection requires verified TLS')
-    with psycopg.connect(dsn,options='-c search_path=bot_runtime,pg_catalog',prepare_threshold=None) as db:
+    with psycopg.connect(dsn,options='-c search_path=bot_runtime,pg_catalog -c extra_float_digits=3',prepare_threshold=None) as db:
         db.execute('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE')
         if a.operation=='rollback-export':
             from migration.recovery import export
