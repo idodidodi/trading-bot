@@ -36,6 +36,7 @@ def main():
     if options.get('host') not in ('127.0.0.1','localhost','/private/tmp','/tmp') and options.get('sslmode') not in ('verify-full','verify-ca'):raise ValueError('Migration connection requires verified TLS')
     with psycopg.connect(dsn,options='-c search_path=bot_runtime,pg_catalog -c extra_float_digits=3',prepare_threshold=None) as db:
         db.execute('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE')
+        db.execute('SET LOCAL extra_float_digits=3')
         if a.operation=='rollback-export':
             from migration.recovery import export
             report=export(db,a.source,a.output,a.installation)

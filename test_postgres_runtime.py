@@ -376,16 +376,18 @@ class PostgresTests(unittest.TestCase):
         self.store.insert(candle_example())
         with self.store.connect() as db:
             db.execute('UPDATE runtime_control SET enabled=false')
+            db.execute('UPDATE signals SET received=%s',(10.123456789012345,))
             db.execute("INSERT INTO migration_holds VALUES('signals',(SELECT id FROM signals LIMIT 1),'review')")
         with tempfile.TemporaryDirectory() as folder:
             baseline=Path(folder)/'baseline.db'
             with closing(sqlite3.connect(baseline)) as old,old:
                 old.execute('CREATE TABLE signals(id TEXT PRIMARY KEY,payload TEXT,received REAL,status TEXT,attempts INTEGER,next_attempt REAL,error TEXT)')
             original=baseline.read_bytes();target=Path(folder)/'recovery'
-            with psycopg.connect(test_dsn(),options='-c search_path=bot_runtime,pg_catalog') as db:export(db,baseline,target,INST)
+            with psycopg.connect(test_dsn(),options='-c search_path=bot_runtime,pg_catalog -c extra_float_digits=0') as db:export(db,baseline,target,INST)
             self.assertEqual(original,baseline.read_bytes())
             with closing(sqlite3.connect(target/'signals.sqlite3')) as recovered:
                 self.assertEqual(recovered.execute('SELECT status FROM signals').fetchone()[0],'cancelled')
+                self.assertEqual(recovered.execute('SELECT received FROM signals').fetchone()[0],10.123456789012345)
                 self.assertEqual(recovered.execute('PRAGMA integrity_check').fetchone(),('ok',))
             self.assertTrue((target/'manifest.json').is_file())
 

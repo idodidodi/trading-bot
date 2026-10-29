@@ -8,6 +8,7 @@ from .legacy import snapshot,read_snapshot
 
 
 def export(db,baseline,output,installation):
+    db.execute('SET LOCAL extra_float_digits=3')
     output=Path(output)
     if output.exists():raise ValueError('Recovery directory must be new')
     if db.execute('SELECT installation::text,enabled FROM runtime_control WHERE id=1').fetchone()!=(str(installation),False):raise ValueError('Disable runtime and stop workers before recovery export')
