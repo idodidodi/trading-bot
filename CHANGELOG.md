@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — changes since the previous morning report
+
+- Show each market's absolute and percentage price change from the previous delivered morning report, with the comparison date. Reuse saved reports across restarts and upgrades; skip pending and dry-run reports.
+- Keep missing comparisons explicit when the previous report had no price for an asset, and retain quote timestamps and delayed/closed-market labels.
+
 ## Unreleased — five live market feeds
 
 - Connect SPX and the US Dollar Index to Yahoo delayed cash-index OHLC, alongside DAX and the existing Tiingo gold and US oil feeds. Add verified, backup-protected activation of only these five assets while preserving the rest of the portfolio.

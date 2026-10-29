@@ -120,6 +120,13 @@ one hour old are marked **older quote**, including last available closed-market
 prices. Individual failed quotes appear as unavailable; if every quote fails,
 the app retries once per minute. The chart service can change or rate-limit requests.
 
+Each available price also shows its absolute and percentage change from the
+previous delivered morning report, using the prices displayed in that report.
+The comparison date is included, so a missed day does not appear to be a daily
+market change. Pending and dry-run reports are excluded. If the previous report
+had no price for an asset, its change is shown as unavailable. Existing saved
+reports provide the baseline after an upgrade or restart.
+
 Keep the app online for delivery. Starting after 10:30 queues today's summary;
 missed earlier days are not generated. Daily queue identities survive restarts,
 and Telegram retries and dry-run mode use the existing notification queue. As
