@@ -32,10 +32,7 @@ def log_update(message):
 
 
 def supported():
-    if sys.platform=='linux':
-        from linux_update import supported as linux_supported
-        return linux_supported()
-    return sys.platform=='win32' and bool(getattr(sys,'frozen',False))
+    return False  # Migration releases require manual replacement and cutover.
 
 
 def status():

@@ -23,7 +23,7 @@ def next_update_at(now):
 
 
 def supported():
-    return sys.platform=='linux' and platform.machine().lower() in ('x86_64','amd64') and bool(getattr(sys,'frozen',False))
+    return False  # Migration releases require manual replacement and cutover.
 
 
 def download_release(root,release):
@@ -113,14 +113,4 @@ fi
 
 
 def install(staged,shutdown):
-    from linux_launcher import external_environment
-    script=staged.parent/'install-update.sh'
-    script.write_text(INSTALLER,encoding='utf-8')
-    digest=hashlib.sha256(staged.read_bytes()).hexdigest()
-    log_path=Path(os.environ.get('TRADING_BOT_LOG_FILE',str(staged.parent/'update.log')))
-    descriptor=os.open(log_path,os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
-    with os.fdopen(descriptor,'ab',buffering=0) as output:
-        subprocess.Popen(['/bin/sh',str(script),str(os.getpid()),sys.executable,str(staged),digest],
-                         env=external_environment(),close_fds=True,start_new_session=True,
-                         stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.STDOUT)
-    shutdown()
+    raise RuntimeError('Postgres migration releases require manual updates')

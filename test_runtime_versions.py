@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
 import io
 import os
@@ -7,39 +8,19 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from platform_app import Store, load_env
+from platform_app import load_env
 import runtime_env as runtime
 import version_info as versions
 
 
-class RuntimeTests(unittest.TestCase):
+class RuntimeTests(PostgresTestCase):
     def test_cloud_sync_defaults_to_production_with_explicit_development_override(self):
         for settings,expected in [({},False),({'DEV_CLOUD_SYNC_ENABLED':'false'},False),
-                                  ({'DEV_CLOUD_SYNC_ENABLED':'true'},True),
-                                  ({'TRADING_BOT_ENV':'prod','DEV_CLOUD_SYNC_ENABLED':'false'},True)]:
+                                  ({'DEV_CLOUD_SYNC_ENABLED':'true'},False),
+                                  ({'TRADING_BOT_ENV':'prod','DEV_CLOUD_SYNC_ENABLED':'false'},False)]:
             with self.subTest(settings=settings),patch.dict(os.environ,settings,clear=True):
                 self.assertEqual(runtime.cloud_sync_enabled(),expected)
 
-    def test_development_cloud_opt_in_runs_one_sync_without_enabling_logs_or_delivery(self):
-        from cloud_sync import worker
-        stop=threading.Event()
-        with patch.dict(os.environ,{'DEV_CLOUD_SYNC_ENABLED':'true','CLOUD_SYNC_URL':'https://sync.example.test',
-                                   'CLOUD_SYNC_TOKEN':'test-token'},clear=True):
-            runtime.configure('/source')
-            with patch('cloud_sync.snapshot') as snapshot,patch('cloud_sync.batch',return_value={'records':[]}), \
-                 patch('cloud_sync.urllib.request.urlopen',return_value=io.StringIO('{}')) as network, \
-                 patch('cloud_sync.apply',side_effect=lambda *args:stop.set()) as apply:
-                worker(None,stop)
-                snapshot.assert_called_once_with(None)
-                network.assert_called_once()
-                apply.assert_called_once_with(None,{})
-            self.assertEqual(runtime.environment(),'dev')
-            self.assertEqual(os.environ['DRY_RUN'],'true')
-            self.assertEqual(os.environ['PAPER_TRADING_ENABLED'],'false')
-            with tempfile.TemporaryDirectory() as folder:
-                store=Store(Path(folder)/'test.db');store.log('Dev sync','must not persist')
-                with store.connect() as db:
-                    self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='activity_log'").fetchone())
 
     def test_source_ignores_production_paths_ports_and_delivery_defaults(self):
         with patch.dict(os.environ, {'DATA_DIR':'/production', 'PORT':'8080', 'DRY_RUN':'false',
@@ -49,10 +30,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(os.environ['PORT'], '8082')
             self.assertEqual(os.environ['DRY_RUN'], 'true')
             self.assertEqual(os.environ['PAPER_TRADING_ENABLED'], 'false')
-            with patch('cloud_sync.urllib.request.urlopen') as network:
-                from cloud_sync import worker
-                worker(None, threading.Event())
-                network.assert_not_called()
+            self.assertFalse(runtime.cloud_sync_enabled())
 
     def test_executable_always_production_and_source_service_can_opt_in(self):
         with patch.dict(os.environ, {'TRADING_BOT_ENV':'dev','DATA_DIR':'/production','PORT':'8080'}, clear=True), patch('sys.frozen',True,create=True):
@@ -69,10 +47,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(os.environ['PAPER_TRADING_ENABLED'], 'false')
             self.assertEqual(Path(os.environ['DATA_DIR']), Path('/source/data/dev'))
             self.assertEqual(os.environ['PORT'], '8082')
-            with patch('cloud_sync.urllib.request.urlopen') as network:
-                from cloud_sync import worker
-                worker(None, threading.Event())
-                network.assert_not_called()
+            self.assertFalse(runtime.cloud_sync_enabled())
 
     def test_only_production_writes_activity_log(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -83,7 +58,7 @@ class RuntimeTests(unittest.TestCase):
                 self.assertRegex(console.call_args.args[0], r'^\[DEV \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{4}\] Development: must not persist$')
                 self.assertTrue(console.call_args.kwargs['flush'])
             with store.connect() as db:
-                self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='activity_log'").fetchone())
+                self.assertIsNone(db.execute("SELECT 1 FROM activity_log LIMIT 1").fetchone())
             with patch.dict(os.environ, {'TRADING_BOT_ENV':'prod'}), patch('builtins.print') as console:
                 store.log('Production','persist')
                 console.assert_not_called()
@@ -99,7 +74,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(runtime.environment(),'dev')
 
 
-class VersionTests(unittest.TestCase):
+class VersionTests(PostgresTestCase):
     def test_fingerprints_detect_component_changes_and_ignore_credentials_tests(self):
         original={'web/app.js':'a','scanner.py':'b','.env':'secret','test_scanner.py':'c'}
         first=versions.fingerprints(original)

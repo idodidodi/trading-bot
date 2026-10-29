@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import io
 from dataclasses import replace
 import json
@@ -10,12 +11,12 @@ from unittest.mock import patch
 
 from alpaca_feed import fallback_asset, fetch_alpaca, request_page, supported
 from backtest import run_backtest
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import ProviderCandles, TwelveDataRateLimit, fetch_twelve_data, prepare_store, scan_once
 from test_scanner import fixture
 
 
-class AlpacaTests(unittest.TestCase):
+class AlpacaTests(PostgresTestCase):
     asset = dict(id='NVDA', symbol='NVDA', exchange='NASDAQ', provider='twelvedata',
                  feed_confirmed=True, enabled=True, timeframes=['daily'])
 

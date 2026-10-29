@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
 from pathlib import Path
 import tempfile
@@ -5,7 +6,6 @@ import unittest
 from unittest.mock import patch
 
 from csv_backtests import parse, run, save, view
-from platform_app import Store
 from test_pin_bars import bars
 import pin_bars
 
@@ -13,7 +13,7 @@ import pin_bars
 def text(candles):
     return 'time,open,high,low,close,EMA,EMA\n'+'\n'.join(f'{b.start},{b.open},{b.high},{b.low},{b.close},999,999' for b in candles)
 
-class CSVTests(unittest.TestCase):
+class CSVTests(PostgresTestCase):
     def test_uploaded_dates_warmup_open_exclusion_and_no_alerts(self):
         candles=bars();body=dict(csv=text(candles),symbol='TEST',timeframe='4h',strategy='pin-bars')
         report=run(body,candles[-2].end)
@@ -31,7 +31,7 @@ class CSVTests(unittest.TestCase):
             self.assertEqual(view(store,saved['report']['id'])['report']['signal_count'],1)
             self.assertEqual(store.rows(),[])
             with store.connect() as db:
-                self.assertFalse(db.execute("SELECT 1 FROM sqlite_master WHERE name='notification_queue'").fetchone())
+                self.assertFalse(db.execute("SELECT 1 FROM notification_queue LIMIT 1").fetchone())
 
     def test_schema_timezone_duplicates_invalid_ohlc_and_limits(self):
         for csv in ['time,open,high,low,close\n2026-01-01T00:00:00,1,2,0,1',

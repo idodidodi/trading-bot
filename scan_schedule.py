@@ -6,7 +6,7 @@ from market_calendar import is_stock, next_market_time, stock_candle_end
 
 
 def initialize(db):
-    db.execute('CREATE TABLE IF NOT EXISTS scan_schedule(key TEXT PRIMARY KEY,next_due INTEGER NOT NULL,payload TEXT NOT NULL)')
+    db.require_table('scan_schedule')
 
 
 def identity(asset, timeframe, rules):
@@ -26,7 +26,7 @@ def identity(asset, timeframe, rules):
 def saved(store, key, now):
     with store.connect() as db:
         initialize(db)
-        row=db.execute('SELECT next_due,payload FROM scan_schedule WHERE key=?',(key,)).fetchone()
+        row=db.execute('SELECT next_due,payload FROM scan_schedule WHERE key=%s',(key,)).fetchone()
     if row and now<row[0]:
         result = json.loads(row[1]) | dict(check_state='waiting for candle close',next_close_at=row[0],new_signals=0)
         for strategy in ('pin_bars','bb_pin_bars','rsi_pb'):
@@ -66,7 +66,7 @@ def next_due(asset, timeframe, raw, candles, now, row):
 def provider_lag(store,key,row,now,deadline,asset=None):
     """A successful response with an unchanged old bar is not a new close."""
     with store.connect() as db:
-        previous=db.execute('SELECT next_due,payload FROM scan_schedule WHERE key=?',(key,)).fetchone()
+        previous=db.execute('SELECT next_due,payload FROM scan_schedule WHERE key=%s',(key,)).fetchone()
     if previous and previous[0]<=now and row.get('last_closed_at'):
         old=json.loads(previous[1])
         if old.get('last_closed_at')==row['last_closed_at'] and row['status']!='unavailable':
@@ -78,4 +78,4 @@ def provider_lag(store,key,row,now,deadline,asset=None):
 def save(store,key,deadline,row):
     with store.connect() as db:
         initialize(db)
-        db.execute('INSERT OR REPLACE INTO scan_schedule VALUES(?,?,?)',(key,deadline,json.dumps(row)))
+        db.execute('INSERT INTO scan_schedule VALUES(%s,%s,%s) ON CONFLICT(key) DO UPDATE SET next_due=excluded.next_due,payload=excluded.payload',(key,deadline,json.dumps(row)))

@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -8,13 +9,13 @@ from unittest.mock import patch
 import urllib.request
 from http.server import ThreadingHTTPServer
 from backtest import START, END, replay, run_backtest
-from platform_app import Store, handler_factory, load_rules
+from platform_app import handler_factory, load_rules
 from scanner import prepare_store, scan_once
 from test_scanner import fixture
 
 
 @patch.dict('os.environ', {'TRADING_BOT_ENV': 'prod'})
-class TabsTests(unittest.TestCase):
+class TabsTests(PostgresTestCase):
     def permissive_rules(self):
         return load_rules() | {'max_band_slope_pct': 1.5}
 

@@ -63,8 +63,8 @@ def review(store):
         report['by_version'][market]={version:metrics([s for s in signals if s['version']==version]) for version in sorted({s['version'] for s in signals})}
     with store.connect() as db:
         initialize(db)
-        db.execute('CREATE TABLE IF NOT EXISTS momentum_reviews(id INTEGER PRIMARY KEY,payload TEXT NOT NULL)')
-        db.execute('INSERT INTO momentum_reviews(payload) VALUES(?)',(json.dumps(report),))
+        db.require_table('momentum_reviews')
+        db.execute('INSERT INTO momentum_reviews(payload) VALUES(%s)',(json.dumps(report),))
     folder=Path(os.environ.get('DATA_DIR',str(ROOT/'data')))/'momentum-reviews';folder.mkdir(parents=True,exist_ok=True)
     (folder/f"review-{report['reviewed_at']}.json").write_text(json.dumps(report,indent=2))
     store.log('Momentum strategy review',json.dumps(dict(version=VERSION,live=report['live'],decision=report['decision'])))
@@ -72,5 +72,5 @@ def review(store):
 
 
 if __name__=='__main__':
-    load_env();store=Store(Path(os.environ.get('DATA_DIR',str(ROOT/'data')))/'signals.sqlite3')
+    load_env();store=Store()
     print(json.dumps(review(store),indent=2))

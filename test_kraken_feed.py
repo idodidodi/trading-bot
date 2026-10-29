@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import io
 import json
 from pathlib import Path
@@ -7,12 +8,12 @@ from unittest.mock import patch
 
 from kraken_feed import fetch_kraken
 from managed_assets import ensure, change, for_timeframe, validate_asset
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import prepare_store, scan_once
 from test_scanner import fixture
 
 
-class KrakenTests(unittest.TestCase):
+class KrakenTests(PostgresTestCase):
     def setUp(self):
         self.asset = dict(id='BTCUSD', provider='kraken', symbol='BTC/USD', exchange='Kraken',
                           feed_confirmed=True, enabled=True, timeframes=['4h'])

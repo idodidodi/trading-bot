@@ -22,7 +22,7 @@ def main():
         from platform_app import ROOT, Store
         from runtime_env import data_directory
         from telegram_routing import read, refresh
-        store = Store(data_directory(ROOT) / 'signals.sqlite3')
+        store = Store()
         try:
             refresh(store)
         except (RuntimeError, ValueError):
@@ -53,7 +53,7 @@ def main():
         from platform_app import ROOT, Store
         from runtime_env import data_directory
         from telegram_routing import read
-        chat_id = read(Store(data_directory(ROOT) / 'signals.sqlite3'))['routes']['general'] or os.environ.get('TELEGRAM_CHAT_ID', '')
+        chat_id = read(Store())['routes']['general'] or os.environ.get('TELEGRAM_CHAT_ID', '')
         if not chat_id:
             raise SystemExit('Add TELEGRAM_CHAT_ID to .env first.')
         try:

@@ -5,7 +5,6 @@ import csv
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-import sqlite3
 import sys
 import time
 
@@ -44,23 +43,17 @@ def activate(store):
     (folder/'manifest.json').write_text(json.dumps(dict(files=files),indent=2)+'\n')
     (folder/'backtest-config.json').write_text(json.dumps(dict(year=2020,timeframes=list(FRAMES),assets=[dict(
         id='SPX',provider='csv',path=str(folder/'{asset}-{timeframe}.csv'))]),indent=2)+'\n')
-    backup = Path(store.path).with_name('signals-before-fmp-'+str(time.time_ns())+'.sqlite3')
-    with store.connect() as source, closing(sqlite3.connect(backup)) as destination:
-        source.backup(destination)
     result = change(store, dict(revision=state['revision'],action='save',asset=asset))
     for frame, values in bars.items():
         cache_candles(store, asset, frame, values)
-    return dict(database=str(store.path), revision=result['revision'], history=files, backup=str(backup))
+    return dict(database='Postgres', revision=result['revision'], history=files)
 
 
 if __name__ == '__main__':
     parser=argparse.ArgumentParser()
-    parser.add_argument('--database', type=Path, required=True)
     args=parser.parse_args()
     load_env()
-    if not args.database.exists():
-        raise SystemExit('Start the app first to initialize its asset configuration')
     try:
-        print(json.dumps(activate(Store(args.database)),indent=2))
+        print(json.dumps(activate(Store()),indent=2))
     except ValueError as exc:
         raise SystemExit(str(exc)) from None

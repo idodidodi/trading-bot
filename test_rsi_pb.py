@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 from dataclasses import asdict, replace
 from datetime import datetime
 import json
@@ -10,7 +11,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import rsi_pb
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import Candle, prepare_store, scan_once, detect
 from test_scanner import fixture
 
@@ -28,7 +29,7 @@ def csv(candles):
     return 'timestamp,closed_at,open,high,low,close\n'+'\n'.join(','.join(map(str,asdict(b).values())) for b in candles)
 
 
-class RSIPBTests(unittest.TestCase):
+class RSIPBTests(PostgresTestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.store=Store(Path(self.tmp.name)/'signals.sqlite3');prepare_store(self.store)
@@ -85,9 +86,7 @@ class RSIPBTests(unittest.TestCase):
         with self.store.connect() as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM notification_queue').fetchone()[0],1)
             self.assertEqual(db.execute('SELECT COUNT(*) FROM rsi_pb_pending').fetchone()[0],1) # P2+1 also diverges independently
-        from cloud_sync import snapshot,batch
-        snapshot(self.store)
-        self.assertTrue(any(r['key']=='rsi-pb-live' for r in batch(self.store)['records']))
+        self.assertEqual(read(self.store,'/api/rsi-pb')['strategy'],'rsi-pb')
 
     def test_missing_followup_waits_for_backfill_and_catchup_is_silent(self):
         candles=bars();self.scan(candles[:257])
@@ -133,7 +132,7 @@ class RSIPBTests(unittest.TestCase):
     def test_default_upgrade_revision_and_optout_survive_restart(self):
         import managed_assets
         legacy=dict(assets=[self.asset|dict(scan_strategies=['rsi']),self.asset|dict(id='PINS',scan_strategies=['pin-bars'])],timeframes=['4h'])
-        with self.store.connect() as db:db.execute('INSERT INTO managed_config VALUES(1,7,7,?)',(json.dumps(legacy),))
+        with self.store.connect() as db:db.execute('INSERT INTO managed_config VALUES(1,7,7,%s)',(json.dumps(legacy),))
         upgraded=managed_assets.get(self.store)
         self.assertEqual(upgraded['revision'],8)
         a,b=upgraded['config']['assets'];self.assertEqual(a['scan_strategies'],['rsi','rsi-pb']);self.assertEqual(b['scan_strategies'],['pin-bars'])

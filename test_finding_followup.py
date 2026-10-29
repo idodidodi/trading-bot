@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
 from pathlib import Path
 import tempfile
@@ -6,7 +7,7 @@ from dataclasses import replace
 from unittest.mock import patch
 from finding_followup import calculate, run
 from finding_feedback import finding_id
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import Candle
 from dashboard_api import read
 from test_platform import example
@@ -24,7 +25,7 @@ def signal():
     return example() | dict(direction='bullish',price2=100,pivot2=START,symbol='TEST',timeframe='1h')
 
 
-class FollowupTests(unittest.TestCase):
+class FollowupTests(PostgresTestCase):
     def test_recovery_window_and_entire_history(self):
         short=calculate(signal(),bars())
         self.assertEqual((short['drawdown_pct'],short['gain_pct'],short['candles']),(10,5,2))
@@ -59,13 +60,13 @@ class FollowupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             store=Store(Path(folder)/'signals.sqlite3');s=signal();store.insert(s);key=finding_id('live',s)
             with store.connect() as db:
-                                db.executemany('INSERT INTO candle_cache VALUES(?,?,?,?,?,?,?,?,?)',[(s['symbol'],'TEST','1h',c.start,c.end,c.open,c.high,c.low,c.close) for c in bars()[:2]])
+                                db.executemany('INSERT INTO candle_cache VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',[(s['symbol'],'TEST','1h',c.start,c.end,c.open,c.high,c.low,c.close) for c in bars()[:2]])
             self.assertIsNone(read(store,'/api/findings')['findings'][0]['followup'])
             result=run(store,Path(folder),'live',key)['followup']
             self.assertEqual(result['status'],'ongoing')
             self.assertEqual(read(Store(store.path),'/api/findings')['findings'][0]['followup'],result)
             with store.connect() as db:
-                c=bars()[2];db.execute('INSERT INTO candle_cache VALUES(?,?,?,?,?,?,?,?,?)',(s['symbol'],'TEST','1h',c.start,c.end,c.open,c.high,c.low,c.close))
+                c=bars()[2];db.execute('INSERT INTO candle_cache VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)',(s['symbol'],'TEST','1h',c.start,c.end,c.open,c.high,c.low,c.close))
             self.assertEqual(run(store,Path(folder),'live',key)['followup']['status'],'recovered')
             self.assertEqual(finding_id('live',s),key)
 

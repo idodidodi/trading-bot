@@ -67,7 +67,7 @@ def configure_verbose_logging(root):
 def app_root():
     directory=os.environ.get('XDG_DATA_HOME')
     base=Path(directory) if directory and Path(directory).is_absolute() else Path.home()/'.local/share'
-    return base/'FamilyTradingBot'
+    return base/'FamilyTradingBotPostgres'
 
 
 def settings_path():
@@ -79,7 +79,7 @@ def settings_path():
         return path
     directory=os.environ.get('XDG_CONFIG_HOME')
     base=Path(directory) if directory and Path(directory).is_absolute() else Path.home()/'.config'
-    return base/'FamilyTradingBot'/'.env'
+    return base/'FamilyTradingBotPostgres'/'.env'
 
 
 def prepare_settings(root, bundle):

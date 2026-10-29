@@ -1,9 +1,10 @@
 """Momentum execution restricted to Alpaca's simulated endpoint, with durable order IDs."""
+from postgres_store import RETRYABLE, DatabaseError
 import hashlib
 import json
 import math
 import os
-import sqlite3
+from postgres_store import DatabaseError, OperationalError
 import sys
 import time
 import urllib.error
@@ -30,7 +31,13 @@ class BrokerError(Exception):
 
 
 class AlpacaPaper:
+    def __init__(self, store=None):
+        self.store = store
+
     def request(self, path, method='GET', body=None, data=False):
+        if method != 'GET':
+            from postgres_store import assert_worker
+            assert_worker(self.store)
         # No configurable trading host: live endpoint cannot be selected by .env.
         if not path.startswith('/') or '://' in path:
             raise ValueError('Invalid Alpaca API path')
@@ -60,8 +67,8 @@ class AlpacaPaper:
 
 
 def initialize(db):
-    db.execute('CREATE TABLE IF NOT EXISTS paper_trades(id TEXT PRIMARY KEY,payload TEXT NOT NULL)')
-    db.execute('CREATE TABLE IF NOT EXISTS paper_status(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL)')
+    db.require_table('paper_trades')
+    db.require_table('paper_status')
 
 
 def identity(signal):
@@ -89,7 +96,7 @@ def note_transient_failure(store, records, now):
 def save(store, record):
     with store.connect() as db:
         initialize(db)
-        db.execute('INSERT OR REPLACE INTO paper_trades VALUES(?,?)',(record['id'],json.dumps(record)))
+        db.execute('INSERT INTO paper_trades VALUES(%s,%s) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload',(record['id'],json.dumps(record)))
 
 
 def view(store):
@@ -280,7 +287,7 @@ def reconcile(store, broker, record, now):
 def tick(store, broker=None, now=None):
     from momentum import view as signals_view
     now=int(time.time()*1000) if now is None else now
-    broker=broker or AlpacaPaper()
+    broker=broker or AlpacaPaper(store)
     if not paper_trading_enabled(store):return view(store)
     records={r['id']:r for r in view(store)['trades']}
     signals=signals_view(store)['signals']
@@ -290,6 +297,8 @@ def tick(store, broker=None, now=None):
             records[key]=dict(id=key,signal=signal,state='scheduled',account=None,created_at=now)
             save(store,records[key])
     try:account=broker.request('/v2/account')
+    except (DatabaseError, *RETRYABLE):
+        raise
     except Exception as exc:
         if temporary_failure(exc):note_transient_failure(store,records,now)
         raise
@@ -303,11 +312,15 @@ def tick(store, broker=None, now=None):
         if record['state'] in {'scheduled','skipped','closed','closed unfilled'}:continue
         if record['account']!=fingerprint:raise ValueError('Paper account changed; existing records require review')
         try:reconcile(store,broker,record,now)
+        except (DatabaseError, *RETRYABLE):
+            raise
         except Exception as exc:
             record['reason']=str(exc) if isinstance(exc,(BrokerError,ValueError)) else type(exc).__name__;save(store,record)
         if record['state'] not in {'closed','closed unfilled'}:busy.add(record['signal']['market'])
     try:
         positions=broker.request('/v2/positions');orders=broker.request('/v2/orders?status=open&nested=true&limit=500')
+    except (DatabaseError, *RETRYABLE):
+        raise
     except Exception as exc:
         if temporary_failure(exc):note_transient_failure(store,records,now)
         raise
@@ -341,9 +354,13 @@ def tick(store, broker=None, now=None):
             record['order']=order_summary(response);record['state']='entry pending';save(store,record)
         except ValueError as exc:
             record.update(state='skipped',reason=str(exc));save(store,record)
+        except (DatabaseError, *RETRYABLE):
+            raise
         except Exception as exc:
             if post_started:
                 try:found=broker.lookup(identity(signal))
+                except (DatabaseError, *RETRYABLE):
+                    raise
                 except Exception:found=None
                 if found:
                     record.update(order=order_summary(found),state='entry pending',reason='Submission reconciled by client order ID')
@@ -360,34 +377,22 @@ def tick(store, broker=None, now=None):
             save(store,record)
     status=dict(checked_at=now,broker='Alpaca paper',account_status=account['status'],equity=float(account['equity']),
                 buying_power=float(account['buying_power']),shorting_enabled=account.get('shorting_enabled'),crypto_status=account.get('crypto_status'))
-    with store.connect() as db:db.execute('INSERT OR REPLACE INTO paper_status VALUES(1,?)',(json.dumps(status),))
+    with store.connect() as db:db.execute('INSERT INTO paper_status VALUES(1,%s) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload',(json.dumps(status),))
     return view(store)
 
 
 def cycle(store):
-    # OS advisory lock covers network calls too, preventing worker/CLI competing writers.
-    lock_path=Path(str(store.path)+'.paper.lock')
-    with lock_path.open('a+b') as handle:
-        try:
-            if os.name=='nt':
-                import msvcrt
-                handle.seek(0);handle.write(b'0');handle.flush();handle.seek(0)
-                msvcrt.locking(handle.fileno(),msvcrt.LK_NBLCK,1)
-            else:
-                import fcntl
-                fcntl.flock(handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except (OSError,BlockingIOError):return view(store)
-        try:return tick(store)
-        finally:
-            if os.name=='nt':
-                handle.seek(0);msvcrt.locking(handle.fileno(),msvcrt.LK_UNLCK,1)
-            else:fcntl.flock(handle.fileno(),fcntl.LOCK_UN)
+    from postgres_store import assert_worker
+    assert_worker(store)
+    return tick(store)
 
 
 def check_and_log(store):
     started=int(time.time()*1000)
     try:
         result=cycle(store)
+    except (DatabaseError, *RETRYABLE):
+        raise
     except Exception as exc:
         store.log('Paper trading check failed',str(exc) if isinstance(exc,(ValueError,BrokerError)) else type(exc).__name__)
         return None
@@ -395,13 +400,13 @@ def check_and_log(store):
     # A disabled executor or busy lock can return cached state, not a successful check.
     if result.get('enabled') and status.get('checked_at',0)>=started:
         with store.connect() as db:
-            exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='activity_log'").fetchone()
+            exists=db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='activity_log'").fetchone()
             last=db.execute("SELECT id,event,occurred FROM activity_log WHERE event IN ('Paper trading check failed','Paper trading connection recovered') ORDER BY id DESC LIMIT 1").fetchone() if exists else None
             if last and last[1]=='Paper trading check failed':
                 failed=datetime.fromtimestamp(last[2],ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y, %H:%M:%S')
                 details=f'Alpaca paper check succeeded; account {status.get("account_status","unknown")}. Previous failure: {failed} Israel time.'
                 # Persist resolution once; it survives restarts and is mirrored to the Logs UI.
-                db.execute("INSERT INTO activity_log(occurred,event,details) SELECT ?,?,? WHERE (SELECT id FROM activity_log WHERE event IN ('Paper trading check failed','Paper trading connection recovered') ORDER BY id DESC LIMIT 1)=?",(time.time(),'Paper trading connection recovered',details,last[0]))
+                db.execute("INSERT INTO activity_log(occurred,event,details) SELECT %s,%s,%s WHERE (SELECT id FROM activity_log WHERE event IN ('Paper trading check failed','Paper trading connection recovered') ORDER BY id DESC LIMIT 1)=%s",(time.time(),'Paper trading connection recovered',details,last[0]))
     return result
 
 
@@ -412,7 +417,7 @@ def worker(store, stop):
                 stop.wait(1)
                 continue
             check_and_log(store)
-        except sqlite3.OperationalError as exc:
+        except OperationalError as exc:
             from platform_app import database_busy
             if not database_busy(exc):
                 raise
@@ -425,6 +430,7 @@ if __name__=='__main__':
     from runtime_env import configure
     load_env();configure(ROOT)
     data=Path(os.environ['DATA_DIR']);data.mkdir(parents=True,exist_ok=True)
-    store=Store(data/'signals.sqlite3')
+    store=Store()
+    store.acquire_worker()
     result=cycle(store)
     print(json.dumps(result,indent=2))

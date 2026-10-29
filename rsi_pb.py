@@ -121,7 +121,7 @@ def initialize(db):
     from candle_strategy import initialize as init
     import sys
     init(db,sys.modules[__name__])
-    db.execute('CREATE TABLE IF NOT EXISTS rsi_pb_pending(id TEXT PRIMARY KEY,feed TEXT,timeframe TEXT,payload TEXT NOT NULL)')
+    db.require_table('rsi_pb_pending')
 
 
 def identity(source, timeframe, setup):
@@ -148,8 +148,7 @@ def scan(store, asset, timeframe, candles, rules, now, selection_start=None, cat
     with store.connect() as db:
         initialize(db)
         init_notifications(db)
-        db.execute('BEGIN IMMEDIATE')
-        state = db.execute('SELECT last_end FROM rsi_pb_state WHERE feed=? AND timeframe=?',(feed,timeframe)).fetchone()
+        state = db.execute('SELECT last_end FROM rsi_pb_state WHERE feed=%s AND timeframe=%s',(feed,timeframe)).fetchone()
         cutoff = state[0] if state else candles[-1].end
         if state and cutoff < candles[0].start:
             return dict(status='unavailable',reason='Polling gap exceeds available history; supply candle backfill')
@@ -159,8 +158,8 @@ def scan(store, asset, timeframe, candles, rules, now, selection_start=None, cat
             if setup['pivot_closed_at'] > cutoff or (not state and setup['pivot_closed_at']==cutoff):
                 setup.update(asset_config={k:v for k,v in asset.items() if k!='_rsi_pb_sessions'},market=asset.get('market') or 'unknown')
                 key = identity(feed,timeframe,setup)
-                db.execute('INSERT OR IGNORE INTO rsi_pb_pending VALUES(?,?,?,?)',(key,feed,timeframe,json.dumps(setup)))
-        for key,raw in db.execute('SELECT id,payload FROM rsi_pb_pending WHERE feed=? AND timeframe=?',(feed,timeframe)).fetchall():
+                db.execute('INSERT INTO rsi_pb_pending VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING',(key,feed,timeframe,json.dumps(setup)))
+        for key,raw in db.execute('SELECT id,payload FROM rsi_pb_pending WHERE feed=%s AND timeframe=%s',(feed,timeframe)).fetchall():
             setup = json.loads(raw)
             expected = next_start(Candle(**setup['pivot_candle']),timeframe,asset)
             bar = indexed.get(expected)
@@ -171,14 +170,14 @@ def scan(store, asset, timeframe, candles, rules, now, selection_start=None, cat
             if signal:
                 signal.pop('asset_config',None)
                 signal.update(detected_at=now)
-                inserted = db.execute('INSERT OR IGNORE INTO rsi_pb_signals VALUES(?,?,?)',(key,bar.end,json.dumps(signal))).rowcount
+                inserted = db.execute('INSERT INTO rsi_pb_signals VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',(key,bar.end,json.dumps(signal))).rowcount
                 new += inserted
                 if inserted and not catchup:
                     remember(db,'notification:rsi-pb:'+key,asset.get('market') or 'unknown',STRATEGY)
-                    db.execute('INSERT OR IGNORE INTO notification_queue(id,text) VALUES(?,?)',('rsi-pb:'+key,message(signal)))
-            db.execute('DELETE FROM rsi_pb_pending WHERE id=?',(key,))
-        waiting = db.execute('SELECT COUNT(*) FROM rsi_pb_pending WHERE feed=? AND timeframe=?',(feed,timeframe)).fetchone()[0]
-        db.execute('INSERT INTO rsi_pb_state VALUES(?,?,?) ON CONFLICT(feed,timeframe) DO UPDATE SET last_end=MAX(last_end,excluded.last_end)',(feed,timeframe,candles[-1].end))
+                    db.execute('INSERT INTO notification_queue(id,text) VALUES(%s,%s) ON CONFLICT DO NOTHING',('rsi-pb:'+key,message(signal)))
+            db.execute('DELETE FROM rsi_pb_pending WHERE id=%s',(key,))
+        waiting = db.execute('SELECT COUNT(*) FROM rsi_pb_pending WHERE feed=%s AND timeframe=%s',(feed,timeframe)).fetchone()[0]
+        db.execute('INSERT INTO rsi_pb_state AS saved VALUES(%s,%s,%s) ON CONFLICT(feed,timeframe) DO UPDATE SET last_end=GREATEST(saved.last_end,excluded.last_end)',(feed,timeframe,candles[-1].end))
     return dict(status='unavailable' if missing else 'scanned' if state else 'baseline set',candles=len(candles),
                 reason='Missing follow-up candle; supply backfill' if missing else '',waiting_setups=waiting,
                 last_closed_at=candles[-1].end,new_signals=new,limited_history=len(candles)<250,last_closed_age_seconds=age)
@@ -200,10 +199,10 @@ def retain_pending(store, config, configured, version=None):
             allowed = current or (old if automatic else None)
             if (not allowed or not allowed.get('enabled',True) or frame not in allowed.get('timeframes',configured['timeframes'])
                     or STRATEGY not in allowed.get('scan_strategies',SCAN_STRATEGIES) or setup['version'] != version):
-                db.execute('DELETE FROM rsi_pb_pending WHERE id=?',(key,))
+                db.execute('DELETE FROM rsi_pb_pending WHERE id=%s',(key,))
                 continue
             if current and source_for(for_timeframe(current,frame)) != setup['source']:
-                db.execute('DELETE FROM rsi_pb_pending WHERE id=?',(key,))
+                db.execute('DELETE FROM rsi_pb_pending WHERE id=%s',(key,))
                 continue
             if old['id'] not in by_id:
                 retained = dict(old,timeframes=[frame],scan_strategies=[STRATEGY],rsi_pb_followup_only=True)
@@ -228,10 +227,10 @@ def cancel_changed(db, old_assets, config):
                        or source_for(for_timeframe(old,frame)) != source_for(for_timeframe(current,frame)))
             if changed:
                 prefix = old['id']+'@'
-                for feed, in db.execute('SELECT feed FROM rsi_pb_state WHERE timeframe=?',(frame,)).fetchall():
+                for feed, in db.execute('SELECT feed FROM rsi_pb_state WHERE timeframe=%s',(frame,)).fetchall():
                     if feed.startswith(prefix):
-                        db.execute('DELETE FROM rsi_pb_pending WHERE feed=? AND timeframe=?',(feed,frame))
-                        db.execute('DELETE FROM rsi_pb_state WHERE feed=? AND timeframe=?',(feed,frame))
+                        db.execute('DELETE FROM rsi_pb_pending WHERE feed=%s AND timeframe=%s',(feed,frame))
+                        db.execute('DELETE FROM rsi_pb_state WHERE feed=%s AND timeframe=%s',(feed,frame))
 
 
 def source_for(asset):

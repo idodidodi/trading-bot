@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 from datetime import datetime
 from pathlib import Path
 import tempfile
@@ -5,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from market_calendar import forex_market_open, next_forex_open
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import Candle, prepare_store, scan_once
 
 
@@ -13,7 +14,7 @@ def ms(value):
     return int(datetime.fromisoformat(value).timestamp() * 1000)
 
 
-class ForexMarketHoursTests(unittest.TestCase):
+class ForexMarketHoursTests(PostgresTestCase):
     def test_week_boundaries_and_dst(self):
         for friday, sunday in [('2026-10-16', '2026-10-18'),
                                ('2026-11-06', '2026-11-08')]:
@@ -62,6 +63,8 @@ class ForexMarketHoursTests(unittest.TestCase):
         for market, now in [('forex', '2026-10-18T17:00:00-04:00'),
                             ('crypto', '2026-10-18T10:00:00+03:00')]:
             with self.subTest(market=market), tempfile.TemporaryDirectory() as folder:
+                from test_postgres_support import reset
+                reset()
                 store = Store(Path(folder) / 'test.sqlite3')
                 prepare_store(store)
                 config = dict(timeframes=['daily'], assets=[dict(

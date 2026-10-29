@@ -1,15 +1,15 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
 import tempfile
 import unittest
 from pathlib import Path
-from platform_app import Store
 from paper_trading import initialize as initialize_paper
 from momentum_tracking import acknowledge,refresh
 
 DAY=86400000
 
 
-class TrackingTests(unittest.TestCase):
+class TrackingTests(PostgresTestCase):
     def test_failed_entry_gets_separate_daily_simulation_and_one_time_close_event(self):
         with tempfile.TemporaryDirectory() as directory:
             store=Store(Path(directory)/'tracking.sqlite3')
@@ -19,11 +19,11 @@ class TrackingTests(unittest.TestCase):
             bars=[dict(start=10*DAY,end=11*DAY,open=100,high=121,low=95,close=115)]
             with store.connect() as db:
                 initialize_paper(db)
-                db.execute('CREATE TABLE momentum_history(market TEXT,symbol TEXT,payload TEXT,PRIMARY KEY(market,symbol))')
-                db.execute('INSERT INTO momentum_history VALUES(?,?,?)',('crypto','BTC/USD',json.dumps(bars)))
+                db.require_table('momentum_history')
+                db.execute('INSERT INTO momentum_history VALUES(%s,%s,%s)',('crypto','BTC/USD',json.dumps(bars)))
                 record=dict(id='mom-test',signal=signal,state='skipped',reason='Temporary paper connection failure after 3 attempts',
                             entry_quote=dict(price=101,source='Alpaca crypto quote',timestamp=10*DAY),account='paper')
-                db.execute('INSERT INTO paper_trades VALUES(?,?)',(record['id'],json.dumps(record)))
+                db.execute('INSERT INTO paper_trades VALUES(%s,%s)',(record['id'],json.dumps(record)))
             result=refresh(store,now=12*DAY)
             track=result['tracking'][0]
             self.assertEqual(track['kind'],'simulated_tracking')

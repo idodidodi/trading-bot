@@ -16,7 +16,7 @@ def table(headers, rows):
 
 def render_page(store, path):
     with store.connect() as db:
-        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        tables = {r[0] for r in db.execute('SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()')}
         if path == '/signals':
             title = 'Signals'
             feedback = feedback_map(db)

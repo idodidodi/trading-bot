@@ -1,3 +1,5 @@
+> This migration branch uses Postgres as the only runtime database. Follow the [manual migration runbook](POSTGRES_MIGRATION.md) before installation. Instructions below describe the preserved SQLite release where they conflict.
+
 # Family Trading Bot on Linux
 
 Download [FamilyTradingBot-linux-x86_64](https://github.com/idodidodi/trading-bot/releases/latest/download/FamilyTradingBot-linux-x86_64). This standalone executable includes Python. It targets **Ubuntu 22.04 or newer, x86_64**, and compatible glibc distributions (glibc 2.35+). It is not an ARM/Raspberry Pi or Alpine/musl build.

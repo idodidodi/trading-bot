@@ -10,6 +10,8 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      TRADING_TEST_DATABASE_URL: host=127.0.0.1 port=5432 dbname=trading_bot_test user=postgres password=root sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,8 +23,21 @@ jobs:
         run: python scripts/release-version.py apply
       - name: Install Windows runtime and build dependencies
         run: python -m pip install -r windows-build-requirements.txt
+      - name: Prepare disposable runner Postgres database
+        shell: pwsh
+        env:
+          PGPASSWORD: root
+        run: |
+          $Service = Get-Service -Name 'postgresql*' | Select-Object -First 1
+          if (-not $Service -or -not $env:PGBIN) { throw 'Runner PostgreSQL installation missing' }
+          Set-Service -Name $Service.Name -StartupType Manual
+          Start-Service -Name $Service.Name
+          & "$env:PGBIN/createdb.exe" -h 127.0.0.1 -U postgres trading_bot_test
+          if ($LASTEXITCODE -ne 0) { throw 'Disposable database creation failed' }
       - name: Verify scanner
         run: |
+          python scripts/setup-postgres-tests.py
+          if ($LASTEXITCODE -ne 0) { throw 'Disposable schema setup failed' }
           python -m unittest discover -q
           if ($LASTEXITCODE -ne 0) { throw 'Scanner tests failed' }
       - name: Build executable and update manifest
@@ -31,6 +46,7 @@ jobs:
       - name: Smoke-test standalone app
         shell: pwsh
         run: |
+          $env:TRADING_BOT_ROLE = 'dashboard'
           $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'family-bot-smoke'
           New-Item -ItemType Directory -Force $env:LOCALAPPDATA | Out-Null
           Start-Process -FilePath (Resolve-Path 'dist/FamilyTradingBot.exe')
@@ -38,9 +54,8 @@ jobs:
           for ($Attempt = 0; $Attempt -lt 45; $Attempt++) {
             Start-Sleep -Seconds 1
             try {
-              $Health = Invoke-RestMethod 'http://127.0.0.1:8080/health'
-              $Updates = Invoke-RestMethod 'http://127.0.0.1:8080/api/updates'
-              if ($Health.ok -and $Health.dry_run -and $Updates.supported) { $Ready = $true; break }
+              $Config = Invoke-WebRequest 'http://127.0.0.1:8080/web/config.js'
+              if ($Config.Content -match 'supabaseUrl') { $Ready = $true; break }
             } catch {}
           }
           Get-Process FamilyTradingBot -ErrorAction SilentlyContinue | Stop-Process -Force

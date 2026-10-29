@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 from datetime import datetime, timezone
 import importlib.util
 import io
@@ -11,12 +12,12 @@ import urllib.error
 
 import fmp_feed
 from managed_assets import ensure, get, validate_asset
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import prepare_store, scan_once, timestamp
 from test_scanner import fixture
 
 
-class FMPTests(unittest.TestCase):
+class FMPTests(PostgresTestCase):
     asset = dict(id='SPX',provider='fmp',symbol='^GSPC',exchange='INDEX',market='index',
                  enabled=True,feed_confirmed=True,timeframes=['daily'])
 
@@ -104,7 +105,7 @@ class FMPTests(unittest.TestCase):
             self.assertEqual(config['assets'][1]['enabled'],False)
             self.assertEqual(config['assets'][0]['provider'],'fmp')
             self.assertEqual(config['assets'][0]['timeframes'],['monthly','weekly','daily'])
-            self.assertTrue(Path(result['backup']).exists())
+            self.assertGreater(result['revision'],1)
             self.assertTrue((Path(folder)/'data/historical-fmp/SPX-monthly.csv').exists())
             from backtest_jobs import options
             self.assertIn('SPX',options(store)['fmp_assets'])

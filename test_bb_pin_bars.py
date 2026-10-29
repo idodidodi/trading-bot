@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 from dataclasses import replace
 from pathlib import Path
 import tempfile
@@ -9,7 +10,7 @@ import pin_bars
 from csv_backtests import run, save, view
 from dashboard_api import read
 from managed_assets import validate_asset
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import Candle, prepare_store, scan_once
 
 
@@ -24,7 +25,7 @@ def csv(candles):
     return 'time,open,high,low,close\n'+'\n'.join(f'{b.start},{b.open},{b.high},{b.low},{b.close}' for b in candles)
 
 
-class BBPinBarsTests(unittest.TestCase):
+class BBPinBarsTests(PostgresTestCase):
     def test_shape_color_exact_touch_and_wrong_band(self):
         bullish=Candle(1000,2000,104,104.1,100,103)
         self.assertEqual(bb_pin_bars.direction(bullish,100,110,2),'bullish')
@@ -68,11 +69,6 @@ class BBPinBarsTests(unittest.TestCase):
             self.assertTrue(any(r[0].startswith('bb-pin-bars:') and 'BB Pin-Bars' in r[1] for r in alerts))
             self.assertEqual(read(store,'/api/bb-pin-bars')['signals'][0]['strategy'],'bb-pin-bars')
             self.assertEqual(read(store,'/api/pin-bars')['signals'][0]['strategy'],'pin-bars')
-            from cloud_sync import snapshot, batch
-            snapshot(store)
-            records={r['key']:r['payload'] for r in batch(store)['records'] if r['kind']=='summary'}
-            self.assertEqual(records['bb-pin-bars-live']['signals'][0]['strategy'],'bb-pin-bars')
-            self.assertEqual(records['pin-bars-live']['signals'][0]['strategy'],'pin-bars')
             asset=asset|dict(exchange='other')
             bb_pin_bars.scan(store,asset,'4h',candles[:-1],bb_pin_bars.load_rules(),now)
             bb_pin_bars.scan(store,asset,'4h',candles,bb_pin_bars.load_rules(),now,catchup=True)
@@ -89,7 +85,7 @@ class BBPinBarsTests(unittest.TestCase):
             store=Store(Path(folder)/'db');save(store,body)
             self.assertIsNotNone(view(store,strategy='bb-pin-bars')['report'])
             self.assertIsNone(view(store,strategy='pin-bars')['report'])
-            with store.connect() as db:self.assertIsNone(db.execute("SELECT 1 FROM sqlite_master WHERE name='notification_queue'").fetchone())
+            with store.connect() as db:self.assertIsNone(db.execute("SELECT 1 FROM notification_queue LIMIT 1").fetchone())
 
     def test_scanner_opt_in_and_strategy_validation(self):
         candles=bars();asset=dict(id='TEST',provider='csv',enabled=True,timeframes=['4h'],scan_strategies=['bb-pin-bars'])

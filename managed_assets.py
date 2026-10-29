@@ -14,9 +14,9 @@ TOKEN = re.compile(r'[A-Za-z0-9_^=:.!/\-]{1,100}')
 
 
 def initialize(db):
-    db.execute('CREATE TABLE IF NOT EXISTS managed_config(id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, applied_revision INTEGER NOT NULL, payload TEXT NOT NULL)')
-    db.execute('CREATE TABLE IF NOT EXISTS config_history(revision INTEGER PRIMARY KEY, payload TEXT NOT NULL, changed REAL NOT NULL)')
-    db.execute('''CREATE TABLE IF NOT EXISTS candle_cache(feed TEXT, asset TEXT, timeframe TEXT, start INTEGER, end INTEGER, open REAL, high REAL, low REAL, close REAL, PRIMARY KEY(feed,timeframe,start))''')
+    db.require_table('managed_config')
+    db.require_table('config_history')
+    db.require_table('candle_cache')
 
 
 def ensure(store, config):
@@ -32,7 +32,7 @@ def ensure(store, config):
             asset['scan_strategies'].append('rsi-pb')
     with store.connect() as db:
         initialize(db)
-        db.execute('INSERT OR IGNORE INTO managed_config VALUES(1,1,0,?)', (json.dumps(value),))
+        db.execute('INSERT INTO managed_config VALUES(1,1,0,%s) ON CONFLICT DO NOTHING', (json.dumps(value),))
     return get(store)
 
 
@@ -45,12 +45,6 @@ def get(store):
     result=dict(revision=row[0], applied_revision=row[1], config=json.loads(row[2]))
     for asset in result['config']['assets']:
         asset.setdefault('scan_strategies', SCAN_STRATEGIES.copy())
-    with store.connect() as db:
-        if db.execute("SELECT 1 FROM sqlite_master WHERE name='cloud_meta'").fetchone():
-            result['sync']=dict(db.execute("SELECT key,value FROM cloud_meta WHERE key IN ('error','last_sync')"))
-            result['pending_uploads']=db.execute('SELECT count(*) FROM cloud_pending').fetchone()[0]
-            result['conflicts']=db.execute('SELECT count(*) FROM cloud_conflicts').fetchone()[0]
-            result['configuration_conflict']=bool(db.execute("SELECT 1 FROM cloud_conflicts WHERE id='config'").fetchone())
     return result
 
 
@@ -60,7 +54,7 @@ def migrate_rsi_pb(store):
         row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
         if not row or json.loads(row[2]).get('rsi_pb_defaults_applied'):
             return
-        db.execute('BEGIN IMMEDIATE')
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
         row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
         config = json.loads(row[2])
         if config.get('rsi_pb_defaults_applied'):
@@ -71,11 +65,9 @@ def migrate_rsi_pb(store):
                 strategies.append('rsi-pb')
         config['rsi_pb_defaults_applied'] = True
         revision,payload = row[0]+1,json.dumps(config)
-        db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1',(revision,payload))
-        db.execute('INSERT INTO config_history VALUES(?,?,?)',(revision,payload,time.time()))
-        from cloud_sync import initialize as init_sync, enqueue
-        init_sync(db)
-        enqueue(db,'config','current',dict(revision=revision,applied_revision=row[1],config=config))
+        db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1',(revision,payload))
+        db.execute('INSERT INTO config_history VALUES(%s,%s,%s)',(revision,payload,time.time()))
+
 
 
 def validate_asset(asset):
@@ -171,26 +163,12 @@ def change(store, body):
     if not isinstance(body,dict) or type(body.get('revision')) is not int:
         raise ValueError('Expected configuration revision')
     with store.connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
         row=db.execute('SELECT revision,payload FROM managed_config WHERE id=1').fetchone()
         if not row or row[0]!=body['revision']:
             raise LookupError('Assets changed in another session. Reload before saving.')
         config=json.loads(row[1]);assets=config['assets'];results=[]
         old_assets=copy.deepcopy(assets)
-        if body.get('action')=='accept_online':
-            remote=db.execute("SELECT payload FROM cloud_conflicts WHERE id='config'").fetchone()
-            if not remote:raise ValueError('No online configuration conflict')
-            cloud=json.loads(remote[0])
-            for asset in cloud['config']['assets']:validate_asset(asset)
-            from rsi_pb import cancel_changed
-            cancel_changed(db,old_assets,cloud['config'])
-            db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1',(cloud['revision'],json.dumps(cloud['config'])))
-            db.execute("DELETE FROM cloud_pending WHERE kind='config'")
-            db.execute("DELETE FROM cloud_seen WHERE kind='config'")
-            db.execute("DELETE FROM cloud_conflicts WHERE id='config'")
-            db.execute('INSERT OR REPLACE INTO cloud_meta VALUES(?,?)',('config_base',str(cloud['revision'])))
-            db.execute('INSERT OR REPLACE INTO cloud_meta VALUES(?,?)',('error',''))
-            return dict(revision=cloud['revision'],applied_revision=0,config=cloud['config'],results=[dict(ticker='Configuration',status='online version accepted; pending scanner')])
         if body.get('action')=='bulk':
             text=body.get('tickers')
             if not isinstance(text,str) or len(text)>10000:
@@ -229,17 +207,15 @@ def change(store, body):
         from rsi_pb import cancel_changed
         cancel_changed(db,old_assets,config)
         payload=json.dumps(config);revision=row[0]+1
-        db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1',(revision,payload))
-        db.execute('INSERT INTO config_history VALUES(?,?,?)',(revision,payload,time.time()))
-        from cloud_sync import enqueue
+        db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1',(revision,payload))
+        db.execute('INSERT INTO config_history VALUES(%s,%s,%s)',(revision,payload,time.time()))
         applied=db.execute('SELECT applied_revision FROM managed_config WHERE id=1').fetchone()[0]
-        enqueue(db,'config','current',dict(revision=revision,applied_revision=applied,config=config))
     return get(store)|dict(results=results)
 
 
 def effective(store, fallback):
     with store.connect() as db:
-        exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='managed_config'").fetchone()
+        exists=db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='managed_config'").fetchone()
     if not exists:return fallback,None
     try:state=get(store)
     except ValueError:return fallback,None
@@ -250,5 +226,5 @@ def cache_candles(store, asset, timeframe, candles):
     feed=f"{asset['provider']}:{asset.get('exchange') or 'configured'}:{asset.get('symbol') or asset['id']}"
     with store.connect() as db:
         initialize(db)
-        db.executemany('INSERT INTO candle_cache VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(feed,timeframe,start) DO UPDATE SET end=excluded.end,open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close',
+        db.executemany('INSERT INTO candle_cache VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(feed,timeframe,start) DO UPDATE SET "end"=excluded."end",open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close',
             ((feed,asset['id'],timeframe,c.start,c.end,c.open,c.high,c.low,c.close) for c in candles))

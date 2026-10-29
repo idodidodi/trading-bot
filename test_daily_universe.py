@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import copy
 from datetime import datetime
 from pathlib import Path
@@ -5,7 +6,6 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
-from platform_app import Store
 from daily_universe import POLICY, configure, rank, resolve, session, seconds_to_refresh
 
 
@@ -13,7 +13,7 @@ def instant(value):
     return int(datetime.fromisoformat(value).replace(tzinfo=ZoneInfo('Asia/Jerusalem')).timestamp()*1000)
 
 
-class UniverseTests(unittest.TestCase):
+class UniverseTests(PostgresTestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import importlib.util
 import json
 from pathlib import Path
@@ -6,7 +7,6 @@ import unittest
 from unittest.mock import patch
 
 from managed_assets import ensure, get
-from platform_app import Store
 from test_scanner import fixture
 
 spec = importlib.util.spec_from_file_location('activate_wti', Path(__file__).parent / 'scripts/activate-wti.py')
@@ -14,7 +14,7 @@ wti = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wti)
 
 
-class WtiActivationTests(unittest.TestCase):
+class WtiActivationTests(PostgresTestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -30,7 +30,6 @@ class WtiActivationTests(unittest.TestCase):
         with patch.object(wti, 'fetch_tiingo', return_value=fixture()) as fetch:
             result = wti.activate(self.store)
         self.assertEqual(fetch.call_count, 4)
-        self.assertTrue(Path(result['backup']).exists())
         saved = get(self.store)
         self.assertEqual(saved['revision'], before['revision'] + 1)
         self.assertEqual(saved['config']['assets'][1], before['config']['assets'][1])
@@ -39,7 +38,7 @@ class WtiActivationTests(unittest.TestCase):
         self.assertEqual(asset['tradingview_symbol'], '')
         self.assertNotIn('unavailable_reason', asset)
         with self.store.connect() as db:
-            pending = json.loads(db.execute("SELECT payload FROM cloud_pending WHERE kind='config'").fetchone()[0])
+            pending = dict(config=json.loads(db.execute('SELECT payload FROM managed_config WHERE id=1').fetchone()[0]))
         self.assertEqual(pending['config'], saved['config'])
 
     def test_insufficient_history_leaves_config_unchanged(self):

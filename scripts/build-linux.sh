@@ -8,7 +8,7 @@ fi
 python3 -m pip install -r windows-build-requirements.txt
 python3 scripts/build-version.py
 python3 -m PyInstaller --noconfirm --clean --onefile --name FamilyTradingBot-linux-x86_64 \
-  --collect-all tzdata --collect-data certifi \
+  --add-data 'cloud/browser-config.json:cloud' --collect-all psycopg --collect-all psycopg_binary --collect-all psycopg_pool --collect-all tzdata --collect-data certifi \
   --add-data 'web:web' --add-data 'skills:skills' --add-data 'scanner.json:.' \
   --add-data 'stock_universe.json:.' --add-data 'tradingview_template.pine:.' \
   --add-data '.env.example:.' linux_launcher.py

@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import io
 import json
 import os
@@ -11,10 +12,10 @@ from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 
 import connection_tests as tests
-from platform_app import Store, handler_factory, load_rules
+from platform_app import handler_factory, load_rules
 
 
-class ConnectionTests(unittest.TestCase):
+class ConnectionTests(PostgresTestCase):
     def test_manual_telegram_test_sends_in_dry_run_without_using_the_delivery_queue(self):
         with patch.dict(os.environ,{'TELEGRAM_BOT_TOKEN':'private-token','TELEGRAM_CHAT_ID':'123','DRY_RUN':'true'},clear=True),patch('platform_app.send_telegram') as send:
             result=tests.run('telegram',load_rules())
@@ -24,38 +25,21 @@ class ConnectionTests(unittest.TestCase):
             self.assertIn('test message',send.call_args.args[2])
             self.assertIn('Family Trading Bot '+tests.VERSION,send.call_args.args[2])
 
-    def test_missing_credentials_and_remote_errors_are_safe(self):
-        with patch.dict(os.environ,{},clear=True):
-            for action in ('telegram','cloud-demo'):
-                with self.subTest(action=action),self.assertRaises(tests.ConnectionTestError):tests.run(action,{})
-        env={'TELEGRAM_BOT_TOKEN':'private-token','TELEGRAM_CHAT_ID':'123','CLOUD_SYNC_URL':'https://cloud.test/sync','CLOUD_SYNC_TOKEN':'private-cloud-token'}
-        with patch.dict(os.environ,env,clear=True),patch('platform_app.send_telegram',side_effect=RuntimeError('private-token')),patch('connection_tests.urllib.request.urlopen',side_effect=OSError('private-cloud-token')):
-            for action in ('telegram','cloud-demo'):
-                with self.subTest(action=action),self.assertRaises(tests.ConnectionTestError) as caught:tests.run(action,{})
-                self.assertNotIn('private-',str(caught.exception))
-        with self.assertRaises(ValueError):tests.run('unknown',{})
+    def test_database_check_is_read_only_and_does_not_contact_network(self):
+        store=Store()
+        with patch('urllib.request.urlopen') as network:
+            self.assertTrue(tests.run('database',{},store)['ok'])
+        network.assert_not_called()
+        with store.connect() as db:self.assertEqual(db.execute('SELECT count(*) FROM signals').fetchone()[0],0)
 
-    def test_cloud_demo_sends_only_one_labeled_record_and_requires_acknowledgment(self):
-        captured=[]
-        def respond(request,**kwargs):
-            payload=json.loads(request.data);captured.append(payload)
-            self.assertEqual(request.get_header('Authorization'),'Bearer private-cloud-token')
-            return io.BytesIO(json.dumps({'ack':[payload['records'][0]['event_id']]}).encode())
-        with patch.dict(os.environ,{'CLOUD_SYNC_URL':'https://cloud.test/sync','CLOUD_SYNC_TOKEN':'private-cloud-token','DEV_CLOUD_SYNC_ENABLED':'false'},clear=True),patch('connection_tests.urllib.request.urlopen',side_effect=respond):
-            result=tests.run('cloud-demo',load_rules())
-        record=captured[0]['records'][0]
-        self.assertEqual(len(captured[0]['records']),1)
-        self.assertEqual(record['kind'],'live')
-        self.assertTrue(record['payload']['is_demo'])
-        self.assertTrue(record['payload']['signal']['is_demo'])
-        self.assertEqual(record['payload']['signal']['symbol'],'DEMO-CLOUD-SYNC')
-        self.assertEqual(result['id'],record['key'])
-        self.assertNotIn('private-cloud-token',json.dumps(captured))
-        with patch.dict(os.environ,{'CLOUD_SYNC_URL':'https://cloud.test/sync','CLOUD_SYNC_TOKEN':'private-cloud-token'},clear=True),patch('connection_tests.urllib.request.urlopen',return_value=io.BytesIO(b'{"ack":[]}')):
-            with self.assertRaises(tests.ConnectionTestError):tests.run('cloud-demo',{})
+    def test_database_errors_are_sanitized(self):
+        import psycopg
+        with patch('postgres_store.connect',side_effect=psycopg.OperationalError('private-token')):
+            with self.assertRaises(tests.ConnectionTestError) as error:tests.run('database',{})
+        self.assertNotIn('private-token',str(error.exception))
 
 
-class ConnectionEndpointTests(unittest.TestCase):
+class ConnectionEndpointTests(PostgresTestCase):
     def test_tests_are_local_post_only_and_require_same_origin_json(self):
         with tempfile.TemporaryDirectory() as folder:
             store=Store(Path(folder)/'test.sqlite3')

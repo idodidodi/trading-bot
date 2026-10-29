@@ -3,7 +3,6 @@ import json
 from contextlib import closing
 import os
 from pathlib import Path
-import sqlite3
 import sys
 import time
 
@@ -12,7 +11,6 @@ from platform_app import ROOT, Store, load_env, load_rules
 from managed_assets import get, validate_asset
 from tiingo_feed import fetch_tiingo
 from scanner import check_candles, minimum_history
-from cloud_sync import enqueue
 
 
 def activate(store):
@@ -23,7 +21,7 @@ def activate(store):
     candidates = {a['symbol']: a.get('timeframes', config['timeframes']) for a in config['assets']
                   if a.get('market') == 'forex' and a.get('enabled', True) and a['provider'] in ('twelvedata', 'oanda', 'tiingo')}
     with store.connect() as db:
-        row = db.execute('SELECT payload FROM daily_universe ORDER BY session DESC LIMIT 1').fetchone() if db.execute("SELECT 1 FROM sqlite_master WHERE name='daily_universe'").fetchone() else None
+        row = db.execute('SELECT payload FROM daily_universe ORDER BY session DESC LIMIT 1').fetchone() if db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='daily_universe'").fetchone() else None
     if row:
         for item in json.loads(row[0])['selected']['forex']:
             candidates.setdefault(item['symbol'], config['timeframes'])
@@ -43,9 +41,7 @@ def activate(store):
             skipped[symbol] = str(exc)
     if not verified:
         raise ValueError('No configured forex pairs passed Tiingo verification; configuration was not changed')
-    backup = Path(store.path).with_name('signals-before-tiingo-' + str(time.time_ns()) + '.sqlite3')
-    with store.connect() as source, closing(sqlite3.connect(backup)) as destination:
-        source.backup(destination)
+
     moved = []
     for asset in config['assets']:
         if asset.get('market') == 'forex' and asset.get('enabled', True) and asset.get('symbol') in verified and asset['provider'] in ('twelvedata', 'oanda', 'tiingo'):
@@ -58,15 +54,14 @@ def activate(store):
                       source='Kraken 24-hour USD turnover; Tiingo verified forex; Kraken native crypto; Twelve Data remaining feeds')
     config['tiingo_request_spacing_seconds'] = 1
     with store.connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
         revision, applied = db.execute('SELECT revision,applied_revision FROM managed_config WHERE id=1').fetchone()
         if revision != state['revision']:
             raise ValueError('Assets changed during verification; rerun activation with the latest settings')
         revision += 1
         payload = json.dumps(config)
-        db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1', (revision, payload))
-        db.execute('INSERT INTO config_history VALUES(?,?,?)', (revision, payload, time.time()))
-        enqueue(db, 'config', 'current', dict(revision=revision, applied_revision=applied, config=config))
+        db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1', (revision, payload))
+        db.execute('INSERT INTO config_history VALUES(%s,%s,%s)', (revision, payload, time.time()))
     store.log('Tiingo activated', json.dumps(dict(environment=mode, moved=moved, skipped=skipped)))
     return dict(environment=mode, moved=moved, skipped=skipped, revision=revision,
                 note='Restart the local app to load Tiingo credentials and the new routing. Hourly remains opt-in.')
@@ -74,10 +69,7 @@ def activate(store):
 
 if __name__ == '__main__':
     load_env()
-    path = Path(os.environ.get('DATA_DIR', str(ROOT / 'data'))) / 'signals.sqlite3'
-    if not path.exists():
-        raise SystemExit('Start the local app first to initialize its asset configuration')
     try:
-        print(json.dumps(activate(Store(path)), indent=2))
+        print(json.dumps(activate(Store()), indent=2))
     except ValueError as exc:
         raise SystemExit(str(exc)) from None

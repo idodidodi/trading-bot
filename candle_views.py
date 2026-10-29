@@ -4,7 +4,7 @@ import html
 import json
 from pathlib import Path
 from urllib.parse import urlencode
-from finding_feedback import finding_id, latest_report
+from finding_feedback import persisted_id, finding_id, latest_report
 
 
 def link(source, signal):
@@ -19,7 +19,7 @@ def lookup(store, root, source, key):
         else:
             report=latest_report(db,root)
             signals=(s for r in report['results'] for s in r['signals']) if report else []
-        signal=next((s for s in signals if finding_id(source,s)==key),None)
+        signal=next((s for s in signals if persisted_id(db,source,s)==key),None)
     if not signal:raise LookupError('Finding not found')
     return signal
 
@@ -30,8 +30,8 @@ def detail(store, root, source, key, target='pivot2'):
     asset_id=signal['symbol'];tf=signal['timeframe'];center=signal['confirmed_at'] if target=='confirmation' else signal[target]
     rows=[];mapping='';note=''
     with store.connect() as db:
-        cached = db.execute("SELECT 1 FROM sqlite_master WHERE name='backtest_candle_cache'").fetchone()
-        cached = cached and db.execute('SELECT 1 FROM backtest_candle_cache WHERE feed=? AND timeframe=? LIMIT 1', (asset_id, tf)).fetchone()
+        cached = db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='backtest_candle_cache'").fetchone()
+        cached = cached and db.execute('SELECT 1 FROM backtest_candle_cache WHERE feed=%s AND timeframe=%s LIMIT 1', (asset_id, tf)).fetchone()
     if source=='backtest' and not cached:
         path=Path(root)/'data'/'historical-2020'/f'{asset_id}-{tf}.csv'
         # Asset comes from stored evidence; reject path separators to keep file access bounded.
@@ -50,16 +50,16 @@ def detail(store, root, source, key, target='pivot2'):
     else:
         with store.connect() as db:
             table='backtest_candle_cache' if source=='backtest' else 'candle_cache'
-            exists=db.execute("SELECT 1 FROM sqlite_master WHERE name=?",(table,)).fetchone()
+            exists=db.execute('SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=%s',(table,)).fetchone()
             if exists:
-                column='end' if target=='confirmation' else 'start'
-                columns='start,end,open,high,low,close'
-                before=db.execute(f'SELECT {columns} FROM {table} WHERE feed=? AND timeframe=? AND {column}<? ORDER BY start DESC LIMIT 100',(asset_id,tf,center)).fetchall()[::-1]
-                after=db.execute(f'SELECT {columns} FROM {table} WHERE feed=? AND timeframe=? AND {column}>=? ORDER BY start LIMIT 101',(asset_id,tf,center)).fetchall()
+                column='"end"' if target=='confirmation' else 'start'
+                columns='start,"end",open,high,low,close'
+                before=db.execute(f'SELECT {columns} FROM {table} WHERE feed=%s AND timeframe=%s AND {column}<%s ORDER BY start DESC LIMIT 100',(asset_id,tf,center)).fetchall()[::-1]
+                after=db.execute(f'SELECT {columns} FROM {table} WHERE feed=%s AND timeframe=%s AND {column}>=%s ORDER BY start LIMIT 101',(asset_id,tf,center)).fetchall()
                 rows=[dict(zip(('start','end','open','high','low','close'),r)) for r in before+after]
     # User-verified mapping only; never infer a forex/broker feed from a display ticker.
     with store.connect() as db:
-        exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='managed_config'").fetchone()
+        exists=db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='managed_config'").fetchone()
         state=db.execute('SELECT payload FROM managed_config WHERE id=1').fetchone() if exists else None
     if state:
         for a in json.loads(state[0])['assets']:

@@ -5,7 +5,6 @@ import copy
 import json
 import os
 from pathlib import Path
-import sqlite3
 import sys
 import time
 
@@ -16,7 +15,6 @@ from scanner import check_candles, fetch_twelve_data, minimum_history
 from yahoo_feed import fetch_yahoo
 from tiingo_feed import fetch_tiingo
 from kraken_feed import fetch_kraken
-from cloud_sync import enqueue
 
 
 def candidates(config, yahoo_oil=False):
@@ -62,12 +60,8 @@ def activate(store, yahoo_oil=False):
                 raise ValueError(f"{asset['id']} has only {len(bars)} closed {frame} candles; need {required}. Configuration unchanged")
             history[(asset['id'], frame)] = (feed, bars)
             time.sleep(1)
-    backup = Path(store.path).parent/'backups'/f'before-portfolio-feeds-{time.time_ns()}.sqlite3'
-    backup.parent.mkdir(parents=True, exist_ok=True)
-    with store.connect() as source, closing(sqlite3.connect(backup)) as destination:
-        source.backup(destination)
     with store.connect() as db:
-        db.execute('BEGIN IMMEDIATE')
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
         revision, applied, raw = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
         if revision != state['revision']:
             raise ValueError('Assets changed during verification; rerun activation')
@@ -77,25 +71,20 @@ def activate(store, yahoo_oil=False):
         config['assets'].extend(replacements.values())
         revision += 1
         payload = json.dumps(config)
-        db.execute('UPDATE managed_config SET revision=?,payload=? WHERE id=1', (revision, payload))
-        db.execute('INSERT INTO config_history VALUES(?,?,?)', (revision, payload, time.time()))
-        enqueue(db, 'config', 'current', dict(revision=revision, applied_revision=applied, config=config))
+        db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1', (revision, payload))
+        db.execute('INSERT INTO config_history VALUES(%s,%s,%s)', (revision, payload, time.time()))
     for (_, frame), (feed, bars) in history.items():
         cache_candles(store, feed, frame, bars)
-    return dict(revision=revision, backup=str(backup),
+    return dict(revision=revision,
                 candles={a['id']:{f:len(history[(a['id'],f)][1]) for f in a['timeframes']} for a in assets})
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--database', type=Path, required=True)
     parser.add_argument('--yahoo-oil', action='store_true', help='Use Yahoo CL=F futures for USOIL instead of Tiingo')
     args = parser.parse_args()
-    if not args.database.is_file():
-        raise SystemExit('Initialize the scanner database first')
     load_env()
-    os.environ['DATA_DIR'] = str(args.database.resolve().parent)
     try:
-        print(json.dumps(activate(Store(args.database), args.yahoo_oil), indent=2))
+        print(json.dumps(activate(Store(), args.yahoo_oil), indent=2))
     except ValueError as exc:
         raise SystemExit(str(exc)) from None

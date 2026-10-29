@@ -1,4 +1,5 @@
 """Replay historical CSV or Alpaca equity candles; never enqueue live alerts or send Telegram."""
+from postgres_store import RETRYABLE, DatabaseError
 import json
 import os
 import time
@@ -24,7 +25,7 @@ def replay(candles, rules, symbol, timeframe, *, provisional=False, start=START,
                 note='Calendar range checked; trading-session gaps are not verified.')
 
 
-def run_backtest(store, config, rules, *, provisional=False):
+def run_backtest(store, config, rules, *, provisional=False, job_id=None):
     year = int(config.get('year', 2020))
     start = timestamp(f'{year}-01-01T00:00:00Z')
     end = min(timestamp(f'{year+1}-01-01T00:00:00Z'), int(time.time()*1000))
@@ -54,15 +55,22 @@ def run_backtest(store, config, rules, *, provisional=False):
                         row['source'] = dict(provider='Tiingo', feed='forex', alignment='UTC')
                     row.update(replay(bars, rules, feed_id, timeframe, provisional=provisional, start=start, end=end))
                     with store.connect() as db:
-                        db.execute('CREATE TABLE IF NOT EXISTS backtest_candle_cache(feed TEXT,timeframe TEXT,start INTEGER,end INTEGER,open REAL,high REAL,low REAL,close REAL,PRIMARY KEY(feed,timeframe,start))')
-                        db.executemany('INSERT OR REPLACE INTO backtest_candle_cache VALUES(?,?,?,?,?,?,?,?)',
+                        db.require_table('backtest_candle_cache')
+                        db.executemany('INSERT INTO backtest_candle_cache VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(feed,timeframe,start) DO UPDATE SET "end"=excluded."end",open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close',
                             ((feed_id,timeframe,c.start,c.end,c.open,c.high,c.low,c.close) for c in bars))
                     row['note'] += ' ' + '; '.join(bars.notes)
                     results.append(row)
                     continue
                 if asset['provider'] != 'csv':
                     raise ValueError('This asset is unavailable from the selected historical provider')
-                row.update(replay(read_csv(asset, timeframe), rules, asset['id'], timeframe, provisional=provisional, start=start, end=end))
+                from scanner import Candle
+                with store.connect() as db:
+                    stored = db.execute('SELECT start,"end",open,high,low,close FROM backtest_candle_cache WHERE feed=%s AND timeframe=%s ORDER BY start',(asset['id'],timeframe)).fetchall()
+                bars = [Candle(*r) for r in stored] if stored else read_csv(asset,timeframe)
+                if not stored:
+                    with store.connect() as db:
+                        db.executemany('INSERT INTO backtest_candle_cache VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',((asset['id'],timeframe,c.start,c.end,c.open,c.high,c.low,c.close) for c in bars))
+                row.update(replay(bars, rules, asset['id'], timeframe, provisional=provisional, start=start, end=end))
                 csv_path = Path(asset['path'].format(asset=asset['id'], timeframe=timeframe))
                 if not csv_path.is_absolute():
                     csv_path = ROOT / csv_path
@@ -78,13 +86,21 @@ def run_backtest(store, config, rules, *, provisional=False):
                 row.update(status='unavailable', reason=str(exc), signals=[])
             except FileNotFoundError:
                 row.update(status='unavailable', reason='Historical candle CSV missing', signals=[])
+            except (DatabaseError, *RETRYABLE):
+                raise
             except Exception:
                 row.update(status='unavailable', reason='Historical CSV required with valid OHLC and timezone timestamps', signals=[])
             results.append(row)
     report = dict(year=year, start_at=start, end_at=end, rules=rules, results=results)
     with store.connect() as db:
-        db.execute('CREATE TABLE IF NOT EXISTS backtest_runs(id INTEGER PRIMARY KEY, report TEXT)')
-        db.execute('INSERT INTO backtest_runs(report) VALUES(?)', (json.dumps(report),))
+        db.require_table('backtest_runs')
+        db.execute('INSERT INTO backtest_runs(report) VALUES(%s)', (json.dumps(report),))
+        from postgres_store import remember_finding
+        for row in results:
+            for finding in row['signals']:
+                remember_finding(db,'backtest',finding)
+        if job_id:
+            db.execute("UPDATE backtest_jobs SET status='completed',updated=%s WHERE id=%s",(time.time(),job_id))
     store.log('Backtest completed', f'{year} historical signal replay')
     return report
 
@@ -93,4 +109,4 @@ if __name__ == '__main__':
     load_env()
     data = Path(os.environ.get('DATA_DIR', str(ROOT / 'data')))
     data.mkdir(parents=True, exist_ok=True)
-    print(json.dumps(run_backtest(Store(data / 'signals.sqlite3'), load_config(), load_rules()), indent=2))
+    print(json.dumps(run_backtest(Store(), load_config(), load_rules()), indent=2))

@@ -5,7 +5,6 @@ import hashlib
 import os
 from pathlib import Path
 import re
-import sqlite3
 import time
 import urllib.error
 import urllib.parse
@@ -28,16 +27,6 @@ def validate_feed(asset, timeframe):
         raise ValueError('Confirm the exact Tiingo forex feed in Assets')
 
 
-def database():
-    from platform_app import ROOT
-    path = Path(os.environ.get('DATA_DIR', str(ROOT / 'data')))
-    path.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path / 'tiingo-cache.sqlite3', timeout=30)
-    db.execute('CREATE TABLE IF NOT EXISTS requests(at REAL NOT NULL)')
-    db.execute('CREATE TABLE IF NOT EXISTS responses(key TEXT PRIMARY KEY, fetched REAL NOT NULL, payload TEXT NOT NULL)')
-    return db
-
-
 def request_json(symbol, frequency, start, end):
     token = os.environ.get('TIINGO_API_KEY', '').strip()
     if not token or token.lower().startswith('your_'):
@@ -51,45 +40,44 @@ def request_json(symbol, frequency, start, end):
     daily = int(os.environ.get('TIINGO_REQUESTS_PER_DAY', '1000'))
     if hourly <= 0 or daily <= 0:
         raise ValueError('Tiingo request budgets must be positive')
-    db = database()
-    try:
-        db.execute('BEGIN IMMEDIATE')
-        cached = db.execute('SELECT fetched,payload FROM responses WHERE key=?', (key,)).fetchone()
+    from postgres_store import connect
+    # Short serialized reservation, committed BEFORE contacting Tiingo. Quota
+    # reservations survive provider errors/restarts and cover every worker.
+    with connect() as db:
+        db.execute('SELECT pg_advisory_xact_lock(714269003)')
+        now = db.execute('SELECT extract(epoch FROM clock_timestamp())::float8').fetchone()[0]
+        cached = db.execute('SELECT fetched,payload FROM tiingo_responses WHERE key=%s', (key,)).fetchone()
         if cached and now-cached[0] < 300:
             return json.loads(cached[1])
-        db.execute('DELETE FROM requests WHERE at<?', (now-86400,))
-        hour_count = db.execute('SELECT count(*) FROM requests WHERE at>?', (now-3600,)).fetchone()[0]
-        day_count = db.execute('SELECT count(*) FROM requests').fetchone()[0]
+        db.execute('DELETE FROM tiingo_requests WHERE at<%s', (now-86400,))
+        hour_count, day_count = db.execute('SELECT count(*) FILTER (WHERE at>%s),count(*) FROM tiingo_requests', (now-3600,)).fetchone()
         if hour_count >= hourly or day_count >= daily:
-            raise ValueError('Tiingo local hourly/daily request budget reached; retry later')
-        db.execute('INSERT INTO requests VALUES(?)', (now,))
-        db.commit()
-        params = urllib.parse.urlencode(dict(startDate=start, endDate=end, resampleFreq=frequency))
-        request = urllib.request.Request('https://api.tiingo.com/tiingo/fx/' + symbol.replace('/', '').lower() + '/prices?' + params,
-                                         headers={'Authorization': 'Token ' + token, 'Accept': 'application/json'})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                data = json.load(response)
-        except urllib.error.HTTPError as exc:
-            code = exc.code
-            # Read only to classify a provider-defined auth error; never log its body.
-            body = exc.read(65536).decode(errors='replace').lower()
-            exc.close()
-            reason = ('Tiingo API token is invalid' if 'invalid' in body and 'token' in body else
-                      {401: 'Tiingo API token is invalid', 403: 'Tiingo account lacks access to this forex feed',
-                       404: 'Tiingo exact forex pair is unavailable', 429: 'Tiingo quota reached; retry later'}.get(code,
-                        'Tiingo data request failed; check pair, access and timeframe'))
-            raise ValueError(reason) from None
-        except (OSError, ValueError):
-            raise ValueError('Tiingo connection or JSON response failed; retry later') from None
-        if not isinstance(data, list):
-            raise ValueError('Tiingo returned an invalid candle response')
-        db.execute('INSERT OR REPLACE INTO responses VALUES(?,?,?)', (key,now,json.dumps(data)))
-        db.execute('DELETE FROM responses WHERE fetched<?', (now-86400,))
-        db.commit()
-        return data
-    finally:
-        db.close()
+            raise ValueError('Tiingo shared hourly/daily request budget reached; retry later')
+        db.execute('INSERT INTO tiingo_requests VALUES(%s)', (now,))
+    params = urllib.parse.urlencode(dict(startDate=start, endDate=end, resampleFreq=frequency))
+    request = urllib.request.Request('https://api.tiingo.com/tiingo/fx/' + symbol.replace('/', '').lower() + '/prices?' + params,
+                                     headers={'Authorization': 'Token ' + token, 'Accept': 'application/json'})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.load(response)
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+        # Read only to classify a provider-defined auth error; never log its body.
+        body = exc.read(65536).decode(errors='replace').lower()
+        exc.close()
+        reason = ('Tiingo API token is invalid' if 'invalid' in body and 'token' in body else
+                  {401: 'Tiingo API token is invalid', 403: 'Tiingo account lacks access to this forex feed',
+                   404: 'Tiingo exact forex pair is unavailable', 429: 'Tiingo quota reached; retry later'}.get(code,
+                    'Tiingo data request failed; check pair, access and timeframe'))
+        raise ValueError(reason) from None
+    except (OSError, ValueError):
+        raise ValueError('Tiingo connection or JSON response failed; retry later') from None
+    if not isinstance(data, list):
+        raise ValueError('Tiingo returned an invalid candle response')
+    with connect() as db:
+        db.execute('INSERT INTO tiingo_responses VALUES(%s,%s,%s) ON CONFLICT(key) DO UPDATE SET fetched=excluded.fetched,payload=excluded.payload', (key,now,json.dumps(data)))
+        db.execute('DELETE FROM tiingo_responses WHERE fetched<%s', (now-86400,))
+    return data
 
 
 def aggregate_daily(bars, timeframe, now):

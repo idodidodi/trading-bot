@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import contextlib
 import io
 import json
@@ -12,7 +13,7 @@ from telegram_setup import main
 from telegram_formatting import presentation, utf16_length
 
 
-class TelegramTests(unittest.TestCase):
+class TelegramTests(PostgresTestCase):
     def test_presentation_preserves_content_for_all_message_families(self):
         samples = [
             'Good morning, traders! ☀️\n\nMorning market prices · 20 Oct 2026 10:30 (Israel time)\n\n'

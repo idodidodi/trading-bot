@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import hashlib
 import io
 import os
@@ -13,15 +14,15 @@ import linux_update as updater
 import windows_update as updates
 
 
-class LinuxStandaloneTests(unittest.TestCase):
+class LinuxStandaloneTests(PostgresTestCase):
     @unittest.skipUnless(os.name=='posix','XDG absolute paths use POSIX semantics')
     def test_standard_secrets_location_and_custom_path_validation(self):
         with patch.dict(os.environ,{},clear=True):
-            self.assertEqual(launcher.settings_path(),Path.home()/'.config/FamilyTradingBot/.env')
+            self.assertEqual(launcher.settings_path(),Path.home()/'.config/FamilyTradingBotPostgres/.env')
         with patch.dict(os.environ,{'XDG_CONFIG_HOME':'relative'},clear=True):
-            self.assertEqual(launcher.settings_path(),Path.home()/'.config/FamilyTradingBot/.env')
+            self.assertEqual(launcher.settings_path(),Path.home()/'.config/FamilyTradingBotPostgres/.env')
         with patch.dict(os.environ,{'XDG_CONFIG_HOME':'/tmp/config with spaces'},clear=True):
-            self.assertEqual(launcher.settings_path(),Path('/tmp/config with spaces/FamilyTradingBot/.env'))
+            self.assertEqual(launcher.settings_path(),Path('/tmp/config with spaces/FamilyTradingBotPostgres/.env'))
         with patch.dict(os.environ,{'TRADING_BOT_ENV_FILE':'relative.env'},clear=True):
             with self.assertRaisesRegex(ValueError,'absolute'):launcher.settings_path()
 
@@ -70,15 +71,15 @@ class LinuxStandaloneTests(unittest.TestCase):
     @unittest.skipUnless(os.name=='posix','Linux paths and loader variables use POSIX semantics')
     def test_persistent_root_and_native_environment(self):
         with patch.dict(os.environ,{'XDG_DATA_HOME':'/tmp/family linux','LD_LIBRARY_PATH':'/bundle','LD_LIBRARY_PATH_ORIG':'/system'}):
-            self.assertEqual(launcher.app_root(),Path('/tmp/family linux/FamilyTradingBot'))
+            self.assertEqual(launcher.app_root(),Path('/tmp/family linux/FamilyTradingBotPostgres'))
             self.assertEqual(launcher.external_environment()['LD_LIBRARY_PATH'],'/system')
         with patch.dict(os.environ,{'XDG_DATA_HOME':'relative'},clear=True):
-            self.assertEqual(launcher.app_root(),Path.home()/'.local/share/FamilyTradingBot')
+            self.assertEqual(launcher.app_root(),Path.home()/'.local/share/FamilyTradingBotPostgres')
             self.assertNotIn('LD_LIBRARY_PATH',launcher.external_environment())
 
     def test_linux_support_requires_a_frozen_x86_64_app(self):
         with patch('sys.platform','linux'),patch('sys.frozen',True,create=True),patch('platform.machine',return_value='x86_64'):
-            self.assertTrue(updates.status()['supported'])
+            self.assertFalse(updates.status()['supported'])
             self.assertEqual(updates.status()['platform'],'Linux')
             with patch('platform.machine',return_value='aarch64'):self.assertFalse(updates.supported())
 
@@ -102,28 +103,9 @@ class LinuxStandaloneTests(unittest.TestCase):
             with patch('windows_update.get_json',return_value=manifest),self.assertRaisesRegex(ValueError,'Untrusted'):
                 updater.download_release(root,release)
 
-    def test_installer_is_detached_before_shutdown_and_preserves_launch_settings(self):
-        with tempfile.TemporaryDirectory() as folder:
-            staged=Path(folder)/'FamilyTradingBot.new'
-            staged.write_bytes(b'verified binary')
-            order=[]
-            env={'PYINSTALLER_RESET_ENVIRONMENT':'1','PAPER_TRADING_ENABLED':'false',
-                 'TRADING_BOT_ENV_FILE':'/external/settings.env','DATA_DIR':'/external/data'}
-            with patch('linux_launcher.external_environment',return_value=env), \
-                 patch('linux_update.subprocess.Popen',side_effect=lambda *args,**kwargs:order.append('installer')) as spawn:
-                updater.install(staged,lambda:order.append('shutdown'))
-            self.assertEqual(order,['installer','shutdown'])
-            self.assertTrue(spawn.call_args.kwargs['start_new_session'])
-            self.assertTrue(spawn.call_args.kwargs['close_fds'])
-            self.assertEqual(spawn.call_args.kwargs['stdin'],subprocess.DEVNULL)
-            self.assertEqual(spawn.call_args.kwargs['stderr'],subprocess.STDOUT)
-            self.assertTrue((staged.parent/'update.log').is_file())
-            self.assertEqual(spawn.call_args.kwargs['env'],env)
-            command=spawn.call_args.args[0]
-            self.assertEqual(command[2],str(os.getpid()))
-            self.assertEqual(command[3],sys.executable)
-            self.assertEqual(command[4],str(staged))
-            self.assertEqual(command[5],hashlib.sha256(staged.read_bytes()).hexdigest())
+    def test_migration_installer_cannot_update_or_restart_itself(self):
+        with self.assertRaises(RuntimeError):
+            updater.install(Path('/tmp/unused'),lambda: self.fail('must not restart'))
 
     def test_verbose_logs_retain_stdout_stderr_and_terminal_echo(self):
         with tempfile.TemporaryDirectory() as folder,patch.dict(os.environ,{},clear=True):

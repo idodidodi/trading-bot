@@ -57,12 +57,12 @@ def both(signal, candles):
 
 
 def initialize(db):
-    db.execute('CREATE TABLE IF NOT EXISTS finding_followup(finding_id TEXT PRIMARY KEY, results TEXT NOT NULL, calculated_at REAL NOT NULL)')
+    db.require_table('finding_followup')
 
 
 def stored(db, key):
     initialize(db)
-    row = db.execute('SELECT results FROM finding_followup WHERE finding_id=?', (key,)).fetchone()
+    row = db.execute('SELECT results FROM finding_followup WHERE finding_id=%s', (key,)).fetchone()
     return json.loads(row[0]) if row else None
 
 
@@ -74,7 +74,7 @@ def run(store, root, source, key, mode='recovery'):
         raise ValueError('Invalid follow-up window')
     signal = lookup(store, root, source, key)
     with store.connect() as db:
-        state = db.execute('SELECT status FROM finding_state WHERE finding_id=?', (key,)).fetchone()
+        state = db.execute('SELECT status FROM finding_state WHERE finding_id=%s', (key,)).fetchone()
         if state and state[0] == 'deleted':
             raise LookupError('Finding not found')
     if source == 'backtest':
@@ -85,8 +85,8 @@ def run(store, root, source, key, mode='recovery'):
                 return dict(signal=signal, followup=row['followups'][key][mode])
     table = 'backtest_candle_cache' if source == 'backtest' else 'candle_cache'
     with store.connect() as db:
-        exists = db.execute('SELECT 1 FROM sqlite_master WHERE name=?', (table,)).fetchone()
-        rows = db.execute(f'SELECT start,end,open,high,low,close FROM {table} WHERE feed=? AND timeframe=? AND start>=? ORDER BY start',
+        exists = db.execute('SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=%s', (table,)).fetchone()
+        rows = db.execute(f'SELECT start,"end",open,high,low,close FROM {table} WHERE feed=%s AND timeframe=%s AND start>=%s ORDER BY start',
                           (signal['symbol'], signal['timeframe'], signal['pivot2'])).fetchall() if exists else []
     bars = [Candle(*r) for r in rows]
     if source == 'backtest' and not bars:
@@ -101,5 +101,5 @@ def run(store, root, source, key, mode='recovery'):
     results = both(signal, check_candles(bars, cutoff))
     with store.connect() as db:
         initialize(db)
-        db.execute('INSERT OR REPLACE INTO finding_followup VALUES(?,?,?)', (key, json.dumps(results), time.time()))
+        db.execute('INSERT INTO finding_followup VALUES(%s,%s,%s) ON CONFLICT(finding_id) DO UPDATE SET results=excluded.results,calculated_at=excluded.calculated_at', (key, json.dumps(results), time.time()))
     return dict(signal=signal, followup=results[mode])

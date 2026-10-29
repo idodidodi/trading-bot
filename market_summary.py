@@ -118,10 +118,10 @@ def enqueue_due(store, now):
     key = 'market-summary:' + day
     with store.connect() as db:
         initialize(db)
-        if db.execute('SELECT 1 FROM notification_queue WHERE id=?', (key,)).fetchone():
+        if db.execute('SELECT 1 FROM notification_queue WHERE id=%s', (key,)).fetchone():
             return False
         prior = db.execute("""SELECT id,text FROM notification_queue
-            WHERE id LIKE 'market-summary:____-__-__' AND id<?
+            WHERE id LIKE 'market-summary:____-__-__' AND id<%s
               AND status='sent' ORDER BY id DESC LIMIT 1""", (key,)).fetchone()
     previous = dict(day=prior[0].split(':',1)[1],text=prior[1]) if prior else None
     text = snapshot(now, previous)
@@ -130,7 +130,7 @@ def enqueue_due(store, now):
         return False
     with store.connect() as db:
         initialize(db)
-        inserted = db.execute('INSERT OR IGNORE INTO notification_queue(id,text) VALUES(?,?)',
+        inserted = db.execute('INSERT INTO notification_queue(id,text) VALUES(%s,%s) ON CONFLICT DO NOTHING',
                               (key, text)).rowcount == 1
     return inserted
 

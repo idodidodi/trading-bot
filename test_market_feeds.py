@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import copy
 import importlib.util
 from pathlib import Path
@@ -7,7 +8,6 @@ from unittest.mock import patch
 
 from managed_assets import ensure, get
 from market_feeds import candidates, merge, verify
-from platform_app import Store
 from scanner import prepare_store
 from test_scanner import fixture
 
@@ -15,7 +15,7 @@ spec = importlib.util.spec_from_file_location('activate_markets', Path(__file__)
 activation = importlib.util.module_from_spec(spec); spec.loader.exec_module(activation)
 
 
-class MarketFeedsTests(unittest.TestCase):
+class MarketFeedsTests(PostgresTestCase):
     def config(self):
         return dict(timeframes=['monthly','weekly','daily','4h'], assets=[
             dict(id='SPX',provider='csv',enabled=False,timeframes=['daily','4h','1h'],

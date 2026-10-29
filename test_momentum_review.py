@@ -1,9 +1,10 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import unittest
 
 from momentum_review import group_metrics, paper_metrics
 
 
-class MomentumReviewTests(unittest.TestCase):
+class MomentumReviewTests(PostgresTestCase):
     def test_replay_metrics_are_separated_by_market_and_version(self):
         signals = [
             {'market': 'stock', 'version': 'v1', 'outcome': {'status': 'target', 'net_pct': 2.0}},

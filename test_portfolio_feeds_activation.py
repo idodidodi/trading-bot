@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import importlib.util
 import json
 from pathlib import Path
@@ -6,7 +7,6 @@ import unittest
 from unittest.mock import patch
 
 from managed_assets import ensure, get
-from platform_app import Store
 from scanner import prepare_store
 from test_scanner import fixture
 
@@ -14,7 +14,7 @@ spec=importlib.util.spec_from_file_location('portfolio_feeds',Path(__file__).par
 feeds=importlib.util.module_from_spec(spec);spec.loader.exec_module(feeds)
 
 
-class PortfolioFeedsTests(unittest.TestCase):
+class PortfolioFeedsTests(PostgresTestCase):
     def test_candidates_preserve_oil_and_other_assets_and_explicit_oil_opt_in(self):
         config=dict(assets=[dict(id='ES',provider='csv',enabled=False,timeframes=['daily']),
                             dict(id='USOIL',provider='tiingo',symbol='USOIL/USD',timeframes=['daily'])])
@@ -42,7 +42,6 @@ class PortfolioFeedsTests(unittest.TestCase):
                  patch.object(feeds,'fetch_twelve_data',return_value=fixture()) as twelve:
                 clock.time.return_value=1792750000;clock.time_ns.return_value=1792750000000000000
                 result=feeds.activate(store)
-            self.assertTrue(Path(result['backup']).exists())
             assets={a['id']:a for a in get(store)['config']['assets']}
             self.assertEqual(assets['USOIL'],before['config']['assets'][1])
             self.assertEqual(assets['XAUUSD']['symbol'],'XAU/USD')

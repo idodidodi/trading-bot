@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import io
 import json
 from dataclasses import replace
@@ -18,7 +19,7 @@ def ms(value):
     return int(datetime.fromisoformat(value).timestamp()*1000)
 
 
-class FamilyUpgradeTests(unittest.TestCase):
+class FamilyUpgradeTests(PostgresTestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.path=Path(self.tmp.name)/'state.db'
@@ -68,7 +69,7 @@ class FamilyUpgradeTests(unittest.TestCase):
     def test_catchup_request_survives_another_database_writer(self):
         command=request(self.store)
         with self.store.connect() as busy:
-            busy.execute('BEGIN IMMEDIATE')
+            busy.execute('SELECT id FROM scanner_commands FOR UPDATE')
             self.assertIsNone(claim(self.store))
         self.assertEqual(claim(self.store),command['id'])
 
@@ -100,7 +101,7 @@ class FamilyUpgradeTests(unittest.TestCase):
         self.assertNotIn('USD/CNY',[r['symbol'] for r in ranked['forex']])
 
 
-class WindowsUpdateTests(unittest.TestCase):
+class WindowsUpdateTests(PostgresTestCase):
     def test_update_rejects_downgrades_untrusted_urls_and_checksum_mismatch(self):
         import windows_update as u
         self.assertLess(u.version_parts('v1.0.9'),u.version_parts('v1.1.0'))

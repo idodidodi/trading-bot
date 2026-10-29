@@ -1,3 +1,4 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import json
 import csv
 from dataclasses import replace
@@ -8,7 +9,7 @@ import unittest
 from unittest.mock import patch, Mock
 import urllib.error
 
-from platform_app import Store, load_rules
+from platform_app import load_rules
 from scanner import Candle, check_candles, detect, indicators, prepare_store, scan_once, fetch_twelve_data, scanner_worker, normalize_provider_candles, usable_provider_history
 
 
@@ -22,7 +23,7 @@ def fixture():
     return bars
 
 
-class EngineTests(unittest.TestCase):
+class EngineTests(PostgresTestCase):
     def test_index_and_futures_signals_survive_validation_after_baseline(self):
         # Feed activation alone did not exercise signal validation: ^ and =
         # were rejected only when a new divergence was actually found.
@@ -36,6 +37,8 @@ class EngineTests(unittest.TestCase):
                 for i, c in enumerate(bars)]
         for ticker, provider, exchange, symbol in feeds:
             with self.subTest(ticker=ticker), tempfile.TemporaryDirectory() as folder:
+                from test_postgres_support import reset
+                reset()
                 store = Store(Path(folder) / 'db.sqlite3'); prepare_store(store)
                 asset = dict(id=ticker, provider=provider, exchange=exchange, symbol=symbol,
                              market='index' if ticker in ('SPX', 'DAX') else 'futures',

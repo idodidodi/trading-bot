@@ -302,9 +302,9 @@ async function loadUpdateControls(actions){try{const value=await request('/api/u
 function connectionTestControls(panel){
  if(online)return;
  const section=node('section'),result=node('p'),actions=node('div'),buttons=[];
- section.append(node('h3','Connection tests'),node('p','Send a Telegram test message or save one DEMO-CLOUD-SYNC finding in the cloud. These manual tests run even when automatic delivery or sync is disabled.'));
+ section.append(node('h3','Connection tests'),node('p','Send a Telegram test message or check the Postgres connection without writing data.'));
  result.setAttribute('role','status');result.setAttribute('aria-live','polite');
- for(const [action,label] of [['telegram','Test Telegram'],['cloud-demo','Sync demo signal to cloud']]){
+ for(const [action,label] of [['telegram','Test Telegram'],['database','Test database connection']]){
   const control=button(label,async()=>{
    for(const item of buttons)item.disabled=true;
    result.className='';result.textContent=action==='telegram'?'Sending test message…':'Syncing demo signal…';
@@ -323,7 +323,7 @@ async function developmentSettingsControls(panel,isCurrent){
   const value=await request('/api/local-settings');if(!isCurrent())return;
   const paper=node('section'),paperResult=node('p'),paperRow=node('label'),paperInput=node('input');paper.className='development-settings';paperInput.type='checkbox';paperInput.checked=value.paper_trading_enabled;paperInput.disabled=!value.paper_trading_editable;
   paperRow.append(paperInput,document.createTextNode(' Enable Alpaca paper trading'));
-  paper.append(node('h3','Paper trading'),paperRow,node('p',value.paper_trading_editable?'Saved on this computer and applied without restarting. Disabling stops local automation; existing simulated orders and positions remain at Alpaca. An in-progress cycle may finish.':'Paper trading is disabled in development. Configure this setting in the local production app.'));
+  paper.append(node('h3','Paper trading'),paperRow,node('p',value.paper_trading_editable?'Saved for this installation and applied without restarting. Disabling stops local automation; existing simulated orders and positions remain at Alpaca. An in-progress cycle may finish.':'Paper trading is disabled in development. Configure this setting in the local production app.'));
   if(value.paper_trading_editable){
    const savePaper=button('Save paper trading setting',async()=>{
     savePaper.disabled=true;paperResult.textContent='Saving…';paperResult.className='';
@@ -334,9 +334,9 @@ async function developmentSettingsControls(panel,isCurrent){
    paperResult.setAttribute('role','status');paper.append(savePaper,paperResult);
   }
   panel.append(paper);if(!value.editable)return;panel.append(section);
-  section.append(node('h3','Development overrides'),node('p','Use while production is stopped. Saved on this computer and applied to new deliveries and sync requests without restarting. An in-progress request may finish.'));
+  section.append(node('h3','Development overrides'),node('p','Use while production is stopped. Saved for this installation and applied to new deliveries without restarting. An in-progress request may finish.'));
   const inputs={};
-  for(const [key,label] of [['telegram_enabled','Send Telegram alerts from development'],['cloud_sync_enabled','Sync development data to cloud']]){
+  for(const [key,label] of [['telegram_enabled','Send Telegram alerts from development']]){
    const row=node('label'),input=node('input');input.type='checkbox';input.checked=value[key];inputs[key]=input;row.append(input,document.createTextNode(' '+label));section.append(row);
   }
   const save=button('Save development settings',async()=>{
@@ -384,7 +384,7 @@ async function openVersions(){
   if(id!==versionRequest||!dialog.open)return;
   const local=value.local||{},github=value.github||{},remote=value.online_ui||{};
   panel.replaceChildren(node('p',`Environment: ${value.environment}`));
-  if(!online){panel.append(node('p',value.environment==='prod'?'Production activity logs enabled.':'Development uses separate data; persistent activity logging and paper orders disabled.'));panel.append(node('p',`Telegram delivery: ${value.telegram_enabled?'enabled':'disabled (dry run)'}.`));panel.append(node('p',`Cloud sync: ${value.cloud_sync_enabled?'enabled (requires configured connection)':'disabled'}.`));}
+  if(!online){panel.append(node('p',value.environment==='prod'?'Production activity logs enabled.':'Development uses separate data; persistent activity logging and paper orders disabled.'));panel.append(node('p',`Telegram delivery: ${value.telegram_enabled?'enabled':'disabled (dry run)'}.`));panel.append(node('p','Storage: shared Postgres.'));}
   await telegramRoutingControls(panel,()=>id===versionRequest&&dialog.open);
   await developmentSettingsControls(panel,()=>id===versionRequest&&dialog.open);
   if(id!==versionRequest||!dialog.open)return;

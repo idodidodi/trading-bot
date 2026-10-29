@@ -1,20 +1,20 @@
+from test_postgres_support import TestStore as Store, PostgresTestCase
 import copy
 import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from platform_app import Store,load_rules
+from platform_app import load_rules
 from managed_assets import ensure,change,get
 from scanner import prepare_store,scan_once
-from cloud_sync import snapshot,batch,apply,initialize
 from candle_views import detail
 from finding_feedback import finding_id
 from test_scanner import fixture
 from test_platform import example
 
 
-class AssetsTests(unittest.TestCase):
+class AssetsTests(PostgresTestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.store=Store(self.root/'db.sqlite3')
         self.config={'assets':[{'id':'EURUSD','provider':'csv','path':str(self.root/'missing.csv')}],'timeframes':['monthly','weekly','daily','4h']}
@@ -51,15 +51,14 @@ class AssetsTests(unittest.TestCase):
             asset['scan_strategies']=choices
             saved=change(self.store,dict(action='save',revision=get(self.store)['revision'],asset=asset))
             self.assertEqual(saved['config']['assets'][0]['scan_strategies'],choices)
-            config_records=[r for r in batch(self.store)['records'] if r['kind']=='config']
-            self.assertEqual(config_records[-1]['payload']['config']['assets'][0]['scan_strategies'],choices)
+            self.assertEqual(get(self.store)['config']['assets'][0]['scan_strategies'],choices)
         for bad in ([],['unknown'],['rsi','rsi'],'rsi',None,[{}]):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 validate_asset(asset | dict(scan_strategies=bad))
         legacy=dict(asset);legacy.pop('scan_strategies')
         validate_asset(legacy)
         with self.store.connect() as db:
-            db.execute('UPDATE managed_config SET payload=? WHERE id=1',(json.dumps(dict(self.config,assets=[legacy])),))
+            db.execute('UPDATE managed_config SET payload=%s WHERE id=1',(json.dumps(dict(self.config,assets=[legacy])),))
         self.assertEqual(get(self.store)['config']['assets'][0]['scan_strategies'],['rsi','pin-bars','rsi-pb'])
 
     def test_strategy_selection_gates_scanners_and_invalidates_schedule(self):
@@ -106,50 +105,3 @@ class AssetsTests(unittest.TestCase):
         data=detail(self.store,self.root,'live',finding_id('live',signal),'confirmation')
         self.assertTrue(any(c['end']==signal['confirmed_at'] for c in data['candles']))
         self.assertIsNone(data['tradingview_url'])
-    def test_cloud_ack_crash_retry_and_remote_configuration(self):
-        with patch('cloud_sync.ROOT',self.root):snapshot(self.store)
-        outgoing=batch(self.store);self.assertLessEqual(len(outgoing['records']),100)
-        self.assertEqual(batch(self.store),outgoing) # Unacknowledged batch survives a retry.
-        cloud=copy.deepcopy(get(self.store));cloud['revision']=2;cloud['config']['assets'][0]['timeframes']=['weekly']
-        apply(self.store,{'ack':[r['event_id'] for r in outgoing['records']],'config':cloud,'feedback':[]})
-        self.assertEqual(get(self.store)['config']['assets'][0]['timeframes'],['weekly'])
-        with patch('cloud_sync.ROOT',self.root):snapshot(self.store)
-        self.assertFalse(any(r['kind']=='config' for r in batch(self.store)['records']))
-    def test_synced_backtest_report_identifies_its_findings(self):
-        signal={'symbol':'BTCUSD','timeframe':'4h','direction':'bearish','pivot1':1000,'pivot2':2000,
-                'confirmed_at':3000,'price1':10,'price2':11,'rsi1':80,'rsi2':70,'band1':10,'band2':11,
-                'band_slope_pct':0.1,'rules':{'price_source':'close'}}
-        report={'year':2026,'start_at':1,'end_at':5000,'rules':{'price_source':'close'},'sources':['alpaca'],
-                'results':[{'asset':'BTCUSD','timeframe':'4h','status':'replayed','signals':[signal]}]}
-        with self.store.connect() as db:
-            db.execute('CREATE TABLE backtest_runs(id INTEGER PRIMARY KEY,report TEXT)')
-            db.execute('INSERT INTO backtest_runs(report) VALUES(?)',(json.dumps(report),))
-            second_signal=signal|{'pivot1':4000,'pivot2':5000,'confirmed_at':6000}
-            second_report=report|{'generated_at':2,'results':[{'asset':'BTCUSD','timeframe':'4h','status':'replayed','signals':[second_signal]}]}
-            db.execute('INSERT INTO backtest_runs(report) VALUES(?)',(json.dumps(second_report),))
-        with patch('cloud_sync.ROOT',self.root):snapshot(self.store)
-        records=batch(self.store)['records']
-        runs=[row['payload'] for row in records if row['kind']=='backtest_run']
-        self.assertEqual(len(runs),2)
-        by_generation={run['generated_at']:run for run in runs}
-        self.assertEqual(by_generation[5]['year'],2026)
-        self.assertEqual(by_generation[5]['summary'][0]['signals'],1)
-        self.assertEqual(by_generation[5]['finding_ids'],[finding_id('backtest',signal)])
-        self.assertEqual(by_generation[2]['finding_ids'],[finding_id('backtest',second_signal)])
-    def test_remote_configuration_cannot_replace_pending_local_edit(self):
-        with patch('cloud_sync.ROOT',self.root):snapshot(self.store)
-        cloud=copy.deepcopy(get(self.store));cloud['revision']=2;cloud['config']['assets'][0]['timeframes']=['weekly']
-        apply(self.store,{'ack':[],'config':cloud,'feedback':[],'conflicts':['config']})
-        self.assertEqual(get(self.store)['revision'],1)
-        accepted=change(self.store,{'action':'accept_online','revision':1})
-        self.assertEqual(accepted['config']['assets'][0]['timeframes'],['weekly'])
-
-    def test_edit_during_inflight_upload_is_not_overwritten(self):
-        with patch('cloud_sync.ROOT',self.root):snapshot(self.store)
-        outgoing=batch(self.store)
-        remote=copy.deepcopy(get(self.store))
-        asset=get(self.store)['config']['assets'][0]
-        asset['timeframes']=['4h']
-        change(self.store,{'action':'save','asset':asset,'revision':1})
-        apply(self.store,{'ack':[r['event_id'] for r in outgoing['records']],'config':remote,'feedback':[]})
-        self.assertEqual(get(self.store)['config']['assets'][0]['timeframes'],['4h'])
