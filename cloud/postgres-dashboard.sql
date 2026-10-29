@@ -132,6 +132,7 @@ DECLARE
  page bigint:=coalesce(substring(q FROM 'page=([^&]+)')::bigint,0);
  key text;sig jsonb;current_value jsonb;expected bigint;result jsonb;items jsonb;
  mode text;bars jsonb;windows jsonb;row_value record;prefix text;total_count bigint;
+ target text;center bigint;cache_table text;time_column text;
  sort_field text:=coalesce(substring(q FROM 'sort=([^&]+)'),'confirmed_at');sort_order text:=coalesce(substring(q FROM 'order=([^&]+)'),'asc');
 BEGIN
  IF NOT public.dashboard_can_view(inst) OR NOT EXISTS(SELECT 1 FROM runtime_control WHERE installation=inst AND enabled) THEN RAISE EXCEPTION 'Not authorized';END IF;
@@ -205,7 +206,25 @@ BEGIN
    SELECT jsonb_build_object('occurred',occurred,'event',event,'details',details) value FROM activity_log
    WHERE operation NOT LIKE '%filter=errors%' OR (event||' '||details) ~* 'error|failed|unavailable|insufficient|retry' ORDER BY id DESC LIMIT 200) v),'[]'));
  ELSIF path='/api/candles' THEN
-  RETURN bot_runtime.asset_api(inst,operation,input);
+  key:=substring(q FROM 'finding=([^&]+)');target:=coalesce(substring(q FROM 'target=([^&]+)'),'pivot2');
+  IF source NOT IN ('live','backtest') OR target NOT IN ('pivot1','pivot2','confirmation') THEN RAISE EXCEPTION 'Invalid candle target or source';END IF;
+  SELECT signal INTO sig FROM runtime_findings WHERE runtime_findings.source=source AND id=key;
+  IF sig IS NULL THEN SELECT payload::jsonb->'signal' INTO sig FROM legacy_findings WHERE legacy_findings.source=source AND id=key;END IF;
+  IF sig IS NULL OR EXISTS(SELECT 1 FROM finding_state WHERE finding_id=key AND status='deleted') THEN RAISE EXCEPTION 'Finding not found';END IF;
+  center:=(sig->>CASE WHEN target='confirmation' THEN 'confirmed_at' ELSE target END)::bigint;
+  cache_table:=CASE WHEN source='live' THEN 'candle_cache' ELSE 'backtest_candle_cache' END;
+  time_column:=CASE WHEN target='confirmation' THEN 'end' ELSE 'start' END;
+  -- Filter typed, indexed cache columns BEFORE building JSON. Filtering the
+  -- runtime_records JSON projection scans and serializes unrelated histories.
+  EXECUTE format($query$
+   SELECT coalesce(jsonb_agg(to_jsonb(c)-'feed'||jsonb_build_object('source',$4,'symbol',c.feed) ORDER BY c.start),'[]')
+   FROM (
+    (SELECT * FROM bot_runtime.%1$I WHERE feed=$1 AND timeframe=$2 AND %2$I<$3 ORDER BY start DESC LIMIT 100)
+    UNION ALL
+    (SELECT * FROM bot_runtime.%1$I WHERE feed=$1 AND timeframe=$2 AND %2$I>=$3 ORDER BY start LIMIT 101)
+   ) c
+  $query$,cache_table,time_column) INTO bars USING sig->>'symbol',sig->>'timeframe',center,source;
+  RETURN jsonb_build_object('signal',sig,'candles',bars,'target',target,'target_time',center,'tradingview_url',null,'note','Exact stored source candles.');
  ELSIF path='/api/followup' THEN
   key:=substring(q FROM 'finding=([^&]+)');mode:=coalesce(substring(q FROM 'mode=([^&]+)'),'recovery');
   IF source NOT IN ('live','backtest') OR mode NOT IN ('recovery','all') THEN RAISE EXCEPTION 'Invalid followup';END IF;
