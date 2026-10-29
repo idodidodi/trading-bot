@@ -40,6 +40,35 @@ class PostgresTests(unittest.TestCase):
             db.execute('SELECT set_config(\'test.auth_uid\',%s,true)',(user,))
             db.execute('SET LOCAL ROLE authenticated')
             return db.execute('SELECT public.dashboard_api(%s,%s,%s)',(INST,path,Jsonb(body or {}))).fetchone()[0]
+    def test_candle_inspection_uses_canonical_caches_and_preserves_access(self):
+        from finding_feedback import finding_id
+        signal=candle_example();signal['pivot1']=signal['pivot2']-2000;signal['confirmed_at']=signal['pivot2']+1000
+        self.store.insert(signal);key=finding_id('live',signal)
+        center=signal['pivot2']
+        with self.store.connect() as db:
+            db.execute("INSERT INTO candle_cache SELECT %s,'TEST',%s,%s+n*1000,%s+(n+1)*1000,10,12,8,11 FROM generate_series(-150,150) n",(signal['symbol'],signal['timeframe'],center,center))
+            db.execute("INSERT INTO backtest_candle_cache SELECT feed,timeframe,start,\"end\",20,22,18,21 FROM candle_cache")
+            db.execute("INSERT INTO legacy_findings VALUES('backtest','legacy-chart',%s)",(json.dumps(dict(signal=signal)),))
+        for target in ('pivot1','pivot2','confirmation'):
+            result=self.api('/api/candles?source=live&finding='+key+'&target='+target)
+            expected=signal['confirmed_at' if target=='confirmation' else target]
+            self.assertEqual(result['target_time'],expected)
+            self.assertLessEqual(len(result['candles']),201)
+            self.assertTrue(result['candles'])
+            self.assertEqual([c['start'] for c in result['candles']],sorted(c['start'] for c in result['candles']))
+            self.assertTrue(all(c['open']==10 and c['source']=='live' and c['asset']=='TEST' for c in result['candles']))
+        replay=self.api('/api/candles?source=backtest&finding=legacy-chart')
+        self.assertEqual(len(replay['candles']),201)
+        self.assertTrue(all(c['open']==20 and c['source']=='backtest' for c in replay['candles']))
+        with self.assertRaises(psycopg.Error):self.api('/api/candles?source=other&finding='+key)
+        with self.assertRaises(psycopg.Error):self.api('/api/candles?finding='+key+'&target=invalid')
+        with self.assertRaises(psycopg.Error):self.api('/api/candles?finding='+key,user=VIEWER)
+        with psycopg.connect(test_dsn()) as db:
+            db.execute("INSERT INTO public.dashboard_members(installation,user_id,role) VALUES(%s,%s,'viewer')",(INST,VIEWER))
+        self.assertEqual(len(self.api('/api/candles?finding='+key,user=VIEWER)['candles']),201)
+        with self.store.connect() as db:db.execute("INSERT INTO finding_state VALUES(%s,'deleted',1,0)",(key,))
+        with self.assertRaises(psycopg.Error):self.api('/api/candles?finding='+key)
+
     def test_missing_url_and_tls_fail_closed(self):
         from postgres_store import settings
         with patch.dict(os.environ,{'TRADING_DATABASE_URL':''}):
