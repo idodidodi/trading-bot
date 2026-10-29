@@ -276,8 +276,8 @@ def scan(store, config, now=None, stop=None, force=False):
                 replay_histories[('stock',symbol)]=[Candle(**b) for b in json.loads(raw)]
     report=replay(replay_histories)
     with store.connect() as db:
-        for (market,symbol),bars in histories.items():
-            db.execute('INSERT INTO momentum_history VALUES(%s,%s,%s) ON CONFLICT(market,symbol) DO UPDATE SET payload=excluded.payload',(market,symbol,json.dumps([vars(b) for b in bars])))
+        db.executemany('INSERT INTO momentum_history VALUES(%s,%s,%s) ON CONFLICT(market,symbol) DO UPDATE SET payload=excluded.payload',
+            ((market,symbol,json.dumps([vars(b) for b in bars])) for (market,symbol),bars in histories.items()))
         db.execute('INSERT INTO momentum_runs VALUES(%s,%s) ON CONFLICT(day) DO UPDATE SET payload=excluded.payload',(day,json.dumps(payload)))
         db.execute('INSERT INTO momentum_reports(created,payload) VALUES(%s,%s)',(now,json.dumps(report)))
     store.log('Momentum daily scan',json.dumps(dict(day=day,status=payload['status'],results=results)))
