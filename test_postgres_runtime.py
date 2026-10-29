@@ -204,6 +204,9 @@ class PostgresTests(unittest.TestCase):
                 old.executemany('INSERT INTO pin_bar_signals VALUES(?,?,?)',((str(i),i,json.dumps({'id':i})) for i in range(750)))
                 old.execute('CREATE TABLE alert_reviews(slot TEXT PRIMARY KEY,completed REAL)')
                 old.execute('INSERT INTO alert_reviews VALUES(?,?)',('legacy-review',123.5))
+                old.execute('CREATE TABLE cloud_seen(id TEXT PRIMARY KEY,payload TEXT)')
+                old.executemany('INSERT INTO cloud_seen VALUES(?,?)',
+                    ((str(i),json.dumps({'note':'preserved é','value':i})) for i in range(1501)))
             snapshot(source,snap)
             with psycopg.connect(test_dsn(),options='-c search_path=bot_runtime,pg_catalog') as db:
                 plan=prepare(db,snap,INST);self.assertEqual(plan['conflicts'],[])
@@ -214,6 +217,14 @@ class PostgresTests(unittest.TestCase):
                 self.assertEqual(db.execute('SELECT count(*) FROM pin_bar_signals').fetchone()[0],750)
                 self.assertEqual(db.execute("SELECT count(*) FROM migration_holds WHERE queue='signals'").fetchone()[0],1)
                 self.assertEqual(db.execute("SELECT local_value FROM migration_audit WHERE table_name='alert_reviews'").fetchone()[0], [{'slot':'legacy-review','completed':123.5}])
+                manifest=db.execute("SELECT local_value FROM migration_audit WHERE table_name='cloud_seen' AND decision='archive-chunked'").fetchone()[0]
+                self.assertEqual((manifest['rows'],manifest['chunks']),(1501,4))
+                chunks=db.execute("SELECT local_value FROM migration_audit WHERE table_name='cloud_seen' AND decision='archive-chunk' ORDER BY row_key").fetchall()
+                restored=[row for chunk, in chunks for row in chunk]
+                self.assertEqual(restored,[dict(id=str(i),payload=json.dumps({'note':'preserved é','value':i})) for i in range(1501)])
+                db.execute("UPDATE migration_audit SET local_value='[]'::jsonb WHERE table_name='cloud_seen' AND row_key='legacy-archive:chunk:00000001'")
+                with self.assertRaisesRegex(ValueError,'Archive chunk content mismatch'):verify(db,plan)
+                db.rollback()
 
     def test_conflicting_csv_files_keep_separate_decisions_and_audit_rows(self):
         from migration.legacy import prepare,apply

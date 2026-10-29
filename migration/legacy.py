@@ -25,6 +25,48 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
 
 
+def audit_records(table, key, left, right, decision):
+    """Bound retired archive records so a large JSONB value cannot exhaust PG RAM."""
+    if decision != 'archive' or not isinstance(left, list) or len(left) <= 500:
+        yield table, key, left, right, decision
+        return
+    chunks = []
+    current, size = [], 2
+    for row in left:
+        length = len(canonical(row).encode()) + 1
+        if current and (len(current) >= 500 or size + length > 262144):
+            chunks.append(current)
+            current, size = [], 2
+        current.append(row)
+        size += length
+    if current:
+        chunks.append(current)
+    manifest = dict(format='chunked-list-v1', rows=len(left), chunks=len(chunks),
+                    sha256=hashlib.sha256(canonical(left).encode()).hexdigest())
+    yield table, key, manifest, right, 'archive-chunked'
+    for index, chunk in enumerate(chunks):
+        yield table, f'{key}:chunk:{index:08d}', chunk, None, 'archive-chunk'
+
+
+def verify_archives(db, digest):
+    manifests = db.execute("SELECT table_name,row_key,local_value FROM bot_runtime.migration_audit WHERE snapshot_hash=%s AND decision='archive-chunked'", (digest,)).fetchall()
+    for table, key, manifest in manifests:
+        rows = db.execute("SELECT row_key,local_value FROM bot_runtime.migration_audit WHERE snapshot_hash=%s AND table_name=%s AND decision='archive-chunk' ORDER BY row_key", (digest, table)).fetchall()
+        rows = [(k, v) for k, v in rows if k.startswith(key + ':chunk:')]
+        checksum = hashlib.sha256(b'[')
+        count = 0
+        for index, (saved_key, chunk) in enumerate(rows):
+            if saved_key != f'{key}:chunk:{index:08d}':
+                raise ValueError('Archive chunk identity mismatch')
+            if index:
+                checksum.update(b',')
+            checksum.update(canonical(chunk)[1:-1].encode())
+            count += len(chunk)
+        checksum.update(b']')
+        if len(rows) != manifest['chunks'] or count != manifest['rows'] or checksum.hexdigest() != manifest['sha256']:
+            raise ValueError('Archive chunk content mismatch')
+
+
 def snapshot(source, destination):
     source, destination = Path(source).resolve(), Path(destination).resolve()
     if not source.is_file() or destination.exists():
@@ -268,15 +310,21 @@ def apply(db, prepared, installation):
             query=sql.SQL('INSERT INTO bot_runtime.{} ({}) VALUES ({}) ON CONFLICT DO NOTHING').format(sql.Identifier(table),sql.SQL(',').join(map(sql.Identifier,columns)),sql.SQL(',').join(sql.Placeholder() for _ in columns))
             with db.cursor() as cursor:
                 cursor.executemany(query,values)
-    for table,key,left,right,decision in prepared['audit']:
-        db.execute('INSERT INTO bot_runtime.migration_audit VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',(digest,table,key,Jsonb(left),Jsonb(right),decision))
+    with db.cursor() as cursor:
+        cursor.executemany('INSERT INTO bot_runtime.migration_audit VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',
+            ((digest,table,key,Jsonb(left),Jsonb(right),decision)
+             for record in prepared['audit'] for table,key,left,right,decision in audit_records(*record)))
+    verify_archives(db, digest)
     # Build only identity indexes; evidence remains in operational records.
     from postgres_store import remember_finding
-    for raw, in db.execute('SELECT payload FROM bot_runtime.signals'):
-        remember_finding(db,'live',json.loads(raw))
-    for raw, in db.execute('SELECT report FROM bot_runtime.backtest_runs'):
-        for result in json.loads(raw)['results']:
-            for signal in result['signals']:remember_finding(db,'backtest',signal)
+    live = db.execute('SELECT payload FROM bot_runtime.signals').fetchall()
+    backtests = db.execute('SELECT report FROM bot_runtime.backtest_runs').fetchall()
+    with db.pipeline():
+        for raw, in live:
+            remember_finding(db,'live',json.loads(raw))
+        for raw, in backtests:
+            for result in json.loads(raw)['results']:
+                for signal in result['signals']:remember_finding(db,'backtest',signal)
     for table in ('signals','notification_queue','scanner_commands'):
         db.execute(sql.SQL("INSERT INTO bot_runtime.migration_holds SELECT %s,id,'legacy pending work; explicit review required' FROM bot_runtime.{} WHERE status IN ('pending','running') ON CONFLICT DO NOTHING").format(sql.Identifier(table)),(table,))
     for table,column in IDENTITIES.items():
@@ -288,6 +336,7 @@ def apply(db, prepared, installation):
 
 
 def verify(db,prepared):
+    verify_archives(db, prepared['snapshot_hash'])
     from decimal import Decimal
     def freeze(value):
         if isinstance(value,bool) or value is None:return (type(value).__name__,value)
