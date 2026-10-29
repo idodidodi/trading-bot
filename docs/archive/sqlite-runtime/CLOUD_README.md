@@ -1,0 +1,157 @@
+> Historical SQLite release documentation. Do not use these setup instructions for the Postgres runtime. See the [current installation guide](https://github.com/idodidodi/trading-bot/blob/main/POSTGRES_MIGRATION.md).
+
+> This migration branch uses Postgres as the only runtime database. Follow the [manual migration runbook](../POSTGRES_MIGRATION.md) before installation. Instructions below describe the preserved SQLite release where they conflict.
+
+# New Supabase and Cloudflare Pages projects
+
+The local app and online UI use the same web assets. Cloud deployment requires your accounts; nothing here creates a paid service or publishes credentials automatically.
+
+1. Create a Supabase project, create an Auth user, and run `schema.sql` in its SQL editor. Run the script once (named policies are intentionally not recreated). Insert an installation UUID with the Auth user's UUID into `dashboard_installations` using the SQL editor. Do not expose the dashboard until ownership policies are installed.
+2. Copy `functions/sync` to your Supabase functions directory and deploy `sync` with platform JWT verification disabled (`--no-verify-jwt`). The function authenticates its own private machine token, distinct from browser access. Set `SYNC_TOKEN` to a strong random token and `INSTALLATION_ID` to the installation UUID as function secrets. Supabase supplies the service-role key to the function; never copy it into web assets or the local app.
+3. Add `CLOUD_SYNC_URL=https://YOUR_PROJECT.supabase.co/functions/v1/sync` and `CLOUD_SYNC_TOKEN=YOUR_PRIVATE_MACHINE_TOKEN` to your local environment. Keep these values private. Restart the local app. The worker will import signals, historical reports/candles, logs and managed asset configuration, then keep mirroring local changes. Uploads are bounded and duplicate-safe.
+4. Create a deployment directory containing a copy of `web/` and `_redirects`. In that copy's `web/config.js`, set `supabaseUrl`, the project's public publishable key, and `installationId`. These are browser configuration, not service-role credentials. Deploy this directory as a Cloudflare Pages static project, with no build command. Never upload the repository, `.env`, local SQLite or `data/` as static assets.
+5. Open `/assets`, sign in, add/edit a test asset, then check the local Assets screen for the new desired revision. The scanner applies configuration at the next cycle. Test online/offline changes before using a large asset batch.
+
+Online access is owner-scoped by default. To share an installation, run `sharing.sql` after `schema.sql` and `backtests.sql`. Invite the person under Authentication → Users; then add their Auth user ID to `dashboard_members` with role `editor`. Editors can view synced data and edit assets and feedback; the original owner keeps ownership. The installation ID is in `cloud/browser-config.json`. For the invited account ID, run `select id,email from auth.users where lower(email)=lower('person@example.com');` in SQL Editor. Grant access with `insert into public.dashboard_members(installation,user_id,role) values ('8734f8e3-8629-4d5f-b0ff-350fb4a6b911', 'USER_UUID_FROM_QUERY', 'editor') on conflict (installation,user_id) do update set role=excluded.role;`. Online configuration is read by the local worker; concurrent local/online edits cause a visible sync conflict rather than overwriting a pending local configuration. Resolve the configuration conflict explicitly by reloading/reapplying the desired edit locally.
+
+Feedback is pulled into local SQLite with a durable cursor. Concurrent feedback is retained in local conflict records; deployment acceptance must include conflict resolution and offline testing. The current cloud setup has not been deployed or exercised against a real Supabase project in this workspace. Run the SQL/integration checks in an isolated project first.
+
+TradingView's public chart URL does not reliably select a historic date. The internal chart shows the exact persisted OHLC window. Local external links use your verified exchange-qualified mapping. Hosted external links also use synced mapping; if a mapping cannot be verified, the internal chart remains available.
+
+## Reproducible checks
+
+`node test_function.mjs` verifies the private ingestion function using mocked network/platform APIs. For SQL smoke checks in a fresh disposable PostgreSQL database, run `test_auth_stub.sql`, `schema.sql`, then `test_api.sql` with `psql -v ON_ERROR_STOP=1`. Never run the auth stub or test data in a real Supabase project. PostgreSQL roles are cluster-wide; the test stub reuses existing test roles without changing them. SQL tests cover owner isolation and denial of direct evidence writes.
+
+## Family Trading Bot setup status (6 October 2026)
+
+Project: `bwejkkboophbfeiwizbu`, installation: `8734f8e3-8629-4d5f-b0ff-350fb4a6b911`. The existing owner Auth user, API/ingestion functions, sequence column and owner read policies were verified. Anonymous REST reads and dashboard API calls are rejected. The `sync` Edge Function is deployed and `INSTALLATION_ID` is configured.
+
+Local `.env` retains all previous values and has additive cloud connection settings. The private machine token matches the saved Supabase `SYNC_TOKEN`. The legacy gateway JWT check was disabled with explicit approval; the function enforces private-token authentication. A correct token returns HTTP 200 and an incorrect token returns HTTP 401. The initial upload completed: 35,118 records were acknowledged and the queue drained. The local app was restarted with ongoing sync enabled; its sync status shows no error and no conflicts. A trusted certificate bundle is configured for this machine's Python installation.
+
+The static-only deployment bundle is ready at `data/cloudflare-pages/`, with this project's public browser configuration. Deploy that folder's contents to Cloudflare Pages. It contains only browser assets and routing; local `.env` and databases are excluded. Cloudflare publishing and browser sign-in remain to be verified. The owner dashboard API was verified against the uploaded assets, backtests and logs.
+
+For a bounded manual catch-up without starting scanning or Telegram delivery, run `python3 cloud/sync_once.py`. The durable local queue retains unacknowledged records if the command is interrupted.
+
+## Shared Telegram delivery
+
+Apply `telegram-delivery.sql` after `schema.sql`, then deploy `functions/telegram-delivery` with the existing project's `SYNC_TOKEN` and `INSTALLATION_ID` secrets. For the Supabase CLI: `supabase functions deploy telegram-delivery --project-ref YOUR_PROJECT_REF --no-verify-jwt`. The handler validates the private machine token itself, just like `sync`; it derives installation scope from its secret and exposes no browser API. Reapplying this additive migration is safe and does not replace existing dashboard dispatchers or change Auth settings.
+
+For the configured project, `.venv/bin/python scripts/deploy-telegram.py` applies only this migration, deploys the new endpoint through the existing Supabase CLI login or `SUPABASE_ACCESS_TOKEN`, and verifies unauthorized rejection plus an isolated claim/release. It sends no Telegram messages and does not restart any scanners.
+
+On 18 October 2026, the migration and `telegram-delivery` endpoint were deployed to the configured project. Live verification confirmed HTTP 401 for unauthorized calls and authenticated acquire/release using an isolated diagnostic event. No Telegram message was sent. Scanner installations must load the updated sender code to participate.
+
+Deploy the migration and endpoint before updating/restarting all scanner installations. Devices using the same installation credentials coordinate independently of dashboard syncing; automatic delivery waits if coordination is missing or unavailable. Older scanners cannot participate until updated. Set an optional `TELEGRAM_COORDINATION_URL` if the endpoint is not beside the configured sync URL. Telegram credentials stay local.
+
+Claims are atomic, use server time and 90-second leases, and retain successful sends for a rolling 24 hours. The first authenticated coordinator request after a day runs cleanup of expired claims and old diagnostic attempts. Machine-only `telegram_delivery_attempts` stores each attempt's sender, device, environment, hashes, outcome/reason and Telegram message ID. Local development logs still go to stdout. Back up each data directory's `telegram-sender.sqlite3` to preserve its source identity; cloned data directories should remove this identity file to get a distinct ID.
+
+Sound is allocated atomically at lease renewal: one automatic alert per installation/bot/chat per clock minute may request sound, across all devices and environments. Further alerts are silent. Explicit quiet sends skip allocation, and failed or ambiguous sends retain their slot. The additive `telegram_sound_slots` table keeps only the latest minute per destination, with old rows removed by daily cleanup. Reapply `telegram-delivery.sql` and redeploy the endpoint to accept/return the `silent` flag, then restart updated scanner installations. Updated senders default to silent when an older coordinator omits that flag.
+
+Validate with `python3 -m unittest test_telegram_delivery test_telegram test_platform test_market_summary test_runtime_versions`, `node cloud/test_telegram_delivery.mjs`, and `cloud/test_telegram_delivery.sql` after the test Auth stub, schema and migration in a disposable PostgreSQL database. Also run `python3 cloud/test_telegram_concurrency.py --dsn YOUR_DISPOSABLE_DATABASE_DSN` for real concurrent claims. No live Telegram messages are needed.
+
+## GitHub-connected Cloudflare Worker
+
+The `family-trading-bot` Worker builds automatically from `main` in `idodidodi/trading-bot`. Set its root directory to `/`, build command to `node cloud/build.mjs`, and deploy command to `npx wrangler@4.147.0 deploy`. The checked-in Wrangler configuration serves only `dist/`, with a single-page fallback for dashboard routes.
+
+The build copies an explicit list of browser assets, retains `/web/` URLs, and generates public Supabase settings from `cloud/browser-config.json`. It excludes tests, scanner code, local databases and `.env`. Optional build variables are `DASHBOARD_SUPABASE_URL`, `DASHBOARD_PUBLISHABLE_KEY`, and `DASHBOARD_INSTALLATION_ID`; private keys and machine tokens must never be supplied to this browser build.
+
+Run `node cloud/build.mjs` locally to prepare the same static output. No npm dependencies or Python process are required by the UI build. Changes become live after their GitHub push and a successful Cloudflare build.
+
+
+## Cloud backtest upgrade
+
+Apply `backtests.sql` to the existing project, then deploy `functions/backtests` with legacy gateway verification disabled (`--no-verify-jwt`). The handler itself verifies the current ECC user JWT through Supabase Auth and checks ownership. The function validates the signed-in owner through `/auth/v1/user` and the owner-scoped SQL API before creating a job. Background replay uses only the stored historical candles and rule metadata. It does not use the private machine token or send Telegram alerts. The `dashboard_finish_backtest` and failure functions are restricted to `service_role`; completion is atomic and existing matching evidence/feedback is preserved. Browser sign-in uses tab-scoped refresh tokens and automatic refresh.
+
+From the repository root, `SUPABASE_ACCESS_TOKEN` configured locally plus `./scripts/deploy-cloud.sh` applies the migration, sets/reads back `jwt_exp=604800`, deploys the backtests function and builds the static UI. `schema.sql` must be installed before `backtests.sql`; on subsequent upgrades, apply changes to `dashboard_api_base` rather than replacing the wrapper with the old schema API.
+
+The backtest migration and `backtests` function were deployed on 6 October 2026; unauthenticated calls return HTTP 401. The project uses ECC signing keys. The gateway's legacy-only JWT verification was disabled with approval on 7 October 2026 for ECC compatibility. An unauthenticated invocation was then rejected by the handler itself with HTTP 401 (Sign in required). The function's own JWT and owner checks remain mandatory. The seven-day access-token expiry (604800 seconds) was saved and verified on 7 October 2026. Existing tokens receive the new expiry on sign-in or refresh.
+
+## Kraken provider routing
+
+Apply `providers.sql` after the existing schema and backtest migrations before publishing the updated Assets editor. It adds OANDA, Kraken, optional live 1h candles and per-timeframe provider validation to the base API and preserves the backtest dispatcher. Test in a disposable PostgreSQL database with `test_auth_stub.sql`, `schema.sql`, `test_api.sql`, `backtests.sql`, `providers.sql`, then `test_providers.sql`. Reapplying the migration is safe. Live Kraken scanning runs locally and needs no provider credential. OANDA uses local v20 credentials; run `scripts/activate-oanda.py` after configuring them to verify forex coverage before migration. Hourly historical replay is not included.
+
+Tiingo forex asset controls are included in `providers.sql` (apply after the schema/backtest migrations; safe to rerun). Primary exchange is `Tiingo`, with optional per-timeframe `tiingo` routing. Credentials and API requests remain on the local scanner. The local backtest dialog also supports Tiingo, but hosted backtesting continues to replay stored CSV history.
+
+For the existing hosted installation, set `SUPABASE_ACCESS_TOKEN` locally and run `python3 scripts/deploy-providers.py`. It applies only `providers.sql`, verifies Alpaca hourly asset validation, and checks that the existing backtest dispatcher remains installed. It does not change Auth settings or redeploy Edge Functions. The updated editor and favicon are included in `node cloud/build.mjs`; publish through the existing Cloudflare GitHub build. Hosted replay still uses stored CSVs and its existing timeframes; local replay additionally supports Alpaca/Tiingo and hourly history.
+
+On 7 October 2026, `providers.sql` was applied to production through the Supabase SQL editor in Opera. Production verification returned true for Alpaca support, provider validation, and preservation of the backtest dispatcher. The hosted Assets page showed Alpaca US equities and successfully saved the existing DAX-ETF configuration with 1h enabled (revision 12). The hosted UI and candlestick favicon were already published by the GitHub build.
+
+
+## Signal workspace actions
+
+The Signals table opens candle inspection from a row click or Enter/Space. Review controls and action buttons keep their own behavior. Archive hides a signal by default; the unchecked “Show archived” checkbox includes archived signals and exposes Restore. Delete permanently removes the signal from workspace lists. A separate durable visibility record preserves scanner deduplication and prevents later scanner snapshots from returning deleted signals; original alert evidence and delivery history remain stored.
+
+Deploy in this order: apply `signal-actions.sql` after `schema.sql`, `backtests.sql`, `providers.sql` and `sharing.sql`; redeploy `functions/sync` with its existing authentication settings; update/restart the local worker; build/publish the UI with `node cloud/build.mjs` through the existing Cloudflare pipeline. The migration is safe to reapply. Do not rerun older dispatcher migrations after it without reapplying the signal-actions migration. The sync function accepts older workers without a state cursor, while updated workers receive archived/deleted state changes in bounded batches. Concurrent stale browser edits are rejected; cloud state wins equally versioned offline conflicts and a deleted cloud signal cannot be restored by an offline edit.
+
+Validation: `python3 -m unittest test_finding_state`, `node cloud/test_function.mjs`; in disposable PostgreSQL apply the existing test schema/migrations, then `signal-actions.sql` and `test_signal_actions.sql`.
+
+### Follow-up metrics and automatic ratings
+
+Apply `followups.sql` after `signal-actions.sql`. For the configured hosted project, run `python3 scripts/deploy-followups.py` with the existing management token configured locally, or apply the SQL in Supabase's SQL Editor. This additive migration preserves the previous API behind its dispatcher, enforces the existing owner/member read checks, and restricts direct writes to derived outcomes. Reapplying it is safe. Reapply it after any older dispatcher migration.
+
+Redeploy `functions/backtests` including `followup.mjs`, preserving the function's existing authentication configuration, then run `node cloud/build.mjs` and publish through the existing Cloudflare pipeline. Avoid rerunning `scripts/configure-cloud.py` as part of this feature upgrade: it applies earlier API migrations and unrelated Auth settings. No live provider credential is used by follow-up calculations; hosted results use all matching stored closed candles, rather than the chart endpoint's limited context window.
+
+Cloud replay stores both outcome windows alongside each finding without modifying evidence or its ID. A replay that matches an existing finding refreshes only its outcomes, preserving feedback. Older backtest rows calculate outcomes on review; live rows calculate on click. Hosted live results persist in `dashboard_followups`; the automatic rating appears next to the user's independent rating.
+
+Validation: `python3 -m unittest test_finding_followup`, `node cloud/test_followups.mjs`, the existing replay/function suites, and (in disposable PostgreSQL) `test_followups.sql` after all migrations. SQL tests cover a series beyond the candle chart's 101-bar limit, saved rating display, unchanged user feedback, denied browser writes, missing findings, and owner isolation.
+
+## Close-based divergence deployment (8 October 2026)
+
+`backtests` version 3 is deployed and ACTIVE. Its downloaded source matches `cloud/functions/backtests` exactly; unauthenticated invocation returns 401. New replay uses close-price pivots and retains wick Bollinger touches. `close-divergence.sql` was applied to update the strategy description without replacing sharing, signal-action, or follow-up dispatchers. Use this targeted migration for existing installations instead of rerunning `backtests.sql`. The local scanner was restarted and its health endpoint confirms close-based rules. Saved historical findings retain their original evidence until a new replay is requested.
+
+## Momentum daily strategy (10 October 2026)
+
+Apply `momentum.sql` after the currently installed dispatcher migrations and publish the updated static UI. The migration reads dedicated `momentum-live` and `momentum-backtest` summary records through the existing authorized dispatcher. Restart the local worker to activate daily scans and priority summary sync. The migration was applied to the existing hosted Supabase installation on 10 October 2026 and its installation query returned true. Scratch PostgreSQL tests verified owner reads, rejection of unauthorised reads and invalid sources, and idempotent application. Momentum views default separately to RSI; momentum does not enter RSI signal or replay tables. See `../MOMENTUM.md` for rules and evaluation limitations.
+
+## Per-asset scan strategies
+
+Apply `asset-strategies.sql` after the existing schema and provider migrations before publishing the updated Assets editor. It preserves the installed API dispatchers and is safe to rerun. Each permanent asset can select RSI divergence only, Pin-Bars only, or both, across its selected timeframes. Older configurations default to both; saves from older clients preserve an existing choice. Restart the local scanner to honor the selection. Daily momentum keeps its independent configuration.
+
+Validate with `python3 -m unittest test_managed_assets test_pin_bars test_scanner test_cloud_revision`, `node --check web/app.js`, and `test_asset_strategies.sql` in a disposable PostgreSQL database after the existing test setup and migration. Apply the migration twice to check idempotence.
+
+## BB Pin-Bars
+
+Apply `bb-pin-bars.sql` after CSV backtests and asset strategies. Deploy the updated `functions/csv-backtests` folder (including `bb-engine.mjs` and `rules.mjs`), publish the shared browser assets, and restart the worker. This adds a separate authenticated `/api/bb-pin-bars` mirror and accepts `bb-pin-bars` in CSV reports and per-asset selections. Existing defaults stay RSI + EMA Pin-Bars. See the root README for the independent BB rules.
+
+## Manage assets from signals
+
+Every strategy's signal rows, including historical results, include **Manage asset**. The dialog saves scanner enablement and selected candle timeframes through the existing revision-checked Assets API without leaving the results page. Momentum continues to use daily candles. Historical signals without a current feed mapping link to Assets for explicit feed configuration.
+
+Saving a rotating selection promotes its exact observed feed to permanent assets. Reapply `providers.sql` before publishing this UI so hosted saves retain its market classification, then update the local worker. Managed stock entries take precedence over rotating weekly picks, including disabled entries and edited timeframes. If registration succeeds but feed validation fails, a disabled draft remains in Assets and the dialog reports it.
+
+## Telegram routing settings
+
+Apply `telegram-routing.sql` **after the currently installed dashboard migrations**,
+then redeploy `functions/sync` using the existing `SYNC_TOKEN` and
+`INSTALLATION_ID` secrets and the existing private-token authentication setup:
+
+```sh
+.venv/bin/python scripts/deploy-telegram-routing.py --group-map telegram-group-map.json
+node cloud/build.mjs
+```
+
+The deployment script uses the existing Supabase CLI login, verifies the group map
+and bot identity without sending messages, applies only this migration, saves the
+routes, and stages the current `cloud/functions/sync` source in a temporary CLI
+workspace. This avoids deploying an older generated `supabase/functions/sync` copy.
+It checks that unauthorized requests are rejected and authenticated routing reads
+return the saved map. Publish the built UI through the existing Cloudflare pipeline
+and restart all scanner installations. No bot tokens belong in Supabase routing records or web
+assets. The migration preserves the existing dashboard dispatcher chain; rerun
+only this feature migration when needed, rather than older API migrations.
+
+`/api/telegram-routing` supports owner-only reads with `{}` and saves with
+`{"action":"save","revision":0,"routes":{"general":"-100123","forex.rsi":"-100456"}}`.
+The remaining keys are `{forex,crypto,stocks,other}.{rsi,pin-bars}`. Values are
+numeric strings or empty strings; omitted keys behave as blank destinations.
+Concurrent edits require reloading the latest revision. Members cannot read or
+change routes, regardless of their asset-editor role. Direct table access and
+browser execution of the machine read RPC are denied.
+
+The sync function returns `telegram_routing` in normal replies and supports a
+read-only `{"routing_only":true}` request. Installation scope comes from its
+secret, never caller input. Disabled development uploads use this request without
+ingesting records, changing asset configuration, or consuming scanner commands.
+
+Scratch SQL checks: apply `test_auth_stub.sql`, `schema.sql`,
+`telegram-routing.sql` twice, then `test_telegram_routing.sql` to an isolated
+PostgreSQL database. Never use the auth stub or test data against production.

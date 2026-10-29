@@ -1,6 +1,16 @@
 .env
 .env.prod
 data/
+# Runtime is Postgres. Keep offline SQLite snapshots outside source control.
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-wal
+*.db-shm
 __pycache__/
 *.pyc
 .idea/

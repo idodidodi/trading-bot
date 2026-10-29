@@ -4,7 +4,7 @@ This guide has two parts: work you can do on your **Mac**, using your online-pro
 
 Keep Supabase administrator/service credentials on the Mac. Linux needs only its dedicated worker database login and the provider credentials used by the scanner. Use a separate installation directory and retain the existing Linux installation as a stopped fallback.
 
-Use the [Postgres branch](https://github.com/idodidodi/trading-bot/tree/codex/postgres-only-runtime). Replace `LINUX_USER`, `LINUX_HOST`, `INSTALLATION_UUID` and example paths with your actual values. Paths beginning `/home/LINUX_USER/` refer to Linux, even when you prepare their configuration on the Mac.
+Use [main](https://github.com/idodidodi/trading-bot/tree/main). Replace `LINUX_USER`, `LINUX_HOST`, `INSTALLATION_UUID` and example paths with your actual values. Paths beginning `/home/LINUX_USER/` refer to Linux, even when you prepare their configuration on the Mac.
 
 **Order:** Mac M1–M3 → Linux L1–L3 → Mac M4 for rehearsal. After rehearsal passes, prepare the production destination and worker credentials in M2, repeat the Linux connection test L2, then repeat Linux L3 and Mac M4 with fresh **final** snapshots. Then Mac M5 → Linux L4–L5 → Mac M6. Recovery responsibilities are in Mac M7 and Linux L6.
 
@@ -15,7 +15,7 @@ Use the [Postgres branch](https://github.com/idodidodi/trading-bot/tree/codex/po
 Use your existing checkout of the branch, or clone into a new directory:
 
 ```bash
-git clone --branch codex/postgres-only-runtime \
+git clone --branch main \
   https://github.com/idodidodi/trading-bot.git trading-bot-postgres-tools
 cd trading-bot-postgres-tools
 python3 -m venv "$HOME/.local/share/trading-pg-migration-venv"
@@ -23,7 +23,7 @@ python3 -m venv "$HOME/.local/share/trading-pg-migration-venv"
 MIGRATION_PY="$HOME/.local/share/trading-pg-migration-venv/bin/python"
 ```
 
-The dependencies are in [requirements-runtime.txt](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/requirements-runtime.txt). Run the Mac commands below from this checkout. Set `MIGRATION_PY` again when opening a new terminal.
+The dependencies are in [requirements-runtime.txt](https://github.com/idodidodi/trading-bot/blob/main/requirements-runtime.txt). Run the Mac commands below from this checkout. Set `MIGRATION_PY` again when opening a new terminal.
 
 Preserve the current dashboard deployment ID and Edge Function sources/settings through your online accounts. Take an administrator database backup before production changes. The Linux executable, data and service backup must be collected on Linux in L3.
 
@@ -31,13 +31,13 @@ Preserve the current dashboard deployment ID and Edge Function sources/settings 
 
 Use a separate Supabase project/database for rehearsal. Each destination supports one worker installation UUID and needs the existing dashboard schema, Auth users, installation ownership and sharing permissions.
 
-Include the current [RSI + PB dashboard prerequisite](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/cloud/rsi-pb.sql) when provisioning a fresh rehearsal database. Preserve the deployed production prerequisites and defaults. The runtime scripts install schema version 2, including `rsi_pb_state`, `rsi_pb_pending` and `rsi_pb_signals`; import their saved IDs, versioned waits and baselines without resetting them.
+Include the current [RSI + PB dashboard prerequisite](https://github.com/idodidodi/trading-bot/blob/main/cloud/rsi-pb.sql) when provisioning a fresh rehearsal database. Preserve the deployed production prerequisites and defaults. The runtime scripts install schema version 2, including `rsi_pb_state`, `rsi_pb_pending` and `rsi_pb_signals`; import their saved IDs, versioned waits and baselines without resetting them.
 
 From the Mac, using the SQL editor or an administrator connection, apply these files **in order**, after the existing dashboard migrations:
 
-1. [postgres-runtime.sql](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/cloud/postgres-runtime.sql)
-2. [postgres-dashboard.sql](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/cloud/postgres-dashboard.sql)
-3. [postgres-worker-role.sql](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/cloud/postgres-worker-role.sql)
+1. [postgres-runtime.sql](https://github.com/idodidodi/trading-bot/blob/main/cloud/postgres-runtime.sql)
+2. [postgres-dashboard.sql](https://github.com/idodidodi/trading-bot/blob/main/cloud/postgres-dashboard.sql)
+3. [postgres-worker-role.sql](https://github.com/idodidodi/trading-bot/blob/main/cloud/postgres-worker-role.sql)
 
 These files can be reapplied. Do not subsequently apply older dashboard migrations over them. Keep runtime activation disabled during import.
 
@@ -50,7 +50,7 @@ ALTER ROLE trading_worker LOGIN;
 
 Obtain the dedicated role's username, IPv4 hostname and port for the **shared SESSION pooler** from Supabase Connect. Transaction pooling is unsupported. Use `sslmode=verify-full` with the appropriate trusted CA certificate. Do not give Linux a database-owner or Supabase service-role credential.
 
-Prepare a separate Linux environment file on the Mac using the [worker template](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/.env.postgres.example):
+Prepare a separate Linux environment file on the Mac using the [worker template](https://github.com/idodidodi/trading-bot/blob/main/.env.postgres.example):
 
 ```bash
 mkdir -p "$HOME/.config/FamilyTradingBotPostgres-preparation"
@@ -100,7 +100,7 @@ For rehearsal, restore an authorized consistent export of hosted records, routin
 
 Set `TRADING_MIGRATION_URL` in the Mac terminal for the destination administrator connection. Keep it separate from the Linux worker URL. Use Mac certificate paths for this administrator connection, rather than the Linux paths in the worker file. A protected libpq service/password file avoids passwords in command arguments; for example, the setting can be `service=trading_migration sslmode=verify-full`.
 
-Use the [migration tool](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/scripts/migrate-postgres.py). For rehearsal, the destination is the disposable project. **Only for the final import**, select the production destination, set `SNAPSHOT_SET=final` and rerun the receiving block above to copy the fresh Linux `final` directory, then repeat the commands below. Do not reuse the populated rehearsal database as production. Confirm the stopped-writer requirements in L3 before passing `--writers-stopped`.
+Use the [migration tool](https://github.com/idodidodi/trading-bot/blob/main/scripts/migrate-postgres.py). For rehearsal, the destination is the disposable project. **Only for the final import**, select the production destination, set `SNAPSHOT_SET=final` and rerun the receiving block above to copy the fresh Linux `final` directory, then repeat the commands below. Do not reuse the populated rehearsal database as production. Confirm the stopped-writer requirements in L3 before passing `--writers-stopped`.
 
 After receiving the Linux snapshots, run the plan against the rehearsal destination:
 
@@ -149,7 +149,7 @@ Keep snapshots unchanged. If an import loses its connection during COMMIT, do no
 
 ### M5. Prepare the hosted dashboard and activate routing
 
-After the final production import verifies successfully, deploy the [backtests Edge Function](https://github.com/idodidodi/trading-bot/tree/codex/postgres-only-runtime/cloud/functions/backtests) from the Mac using your Supabase deployment credentials. Apply the SQL prerequisites first, deploy this function **before activation**, and preserve its existing authentication settings. Hosted backtests remain independent of Linux.
+After the final production import verifies successfully, deploy the [backtests Edge Function](https://github.com/idodidodi/trading-bot/tree/main/cloud/functions/backtests) from the Mac using your Supabase deployment credentials. Apply the SQL prerequisites first, deploy this function **before activation**, and preserve its existing authentication settings. Hosted backtests remain independent of Linux.
 
 Inspect held work and broker journal states through your administrator connection:
 
@@ -169,7 +169,7 @@ set enabled=true,effects_enabled=false where id=1;
 
 From the Mac browser, verify owner/shared-account access, paginated strategy histories, saved feedback/configuration, candles, follow-ups and a hosted replay while Linux remains stopped. Then continue with Linux L4–L5.
 
-For an optional local browser server, run [dashboard_server.py](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/dashboard_server.py) from the Mac checkout:
+For an optional local browser server, run [dashboard_server.py](https://github.com/idodidodi/trading-bot/blob/main/dashboard_server.py) from the Mac checkout:
 
 ```bash
 python3 dashboard_server.py
@@ -206,7 +206,7 @@ update bot_runtime.runtime_control set enabled=false,effects_enabled=false where
 
 Before new writes/effects, you can restore the preserved dashboard/Edge Function release and coordinate restarting the untouched fallback in L6. **After new writes, orders or alerts, a branch rollback is insufficient; prefer repairing Postgres.**
 
-For post-write recovery, compare every paper client ID, submission, exit, cancellation, fill and position against Alpaca through your online credentials. Record accepted Telegram message IDs and ambiguous attempts. Only after reconciliation, use the [recovery export command](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/scripts/migrate-postgres.py) on the Mac:
+For post-write recovery, compare every paper client ID, submission, exit, cancellation, fill and position against Alpaca through your online credentials. Record accepted Telegram message IDs and ambiguous attempts. Only after reconciliation, use the [recovery export command](https://github.com/idodidodi/trading-bot/blob/main/scripts/migrate-postgres.py) on the Mac:
 
 ```bash
 "$MIGRATION_PY" scripts/migrate-postgres.py rollback-export \
@@ -215,7 +215,7 @@ For post-write recovery, compare every paper client ID, submission, exit, cancel
   --output "$HOME/trading-postgres-recovery"
 ```
 
-Use a baseline matching the preserved release's [supported recovery schema](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/migration/legacy-schema.sql) and verify it matches the captured current production release, including RSI + PB tables. Review the generated manifest and `unmapped-history.json` before securely transferring the recovery directory to Linux. It leaves the original fallback untouched, disables paper execution in the recovery copy and cancels held work in that copy.
+Use a baseline matching the preserved release's [supported recovery schema](https://github.com/idodidodi/trading-bot/blob/main/migration/legacy-schema.sql) and verify it matches the captured current production release, including RSI + PB tables. Review the generated manifest and `unmapped-history.json` before securely transferring the recovery directory to Linux. It leaves the original fallback untouched, disables paper execution in the recovery copy and cancels held work in that copy.
 
 Some hosted-only archived findings and newer hosted IDs/outcomes cannot be displayed or attached to feedback by the old release. They remain preserved in Postgres and the recovery archive. Older fallback schemas need a reviewed conversion. `--broker-reconciled` is your attestation, not an automated live broker check; ambiguous Telegram acceptance remains uncertain. If these limitations prevent safe recovery, leave the fallback stopped and repair Postgres.
 
@@ -224,6 +224,8 @@ Some hosted-only archived findings and newer hosted IDs/outcomes cannot be displ
 Run these commands in an SSH session to Linux. Testing Linux networking, reading its live database files, stopping its processes and installing/managing its service must happen there.
 
 ### L1. Receive the files without touching the existing installation
+
+On Ubuntu/Linux Mint, install Python venv support if needed: `sudo apt install python3-venv`.
 
 After Mac M3, create new source/configuration directories and unpack the source archive:
 
@@ -243,7 +245,7 @@ The source directory must be new. Verify the prepared environment uses this mach
 
 ### L2. Test connectivity from Linux before installing the application
 
-Use the [read-only connection test](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/scripts/test-postgres-connection.py):
+Use the [read-only connection test](https://github.com/idodidodi/trading-bot/blob/main/scripts/test-postgres-connection.py):
 
 ```bash
 python3 -m venv /tmp/trading-pg-preflight
@@ -268,7 +270,7 @@ Save the executable/source, environment, service/autostart definitions and data.
 
 For the final production snapshots, coordinate with the Mac to pause dashboard edits and hosted replay/CSV jobs and let in-flight requests finish. All source writers must remain stopped through final import and cutover. A rehearsal snapshot is not a final snapshot.
 
-Prepare the [migration tool](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/scripts/migrate-postgres.py) locally; snapshot creation needs no administrator database credentials:
+Prepare the [migration tool](https://github.com/idodidodi/trading-bot/blob/main/scripts/migrate-postgres.py) locally; snapshot creation needs no administrator database credentials:
 
 ```bash
 python3 -m venv /tmp/trading-pg-migration
@@ -301,7 +303,7 @@ After a completed rehearsal, you may deliberately resume the old installation wh
 
 ### L4. Prepare the new application directory
 
-After the final import, run the [installation preparation script](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/scripts/prepare-postgres-install.sh):
+After the final import, run the [installation preparation script](https://github.com/idodidodi/trading-bot/blob/main/scripts/prepare-postgres-install.sh):
 
 ```bash
 mkdir -p "$HOME/apps"
@@ -318,7 +320,7 @@ Copy required raw CSV inputs into the new tree and coordinate reviewing their co
 
 Wait until Mac M5 has activated routing with `effects_enabled=false` and verified the dashboard. Confirm the Linux environment still has `DRY_RUN=true` and `PAPER_TRADING_ENABLED=false`.
 
-Adapt the [systemd service template](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/scripts/trading-bot-postgres.service.example) into a **new** unit at `~/.config/systemd/user/trading-bot-postgres.service`. Replace every absolute path. Confirm the old worker/autostart remains disabled, then run:
+Adapt the [systemd service template](https://github.com/idodidodi/trading-bot/blob/main/scripts/trading-bot-postgres.service.example) into a **new** unit at `~/.config/systemd/user/trading-bot-postgres.service`. Replace every absolute path. Confirm the old worker/autostart remains disabled, then run:
 
 ```bash
 systemctl --user daemon-reload
@@ -326,7 +328,7 @@ systemctl --user start trading-bot-postgres.service
 journalctl --user -u trading-bot-postgres.service -f
 ```
 
-Alternatively, run the [application entrypoint](https://github.com/idodidodi/trading-bot/blob/codex/postgres-only-runtime/platform_app.py) in the foreground:
+Alternatively, run the [application entrypoint](https://github.com/idodidodi/trading-bot/blob/main/platform_app.py) in the foreground:
 
 ```bash
 TRADING_BOT_ENV=prod \
