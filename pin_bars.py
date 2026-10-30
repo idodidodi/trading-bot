@@ -102,4 +102,4 @@ def message(signal):
     from zoneinfo import ZoneInfo
     stamp = datetime.fromtimestamp(signal['confirmed_at']/1000,ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y at %H:%M (Israel time)')
     return (f"{signal['direction'].upper()} Pin-Bars\n{signal['symbol']} · {signal['timeframe']} · Price: {signal['close']}\n"
-            f"Source: {signal['source']}\nConfirmed: {stamp}\nSignal only · completed Pin-Bar candle")
+            f"Confirmed: {stamp}\nSource: {signal['source']}")

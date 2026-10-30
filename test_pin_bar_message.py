@@ -18,9 +18,8 @@ class PinBarMessageTests(unittest.TestCase):
                 expected = (
                     f'{direction.upper()} Pin-Bars\n'
                     'XRPUSD · 4h · Price: 1.27625123\n'
-                    'Source: kraken:Kraken:XRP/USD\n'
                     'Confirmed: 30 Oct 2026 at 06:00 (Israel time)\n'
-                    'Signal only · completed Pin-Bar candle')
+                    'Source: kraken:Kraken:XRP/USD')
                 self.assertEqual(message(signal), expected)
                 with patch('platform_app.urllib.request.urlopen',
                            return_value=io.StringIO('{"ok":true}')) as request:
@@ -34,6 +33,14 @@ class PinBarMessageTests(unittest.TestCase):
                 self.assertNotIn('EMA', payload['text'])
                 self.assertNotIn('wick', payload['text'])
                 self.assertNotIn('Body:', payload['text'])
+                self.assertNotIn('Signal only', payload['text'])
+                encoded = payload['text'].encode('utf-16-le')
+                source_entities = [entity for entity in payload['entities']
+                                   if encoded[entity['offset'] * 2:
+                                              (entity['offset'] + entity['length']) * 2]
+                                   .decode('utf-16-le').startswith('Source:')]
+                self.assertEqual([entity['type'] for entity in source_entities],
+                                 ['italic', 'italic'])
 
 
 if __name__ == '__main__':
