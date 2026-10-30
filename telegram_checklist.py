@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -10,6 +11,10 @@ import uuid
 
 def enabled():
     return os.environ.get('TELEGRAM_CHECKLIST_ENABLED', 'false').lower() == 'true'
+
+
+def group_dismissal_enabled():
+    return os.environ.get('TELEGRAM_GROUP_DISMISSAL_ENABLED', 'false').lower() == 'true'
 
 
 def keyboard(key, done=False):
@@ -30,6 +35,8 @@ def api(token, method, body):
             result = {}
         if method == 'editMessageText' and 'message is not modified' in result.get('description', ''):
             return None
+        if method == 'deleteMessage' and 'message to delete not found' in result.get('description', '').lower():
+            return True
         raise RuntimeError(f'Telegram checklist HTTP {exc.code}') from None
     except (urllib.error.URLError, TimeoutError):
         raise RuntimeError('Telegram checklist connection failed') from None
@@ -98,34 +105,44 @@ def worker(store, token, dry_run, stop):
 
 
 def _worker(store, token, dry_run, stop):
-    """One active polling consumer per bot; never discard pending updates."""
+    """Long-poll promptly; keep offsets/deadlines in memory between updates."""
     from local_settings import delivery_dry_run
     from postgres_store import assert_worker
-    if not enabled() or not token:
+    from telegram_personal import recipients, next_deadline, process
+    if not token or (not enabled() and not group_dismissal_enabled() and not recipients(store)):
         return
     bot = bot_key(token)
-    # A dedicated session holds the lock across polls, including between runtimes.
-    from postgres_store import Connection, settings
-    lock = int(bot[:15], 16)
-    with Connection.connect(settings(), autocommit=True) as guard:
-        if not guard.execute('SELECT pg_try_advisory_lock(%s)', (lock,)).fetchone()[0]:
-            store.log('Telegram checklist inactive', 'Another listener owns this bot')
-            return
-        while not stop.is_set():
-            if delivery_dry_run(store, dry_run):
-                stop.wait(2)
-                continue
-            assert_worker(store)
+    # Reuse WorkerGuard; no additional database connection is needed.
+    assert_worker(store)
+    with store.connect() as db:
+        row = db.execute('SELECT next_update FROM telegram_checklist_offsets WHERE bot=%s', (bot,)).fetchone()
+        modern = bool(db.execute("SELECT to_regclass('bot_runtime.telegram_personal_messages')").fetchone()[0])
+    offset = row[0] if row else 0
+    due = next_deadline(store, token) if modern else None
+    while not stop.is_set():
+        if delivery_dry_run(store, dry_run):
+            stop.wait(2)
+            continue
+        # Keep the worker/effects checks before polling/acknowledging updates.
+        assert_worker(store)
+        if due is not None and time.time() >= due:
+            process(store, token)
+            due = next_deadline(store, token)
+        updates = api(token, 'getUpdates', dict(offset=offset, timeout=0 if due is not None else 10,
+                                               allowed_updates=['callback_query']))
+        for update in updates:
+            query = update.get('callback_query')
+            if query:
+                if query.get('data', '').startswith('dismiss:'):
+                    if modern:
+                        process(store, token, query)
+                        due = next_deadline(store, token)
+                else:
+                    handle(store, token, query)
+        if updates:
+            offset = updates[-1]['update_id'] + 1
             with store.connect() as db:
-                row = db.execute('SELECT next_update FROM telegram_checklist_offsets WHERE bot=%s', (bot,)).fetchone()
-            updates = api(token, 'getUpdates', dict(offset=row[0] if row else 0, timeout=10,
-                                                   allowed_updates=['callback_query']))
-            for update in updates:
-                assert_worker(store)
-                if update.get('callback_query'):
-                    handle(store, token, update['callback_query'])
-                with store.connect() as db:
-                    db.execute('INSERT INTO telegram_checklist_offsets VALUES(%s,%s) ON CONFLICT(bot) DO UPDATE SET next_update=excluded.next_update',
-                               (bot, update['update_id'] + 1))
-            if not updates:
-                stop.wait(.2)
+                db.execute('INSERT INTO telegram_checklist_offsets VALUES(%s,%s) ON CONFLICT(bot) DO UPDATE SET next_update=excluded.next_update',
+                           (bot, offset))
+        elif due is not None:
+            stop.wait(.05)

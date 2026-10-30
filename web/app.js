@@ -350,6 +350,28 @@ async function developmentSettingsControls(panel,isCurrent){
 }
 let versionRequest=0;
 function versionMatch(current,latest){return !current||!latest?'Comparison unavailable':current===latest?'Matches GitHub':'Differs from GitHub';}
+async function personalTelegramControls(panel,isCurrent){
+ const section=node('section');section.className='development-settings telegram-alerts';
+ section.append(node('h3','My Telegram alerts'));panel.append(section);
+ if(!online){section.append(node('p','Sign in to the online dashboard to manage your personal Telegram alerts.'));return;}
+ try{
+  let value=await request('/api/telegram-alerts');if(!isCurrent())return;
+  section.append(node('p','Choose which alerts you receive. Changes apply only to your personal groups. Re-enabling resumes new alerts without replaying skipped alerts.'));
+  if(!value.registered)section.append(node('p','Your personal Telegram groups have not been connected yet. You can save your preferences now.'));
+  const inputs={},status=node('p');status.setAttribute('role','status');
+  const categories=[['general','General'],...['forex','crypto','stocks','other'].flatMap(m=>[['rsi','RSI'],['pin-bars','Pin Bars'],['rsi-pb','RSI + PB']].map(([s,label])=>[m+'.'+s,m[0].toUpperCase()+m.slice(1)+' · '+label]))];
+  for(const [key,label] of categories){
+   const row=node('label'),input=node('input');input.type='checkbox';input.checked=value.enabled[key]!==false;
+   input.setAttribute('aria-label','Receive '+label+' alerts');inputs[key]=input;row.append(input,document.createTextNode(' '+label));section.append(row);
+  }
+  const save=button('Save my Telegram alerts',async()=>{
+   save.disabled=true;status.textContent='Saving…';
+   try{value=await request('/api/telegram-alerts',{action:'save',revision:value.revision,enabled:Object.fromEntries(Object.entries(inputs).map(([key,input])=>[key,input.checked]))});status.textContent='Saved. Your personal alert preferences are updated.';}
+   catch(e){status.textContent=e.message+' Reopen Settings to reload before retrying.';}
+   finally{save.disabled=false;}
+  });section.append(save,status);
+ }catch(e){if(isCurrent())section.append(node('p','Personal Telegram settings unavailable: '+e.message));}
+}
 async function telegramRoutingControls(panel,isCurrent){
  const section=node('section');section.className='development-settings telegram-routing';section.append(node('h3','Telegram groups'));panel.append(section);
  try{
@@ -385,6 +407,7 @@ async function openVersions(){
   const local=value.local||{},github=value.github||{},remote=value.online_ui||{};
   panel.replaceChildren(node('p',`Environment: ${value.environment}`));
   if(!online){panel.append(node('p',value.environment==='prod'?'Production activity logs enabled.':'Development uses separate data; persistent activity logging and paper orders disabled.'));panel.append(node('p',`Telegram delivery: ${value.telegram_enabled?'enabled':'disabled (dry run)'}.`));panel.append(node('p','Storage: shared Postgres.'));}
+  await personalTelegramControls(panel,()=>id===versionRequest&&dialog.open);
   await telegramRoutingControls(panel,()=>id===versionRequest&&dialog.open);
   await developmentSettingsControls(panel,()=>id===versionRequest&&dialog.open);
   if(id!==versionRequest||!dialog.open)return;

@@ -71,6 +71,43 @@ class ChecklistTests(unittest.TestCase):
         self.assertEqual(json.loads(request.call_args.args[0].data)['reply_markup'], checklist.keyboard(self.key))
         bind.assert_called_once_with(store.return_value, self.key, response['result'])
 
+class ListenerLatencyTests(unittest.TestCase):
+    @patch('telegram_checklist.enabled',return_value=True)
+    @patch('telegram_personal.next_deadline',return_value=None)
+    @patch('telegram_personal.process')
+    @patch('local_settings.delivery_dry_run',return_value=False)
+    @patch('postgres_store.assert_worker')
+    @patch('telegram_checklist.api')
+    def test_callback_is_processed_without_scanning_due_messages_first(self,api,guard,dry,process,deadline,enabled):
+        store=MagicMock()
+        db=store.connect.return_value.__enter__.return_value
+        db.execute.return_value.fetchone.side_effect=[(10,),('bot_runtime.telegram_personal_messages',)]
+        query={'data':'dismiss:done:'+'a'*32}
+        api.return_value=[{'update_id':10,'callback_query':query}]
+        stop=MagicMock();stop.is_set.side_effect=[False,True]
+        checklist._worker(store,'token',False,stop)
+        process.assert_called_once_with(store,'token',query)
+        self.assertEqual(api.call_args.args[2]['offset'],10)
+        self.assertEqual(api.call_args.args[2]['timeout'],10)
+        # One initial offset read; no offset lookup on each iteration.
+        sql=[call.args[0] for call in db.execute.call_args_list]
+        self.assertEqual(sum('SELECT next_update' in q for q in sql),1)
+
+    @patch('telegram_checklist.enabled',return_value=True)
+    @patch('telegram_personal.next_deadline',return_value=1000)
+    @patch('telegram_personal.process')
+    @patch('local_settings.delivery_dry_run',return_value=False)
+    @patch('postgres_store.assert_worker')
+    @patch('telegram_checklist.time.time',return_value=999)
+    @patch('telegram_checklist.api',return_value=[])
+    def test_pending_undo_never_uses_a_ten_second_long_poll(self,api,clock,guard,dry,process,deadline,enabled):
+        store=MagicMock();db=store.connect.return_value.__enter__.return_value
+        db.execute.return_value.fetchone.side_effect=[(10,),('table',)]
+        stop=MagicMock();stop.is_set.side_effect=[False,True]
+        checklist._worker(store,'token',False,stop)
+        self.assertEqual(api.call_args.args[2]['timeout'],0)
+        process.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

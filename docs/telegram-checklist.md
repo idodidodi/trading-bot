@@ -15,3 +15,5 @@ Activation:
 To stop the trial, set the variable to false and restart. Existing Undo buttons require the listener to remain enabled to work. Keep it enabled until any needed alerts have been restored.
 
 An existing webhook or competing poller produces a sanitized Telegram checklist HTTP 409 error in the worker logs. Network failures retry through the runtime's worker supervisor; offsets advance only after an update is handled. Repeated edits are safe if Telegram accepted the edit before a database transaction failed.
+
+Approved three-second deletion variant: see [Telegram dismissal tool](telegram-dismissal.md). That component is now active for enrolled personal groups; see [Personal Telegram alerts](telegram-personal-alerts.md). The activation instructions above apply only to the original Completed/Undo trial.

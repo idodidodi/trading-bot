@@ -9,7 +9,7 @@ files=['test_auth_stub.sql','schema.sql','backtests.sql','providers.sql','sharin
        'momentum.sql','family-upgrade.sql','pin-bars.sql','csv-backtests.sql',
        'asset-strategies.sql','bb-pin-bars.sql','backtest-period.sql','backtest-sorting-pagination.sql','telegram-delivery.sql',
        'telegram-routing.sql','rsi-pb.sql','postgres-runtime.sql','postgres-dashboard.sql','postgres-worker-role.sql',
-       'telegram-checklist.sql']
+       'telegram-checklist.sql','telegram-personal.sql']
 with psycopg.connect(test_dsn(),autocommit=True) as db:
     if db.execute("SELECT to_regclass('public.dashboard_records')").fetchone()[0]:
         raise SystemExit('Use a NEW empty trading_bot_test database. This script does not drop databases or existing schemas.')

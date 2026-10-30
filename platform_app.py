@@ -276,17 +276,23 @@ class TelegramDestinationError(RuntimeError):
     """Telegram definitively rejected the destination; safe to use General."""
 
 
-def send_telegram(token, chat_id, text, silent=False, source_identity=None):
+def send_telegram(token, chat_id, text, silent=False, source_identity=None, dismissal_user_id=None):
     from telegram_delivery import footer
     from telegram_formatting import presentation
     text = footer(text, source_identity)
     text, entities = presentation(text)
     from telegram_checklist import enabled, prepare, keyboard, bind
-    checklist_key = prepare(Store(), token, text, entities) if enabled() else None
+    checklist_key = prepare(Store(), token, text, entities) if enabled() and dismissal_user_id is None else None
+    dismissal = None
+    if dismissal_user_id is not None:
+        from telegram_personal import prepare_message
+        dismissal = prepare_message(Store(), token, chat_id, text, entities, dismissal_user_id)
     payload = {'chat_id': chat_id, 'text': text, 'entities': entities,
                'disable_notification': silent}
     if checklist_key:
         payload['reply_markup'] = keyboard(checklist_key)
+    if dismissal:
+        payload['reply_markup'] = dismissal.keyboard()
     data = json.dumps(payload).encode()
     req = urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage', data=data,
                                  headers={'Content-Type': 'application/json'})
@@ -297,6 +303,9 @@ def send_telegram(token, chat_id, text, silent=False, source_identity=None):
             raise RuntimeError('Telegram rejected message')
         if checklist_key:
             bind(Store(), checklist_key, result['result'])
+        if dismissal:
+            from telegram_personal import bind_message
+            bind_message(Store(), dismissal, result['result'])
         return result.get('result', {}).get('message_id')
     except urllib.error.HTTPError as exc:
         if exc.code in (400, 403):

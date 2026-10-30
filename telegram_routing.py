@@ -93,12 +93,20 @@ def deliver_routed(store, token, general, text, event, send, silent=False, paylo
     from telegram_delivery import deliver
     from platform_app import TelegramDestinationError
     chat, fallback = select(store, event, general, payload, notification_key)
+    from telegram_checklist import group_dismissal_enabled
+    from functools import partial
+    # Zero selects shared-group dismissal; personal deliveries stay owner-bound.
+    group_send = partial(send, dismissal_user_id=0) if group_dismissal_enabled() else send
     try:
-        return deliver(store, token, chat, text, event, send, silent=silent)
+        outcome = deliver(store, token, chat, text, event, group_send, silent=silent)
     except TelegramDestinationError:
         if not fallback or fallback == chat:
             raise
         with store.connect() as db:
             db.execute('UPDATE telegram_event_routes SET chat=%s WHERE event=%s', (fallback, event))
         store.log('Telegram destination unavailable', 'Alert routed to General')
-        return deliver(store, token, fallback, text, event, send, silent=silent)
+        outcome = deliver(store, token, fallback, text, event, group_send, silent=silent)
+    from telegram_personal import deliver_personal
+    if not (notification_key or '').startswith('telegram-demo:'):
+        deliver_personal(store, token, text, event, send, silent=silent, payload=payload)
+    return outcome
