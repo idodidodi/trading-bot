@@ -394,23 +394,40 @@ async function telegramRoutingControls(panel,isCurrent){
   section.append(status);
  }catch(e){if(isCurrent())section.append(node('p','Telegram routing unavailable. Only the installation owner can access online routing; the cloud migration must be installed.'));}
 }
+function settingsLoading(label){
+ const status=node('p');status.className='settings-loading';status.setAttribute('role','status');
+ const spinner=node('span');spinner.className='loading-spinner';spinner.setAttribute('aria-hidden','true');
+ status.append(spinner,document.createTextNode(label));return status;
+}
 async function openVersions(){
  const dialog=$('settings-dialog'),panel=$('version-content'),id=++versionRequest;
- panel.replaceChildren(node('p','Checking versions…'));if(!dialog.open)dialog.showModal();
+ const isCurrent=()=>id===versionRequest&&dialog.open;
+ const personal=node('div'),routing=node('div'),development=node('div'),versions=node('section');
+ versions.append(node('h3','Versions'),settingsLoading('Checking versions…'));
+ panel.replaceChildren(personal,routing,development,versions);
+ if(!dialog.open)dialog.showModal();
+ async function loadSettings(target,label,load){
+  const loading=settingsLoading(label);target.append(loading);
+  try{await load(target,isCurrent);}finally{if(isCurrent())target.replaceChildren(...Array.from(target.children).filter(child=>child!==loading));}
+ }
+ await Promise.all([
+  loadSettings(personal,'Loading personal alerts…',personalTelegramControls),
+  loadSettings(routing,'Loading Telegram groups…',telegramRoutingControls),
+  loadSettings(development,'Loading local settings…',developmentSettingsControls),
+  loadVersionDetails(versions,isCurrent),
+ ]);
+}
+async function loadVersionDetails(panel,isCurrent){
  try{
   let value;
   if(online){
    const [manifest,findings]=await Promise.all([fetch('/web/version.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('UI version unavailable');return r.json();}),request('/api/findings?source=live')]);
    value={environment:'Online dashboard',local:findings.scan?.versions||{},online_ui:manifest,scanner_checked_at:findings.scan?.scanned_at,scanner_environment:findings.scan?.environment};
   }else value=await request('/api/versions');
-  if(id!==versionRequest||!dialog.open)return;
+  if(!isCurrent())return;
   const local=value.local||{},github=value.github||{},remote=value.online_ui||{};
   panel.replaceChildren(node('p',`Environment: ${value.environment}`));
   if(!online){panel.append(node('p',value.environment==='prod'?'Production activity logs enabled.':'Development uses separate data; persistent activity logging and paper orders disabled.'));panel.append(node('p',`Telegram delivery: ${value.telegram_enabled?'enabled':'disabled (dry run)'}.`));panel.append(node('p','Storage: shared Postgres.'));}
-  await personalTelegramControls(panel,()=>id===versionRequest&&dialog.open);
-  await telegramRoutingControls(panel,()=>id===versionRequest&&dialog.open);
-  await developmentSettingsControls(panel,()=>id===versionRequest&&dialog.open);
-  if(id!==versionRequest||!dialog.open)return;
   const rows=[['Local UI',local.ui||'Unavailable',versionMatch(local.ui,github.ui)],['Online UI',remote.ui||'Unavailable',versionMatch(remote.ui,github.ui)],['Local scanner',local.scanner||'Unavailable',versionMatch(local.scanner,github.scanner)],['GitHub UI',github.ui||'Unavailable','Latest default branch'],['GitHub scanner',github.scanner||'Unavailable','Latest default branch'],['Installed app',local.version||'Unavailable','Running version'],['Latest executable release',value.release?.version||'Unavailable','GitHub release']];
   panel.append(table(['Component','Version','Status'],rows));
   if(github.commit)panel.append(node('p','GitHub commit: '+github.commit.slice(0,12)));
@@ -422,7 +439,7 @@ async function openVersions(){
   const notes=node('a','Changelog & FMP setup');notes.href='/web/update-notes.html';notes.target='_blank';notes.rel='noopener noreferrer';panel.append(notes);
   connectionTestControls(panel);
   if(value.updates?.supported){actions.append(button('Check for app update',async()=>{try{const result=await request('/api/updates',{action:'check'});message(result.message);}catch(e){message(e.message,true);}}));panel.append(node('p',value.updates.message||''));}
- }catch(e){if(id===versionRequest&&dialog.open)panel.replaceChildren(node('p',e.message),button('Retry',openVersions));}
+ }catch(e){if(isCurrent())panel.replaceChildren(node('p',e.message),button('Retry versions',openVersions));}
 }
 $('settings').onclick=openVersions;
 $('close-settings').onclick=()=>$('settings-dialog').close();
