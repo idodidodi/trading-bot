@@ -13,6 +13,14 @@ data/
 *.db-shm
 __pycache__/
 *.pyc
+# Local Python environments and verification artifacts
+.venv/
+.venv.*/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 .idea/
 dist/
 .wrangler/
