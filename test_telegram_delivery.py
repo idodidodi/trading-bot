@@ -17,6 +17,18 @@ class DeliveryTests(PostgresTestCase):
     def test_success_and_restart_do_not_resend(self):
         self.assertEqual(self.send(),'sent');self.store=Store()
         self.assertEqual(self.send(),'suppressed');self.sender.assert_called_once()
+    def test_delivery_audit_links_message_to_source_and_event(self):
+        self.send()
+        with self.store.connect() as db:
+            details = json.loads(db.execute("SELECT details FROM activity_log WHERE event='telegram-delivered'").fetchone()[0])
+        self.assertEqual(details['message_id'],42)
+        self.assertEqual(details['chat_id'],'1')
+        self.assertEqual(details['event_id'],'event')
+        self.assertEqual(details['original_text'],'hello')
+        self.assertTrue(details['sender_id'])
+        self.assertTrue(details['device'])
+        self.assertIn('environment',details)
+        self.assertNotIn('secret',json.dumps(details))
     def test_sound_slot_is_shared_and_quiet_is_preserved(self):
         self.send('1');self.assertFalse(self.sender.call_args.kwargs['silent'])
         self.send('2');self.assertTrue(self.sender.call_args.kwargs['silent'])

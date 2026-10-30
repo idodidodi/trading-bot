@@ -10,6 +10,7 @@ on:
       - 'skills/**'
       - 'scanner.json'
       - 'stock_universe.json'
+      - 'alert-symbol-map.xml'
       - 'tradingview_template.pine'
       - '.env.example'
       - '*requirements*.txt'

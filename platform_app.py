@@ -276,13 +276,24 @@ class TelegramDestinationError(RuntimeError):
     """Telegram definitively rejected the destination; safe to use General."""
 
 
-def send_telegram(token, chat_id, text, silent=False, source_identity=None):
-    from telegram_delivery import footer, source
+def send_telegram(token, chat_id, text, silent=False, source_identity=None, dismissal_user_id=None):
+    from telegram_delivery import footer
     from telegram_formatting import presentation
-    text = footer(text, source_identity or source())
+    text = footer(text, source_identity)
     text, entities = presentation(text)
-    data = json.dumps({'chat_id': chat_id, 'text': text, 'entities': entities,
-                       'disable_notification': silent}).encode()
+    from telegram_checklist import enabled, prepare, keyboard, bind
+    checklist_key = prepare(Store(), token, text, entities) if enabled() and dismissal_user_id is None else None
+    dismissal = None
+    if dismissal_user_id is not None:
+        from telegram_personal import prepare_message
+        dismissal = prepare_message(Store(), token, chat_id, text, entities, dismissal_user_id)
+    payload = {'chat_id': chat_id, 'text': text, 'entities': entities,
+               'disable_notification': silent}
+    if checklist_key:
+        payload['reply_markup'] = keyboard(checklist_key)
+    if dismissal:
+        payload['reply_markup'] = dismissal.keyboard()
+    data = json.dumps(payload).encode()
     req = urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage', data=data,
                                  headers={'Content-Type': 'application/json'})
     try:
@@ -290,6 +301,11 @@ def send_telegram(token, chat_id, text, silent=False, source_identity=None):
             result = json.load(response)
         if not result.get('ok'):
             raise RuntimeError('Telegram rejected message')
+        if checklist_key:
+            bind(Store(), checklist_key, result['result'])
+        if dismissal:
+            from telegram_personal import bind_message
+            bind_message(Store(), dismissal, result['result'])
         return result.get('result', {}).get('message_id')
     except urllib.error.HTTPError as exc:
         if exc.code in (400, 403):
@@ -424,7 +440,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 from local_settings import read
                 self.respond(200, read(store))
                 return
-            if route in ('/api/telegram-routing', '/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/bb-pin-bars', '/api/rsi-pb', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions'):
+            if route in ('/api/telegram-routing', '/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/bb-pin-bars', '/api/rsi-pb', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions','/api/stock-reports'):
                 from dashboard_api import read
                 try:
                     self.respond(200, read(store, self.path))
@@ -635,6 +651,9 @@ def main():
     from postgres_store import resilient_worker
     worker = threading.Thread(target=resilient_worker(delivery_worker, 'delivery'), args=(store, token, chat_id, dry_run, stop), daemon=True)
     worker.start()
+    from telegram_checklist import worker as checklist_worker
+    threading.Thread(target=resilient_worker(checklist_worker, 'telegram-checklist'),
+                     args=(store, token, dry_run, stop), name='telegram-checklist', daemon=True).start()
     from market_summary import worker as summary_worker
     summary_thread = threading.Thread(target=resilient_worker(summary_worker, 'summary'), args=(store, stop), name='market-summary', daemon=True)
     summary_thread.start()

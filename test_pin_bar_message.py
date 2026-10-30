@@ -29,20 +29,20 @@ class PinBarMessageTests(unittest.TestCase):
                                                        environment='prod', sender_id='3eb68542'))
                 payload = json.loads(request.call_args.args[0].data)
                 lines = [line for line in payload['text'].splitlines() if line]
-                self.assertEqual(lines, expected.splitlines() + [
-                    'Source: linux-postgres · prod · 3eb68542'])
+                self.assertEqual(lines, expected.splitlines())
                 self.assertNotIn('EMA', payload['text'])
                 self.assertNotIn('wick', payload['text'])
                 self.assertNotIn('Body:', payload['text'])
                 self.assertNotIn('Signal only', payload['text'])
-                self.assertIn('\n--------------------\nProvider: Kraken\n\nSource:', payload['text'])
+                self.assertTrue(payload['text'].endswith('Provider: Kraken'))
+                self.assertNotIn('Source:', payload['text'])
                 encoded = payload['text'].encode('utf-16-le')
                 source_entities = [entity for entity in payload['entities']
                                    if encoded[entity['offset'] * 2:
                                               (entity['offset'] + entity['length']) * 2]
                                    .decode('utf-16-le').startswith(('Provider:', 'Source:'))]
                 self.assertEqual([entity['type'] for entity in source_entities],
-                                 ['italic', 'italic'])
+                                 ['italic'])
 
     def test_provider_names(self):
         providers = [('kraken:Kraken:XRP/USD', 'Kraken'),

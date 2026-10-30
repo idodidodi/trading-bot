@@ -186,6 +186,7 @@ def scan(store, asset, timeframe, candles, rules, now, selection_start=None, cat
 def retain_pending(store, config, configured, version=None):
     """Retain automatic selections for one follow-up, honoring explicit owner removals."""
     from managed_assets import for_timeframe, SCAN_STRATEGIES
+    from stock_reports import enabled as reports_enabled
     by_id = {a['id']:a for a in config['assets']}
     owner = {a['id']:a for a in configured['assets']}
     version = version or load_rules()['version']
@@ -195,7 +196,8 @@ def retain_pending(store, config, configured, version=None):
             setup = json.loads(raw)
             old,frame = setup['asset_config'],setup['timeframe']
             current = owner.get(old['id'])
-            automatic = old.get('daily_selected') or old.get('weekly_screen_selected')
+            retired = old.get('weekly_screen_selected') and reports_enabled(config) and not current
+            automatic = (old.get('daily_selected') or old.get('weekly_screen_selected')) and not retired
             allowed = current or (old if automatic else None)
             if (not allowed or not allowed.get('enabled',True) or frame not in allowed.get('timeframes',configured['timeframes'])
                     or STRATEGY not in allowed.get('scan_strategies',SCAN_STRATEGIES) or setup['version'] != version):

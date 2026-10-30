@@ -276,7 +276,13 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     configured = config
     now = int(time.time() * 1000) if now is None else now
     from weekly_stock_screen import resolve as resolve_weekly_stocks
-    config, stock_selection = resolve_weekly_stocks(store, config, rules, now)
+    from stock_reports import enabled as reports_enabled, run_due as run_stock_reports
+    reports_active = reports_enabled(config)
+    if reports_active:
+        run_stock_reports(store, config, rules, now, stop)
+        stock_selection = None
+    else:
+        config, stock_selection = resolve_weekly_stocks(store, config, rules, now)
     from daily_universe import resolve
     config, selection = resolve(store, config, now)
     config = rsi_pb.retain_pending(store, config, configured,combined_rules['version'])
@@ -297,6 +303,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
         known={a['id'] for a in config['assets']}
         for old in json.loads(prior[0]).get('coverage',[]) if prior else []:
             if old['asset'] in known or old['asset'] in ('USDCNY','DAILY_SELECTION','WEEKLY_STOCK_SCREEN'):continue
+            if reports_active and old.get('asset','').startswith('STOCK-'):
+                continue  # Retired rotating feeds must not return through catch-up.
             if old.get('provider') not in ('twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo'):continue
             config['assets'].append(dict(id=old['asset'],provider=old['provider'],symbol=old.get('symbol',old['asset']),
                 exchange=old.get('exchange',''),enabled=True,feed_confirmed=True,timeframes=[old['timeframe']],
@@ -630,7 +638,10 @@ def _scanner_worker(store, config, rules, stop):
             if selected and selected['session'] != session(policy, clock_now * 1000)[0]:
                 delay = 1  # A long scan crossed the morning boundary.
         stock_policy=current.get('weekly_stock_screen',{})
-        if stock_policy.get('enabled'):
+        from stock_reports import enabled as reports_enabled, seconds_to_scan as report_seconds_to_scan
+        if reports_enabled(current):
+            delay=min(delay,report_seconds_to_scan(time.time()))
+        if stock_policy.get('enabled') and not reports_enabled(current):
             from weekly_stock_screen import seconds_to_refresh as stocks_seconds_to_refresh, status as stock_status, local_day as stock_day
             clock_now=time.time()
             delay=min(delay,stocks_seconds_to_refresh(stock_policy,clock_now))

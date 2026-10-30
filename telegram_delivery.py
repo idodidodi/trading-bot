@@ -1,5 +1,6 @@
 """Postgres delivery reservations. Telegram remains at-least-once on ambiguous sends."""
 import hashlib
+import json
 import os
 import socket
 import uuid
@@ -24,7 +25,8 @@ def source(directory=None):
 
 
 def footer(text, identity):
-    return text + '\n\nSource: ' + identity['device'] + ' · ' + identity['environment'] + ' · ' + identity['sender_id'][:8]
+    from alert_display import public_text
+    return public_text(text)
 
 
 def digest(value):
@@ -64,6 +66,9 @@ def deliver(store, token, chat, text, event_id, send, silent=False):
             updated = db.execute("UPDATE telegram_delivery SET accepted=1,message_id=%s,outcome='sent',locked_until=0 WHERE id=%s AND owner=%s RETURNING id", (message_id,key,owner)).fetchone()
             if not updated:
                 raise DeliveryPending('Delivery ownership changed; review required')
+            db.execute('INSERT INTO activity_log(occurred,event,details) VALUES(extract(epoch FROM clock_timestamp()),%s,%s)',
+                ('telegram-delivered', json.dumps(dict(identity, message_id=message_id,
+                    chat_id=str(chat), delivery_id=key, event_id=event_id, original_text=text))))
         return 'sent'
     except Exception:
         # A provider timeout/crash after acceptance may repeat a message. Retain

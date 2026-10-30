@@ -63,7 +63,8 @@ class TelegramTests(PostgresTestCase):
         self.assertIn('entities', payload)
         self.assertNotIn('parse_mode', payload)
         self.assertIn('S&P 500: 7,690.73 points', payload['text'])
-        self.assertTrue(payload['text'].endswith('Source: test <pc> · prod · 12345678'))
+        self.assertNotIn('Source:', payload['text'])
+        self.assertNotIn('test <pc>', payload['text'])
 
     def test_connection_errors_are_actionable_and_token_safe(self):
         token = 'private-test-token'
