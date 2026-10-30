@@ -16,7 +16,7 @@ def presentation(text):
     spaced = []
     previous_note = False
     for line in lines:
-        note = line.startswith(('Source:', 'All quote times ', 'Gold/oil use ',
+        note = line.startswith(('Source:', 'Provider:', '--------------------', 'All quote times ', 'Gold/oil use ',
                                 'Signal only ', 'One alert per '))
         if (line and spaced and spaced[-1] and not line[:1].isspace()
                 and not (note and previous_note)):
@@ -38,7 +38,7 @@ def presentation(text):
             if first:
                 kind = 'bold'
                 first = False
-            elif content.startswith(('As of ', 'Source:', 'Confirmed:',
+            elif content.startswith(('As of ', 'Source:', 'Provider:', 'Confirmed:',
                                      'Second pivot closed:', 'All quote times ',
                                      'Gold/oil use ', 'Signal only ', 'One alert per ')):
                 kind = 'italic'

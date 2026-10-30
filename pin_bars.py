@@ -101,5 +101,9 @@ def message(signal):
     from datetime import datetime
     from zoneinfo import ZoneInfo
     stamp = datetime.fromtimestamp(signal['confirmed_at']/1000,ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y at %H:%M (Israel time)')
+    provider_key = signal['source'].split(':', 1)[0]
+    provider = {'kraken': 'Kraken', 'twelvedata': 'Twelve Data', 'oanda': 'OANDA',
+                'tiingo': 'Tiingo', 'alpaca': 'Alpaca', 'fmp': 'FMP',
+                'yahoo': 'Yahoo', 'csv': 'CSV'}.get(provider_key.lower(), provider_key)
     return (f"{signal['direction'].upper()} Pin-Bars\n{signal['symbol']} · {signal['timeframe']} · Price: {signal['close']}\n"
-            f"Confirmed: {stamp}\nSource: {signal['source']}")
+            f"Confirmed: {stamp}\n--------------------\nProvider: {provider}")

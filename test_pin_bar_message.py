@@ -19,7 +19,8 @@ class PinBarMessageTests(unittest.TestCase):
                     f'{direction.upper()} Pin-Bars\n'
                     'XRPUSD · 4h · Price: 1.27625123\n'
                     'Confirmed: 30 Oct 2026 at 06:00 (Israel time)\n'
-                    'Source: kraken:Kraken:XRP/USD')
+                    '--------------------\n'
+                    'Provider: Kraken')
                 self.assertEqual(message(signal), expected)
                 with patch('platform_app.urllib.request.urlopen',
                            return_value=io.StringIO('{"ok":true}')) as request:
@@ -34,13 +35,31 @@ class PinBarMessageTests(unittest.TestCase):
                 self.assertNotIn('wick', payload['text'])
                 self.assertNotIn('Body:', payload['text'])
                 self.assertNotIn('Signal only', payload['text'])
+                self.assertIn('\n--------------------\nProvider: Kraken\n\nSource:', payload['text'])
                 encoded = payload['text'].encode('utf-16-le')
                 source_entities = [entity for entity in payload['entities']
                                    if encoded[entity['offset'] * 2:
                                               (entity['offset'] + entity['length']) * 2]
-                                   .decode('utf-16-le').startswith('Source:')]
+                                   .decode('utf-16-le').startswith(('Provider:', 'Source:'))]
                 self.assertEqual([entity['type'] for entity in source_entities],
                                  ['italic', 'italic'])
+
+    def test_provider_names(self):
+        providers = [('kraken:Kraken:XRP/USD', 'Kraken'),
+                     ('twelvedata:NASDAQ:AAPL', 'Twelve Data'),
+                     ('oanda:OANDA-practice:EUR/USD', 'OANDA'),
+                     ('tiingo:Tiingo-UTC:XAU/USD', 'Tiingo'),
+                     ('alpaca:Alpaca-sip-split:AAPL', 'Alpaca'),
+                     ('fmp:configured:SPX', 'FMP'),
+                     ('yahoo:configured:GC=F', 'Yahoo'),
+                     ('csv:configured:TEST', 'CSV'),
+                     ('NewProvider:venue:TEST', 'NewProvider')]
+        for source, provider in providers:
+            with self.subTest(source=source):
+                text = message(dict(direction='bullish', symbol='TEST', timeframe='4h',
+                                    close=100, confirmed_at=1793332800000, source=source))
+                self.assertEqual(text.splitlines()[-2:],
+                                 ['--------------------', f'Provider: {provider}'])
 
 
 if __name__ == '__main__':
