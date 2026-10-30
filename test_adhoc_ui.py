@@ -20,10 +20,11 @@ import rsi_pb
 
 class AdHocUITests(unittest.TestCase):
     def test_command_uses_active_interpreter_and_absolute_paths(self):
-        command=scan_command(['daily','weekly'],1,100,feed='SIP',membership='Repository snapshot',output=Path('/tmp/space in output'))
+        output = Path(tempfile.gettempdir()).resolve() / 'space in output'
+        command=scan_command(['daily','weekly'],1,100,feed='SIP',membership='Repository snapshot',output=output)
         self.assertEqual(command[0],sys.executable)
         self.assertIn('--events',command)
-        self.assertIn('/tmp/space in output',command)
+        self.assertEqual(Path(command[command.index('--output')+1]), output)
         self.assertEqual(command[command.index('--feed')+1],'sip')
         self.assertTrue(Path(command[2]).is_absolute())
         for frames,recent,history in [([],10,250),(['daily'],'bad',250),(['daily'],20,100)]:

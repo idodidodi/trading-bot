@@ -47,6 +47,11 @@ def safe_file(root, path):
     return path
 
 
+def file_identity(info):
+    # Reading may update atime; compare only identity and content-change metadata.
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def inventory(root, logs=(), now=None):
     now = time.time() if now is None else now
     logs = {str(Path(p)) for p in logs}
@@ -69,10 +74,10 @@ def inventory(root, logs=(), now=None):
                 eligible = reason is not None and 0 < before.st_mtime < now - minimum_age
                 sha = digest(path.read_bytes()) if eligible else None
                 after = path.stat()
-                if before != after:
+                if file_identity(before) != file_identity(after):
                     eligible, sha = False, None
                 result.append(dict(path=relative, bytes=after.st_size,
-                                   allocated_bytes=after.st_blocks * 512,
+                                   allocated_bytes=getattr(after, 'st_blocks', None) * 512 if hasattr(after, 'st_blocks') else None,
                                    mtime_ns=after.st_mtime_ns, sha256=sha,
                                    action='quarantine' if eligible else 'retain',
                                    reason=reason or 'dependencies unknown or protected'))
@@ -115,12 +120,15 @@ def quarantine(root, report, now=None):
         # Persist recovery metadata BEFORE deleting its source.
         private_json(destination / 'manifest-next.json', dict(created=now, entries=entries))
         os.replace(destination / 'manifest-next.json', destination / 'manifest.json')
-        directory_fd = os.open(destination, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-        if path.stat() != before:
+        # Windows does not support opening/fsyncing directories this way.
+        # Backup and manifest file contents are fsynced on both platforms.
+        if os.name != 'nt':
+            directory_fd = os.open(destination, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        if file_identity(path.stat()) != file_identity(before):
             raise ValueError('File changed during backup')
         path.unlink()
     return dict(archive=str(destination), files=len(entries),

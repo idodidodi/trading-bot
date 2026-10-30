@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('retention', Path(__file__).parent/'scripts/retention.py')
 r = importlib.util.module_from_spec(spec)
@@ -35,6 +37,40 @@ class LocalRetentionTests(unittest.TestCase):
         self.assertEqual({x['path'] for x in rows if x['action']=='quarantine'},
                          {'__pycache__/old.pyc', 'data/inactive.log'})
         self.assertTrue((self.root/'__pycache__/old.pyc').exists())
+
+    def test_read_access_time_changes_do_not_hide_candidates(self):
+        self.file('__pycache__/old.pyc')
+        # Simulate relatime without changing ctime via utime (which would be a
+        # real metadata mutation). Only atime differs in the returned stat.
+        original_stat = Path.stat
+        calls = 0
+
+        def stat_with_atime(path, *args, **kwargs):
+            nonlocal calls
+            info = original_stat(path, *args, **kwargs)
+            calls += 1
+            values = {name: getattr(info, name) for name in dir(info) if name.startswith('st_')}
+            values['st_atime_ns'] += calls
+            values['st_atime'] += calls
+            return SimpleNamespace(**values)
+
+        with patch.object(Path, 'stat', stat_with_atime):
+            rows = r.inventory(self.root, now=NOW)
+        self.assertEqual(rows[0]['action'], 'quarantine')
+
+    def test_inventory_without_unix_block_count(self):
+        self.file('__pycache__/old.pyc')
+        original_stat = Path.stat
+
+        def windows_stat(path, *args, **kwargs):
+            info = original_stat(path, *args, **kwargs)
+            return SimpleNamespace(**{name: getattr(info, name) for name in dir(info)
+                                      if name.startswith('st_') and name != 'st_blocks'})
+
+        with patch.object(Path, 'stat', windows_stat):
+            rows = r.inventory(self.root, now=NOW)
+        self.assertEqual(rows[0]['action'], 'quarantine')
+        self.assertIsNone(rows[0]['allocated_bytes'])
 
     def test_archive_restore_and_repeat(self):
         p = self.file('__pycache__/old.pyc')
