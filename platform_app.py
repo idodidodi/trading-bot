@@ -281,8 +281,13 @@ def send_telegram(token, chat_id, text, silent=False, source_identity=None):
     from telegram_formatting import presentation
     text = footer(text, source_identity or source())
     text, entities = presentation(text)
-    data = json.dumps({'chat_id': chat_id, 'text': text, 'entities': entities,
-                       'disable_notification': silent}).encode()
+    from telegram_checklist import enabled, prepare, keyboard, bind
+    checklist_key = prepare(Store(), token, text, entities) if enabled() else None
+    payload = {'chat_id': chat_id, 'text': text, 'entities': entities,
+               'disable_notification': silent}
+    if checklist_key:
+        payload['reply_markup'] = keyboard(checklist_key)
+    data = json.dumps(payload).encode()
     req = urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage', data=data,
                                  headers={'Content-Type': 'application/json'})
     try:
@@ -290,6 +295,8 @@ def send_telegram(token, chat_id, text, silent=False, source_identity=None):
             result = json.load(response)
         if not result.get('ok'):
             raise RuntimeError('Telegram rejected message')
+        if checklist_key:
+            bind(Store(), checklist_key, result['result'])
         return result.get('result', {}).get('message_id')
     except urllib.error.HTTPError as exc:
         if exc.code in (400, 403):
@@ -635,6 +642,9 @@ def main():
     from postgres_store import resilient_worker
     worker = threading.Thread(target=resilient_worker(delivery_worker, 'delivery'), args=(store, token, chat_id, dry_run, stop), daemon=True)
     worker.start()
+    from telegram_checklist import worker as checklist_worker
+    threading.Thread(target=resilient_worker(checklist_worker, 'telegram-checklist'),
+                     args=(store, token, dry_run, stop), name='telegram-checklist', daemon=True).start()
     from market_summary import worker as summary_worker
     summary_thread = threading.Thread(target=resilient_worker(summary_worker, 'summary'), args=(store, stop), name='market-summary', daemon=True)
     summary_thread.start()
