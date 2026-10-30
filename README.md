@@ -24,6 +24,36 @@ See the [RSI strategy specification](https://github.com/idodidodi/trading-bot/bl
 
 The dashboard uses Supabase Auth and owner/editor-scoped APIs. Browser roles cannot directly access worker tables. Hosted replay and uploaded-CSV research run independently of Linux. Telegram reservations retain accepted message IDs, but ambiguous network failures can still repeat a message. Reconcile ambiguous broker submissions before retrying them.
 
+## Local ad hoc scanner UI
+
+Open `adhoc/rsi_pb_scanner.py` in PyCharm, use the project's `.venv` interpreter, and run the file. The local Tkinter window provides timeframe selection, Run/Stop/Resume controls, live stock/pattern/coverage tables, filters, CSV export and saved-result loading. See [the ad hoc tools guide](adhoc/README.md) for setup and controls. No server is required.
+
+## On-demand S&P 500 RSI + PB screen
+
+Run a read-only screen from the repository root with the existing local `.env` Alpaca credentials:
+
+```sh
+.venv/bin/python scripts/scan-rsi-pb-sp500.py
+```
+
+This scans all constituent securities on monthly, weekly, daily and 4-hour candles with the existing `rsi_pb.detect` engine. Matches default to the latest 10 completed candles per timeframe. Each run refreshes membership (with a visible fallback to the dated repository list) and writes a new timestamped directory under `data/ad-hoc/`. `qualified-stocks.csv` and `.txt` contain the deduplicated stock list; `patterns.csv`, `signals.json`, `coverage.csv` and `report.md` contain individual matches, evidence and coverage limitations. It does not start the worker, access the database, send alerts, place orders or change configuration.
+
+For latest-candle signals only, use `--recent-bars 1`. To scan daily and weekly candles only:
+
+```sh
+.venv/bin/python scripts/scan-rsi-pb-sp500.py --timeframes daily weekly
+```
+
+The default history target is 250 candles; provider history can be shorter, especially monthly. Native Alpaca 4-hour bars include extended sessions and can require many paginated requests. For a shorter 4-hour download, use `--timeframes 4h --history-bars 100`; histories below 250 candles are explicitly flagged. This is a historical signal screen: inspect confirmation dates, actual latest candle dates and structural-breach flags in the report.
+
+Completed candle batches are saved. Press Ctrl+C to save a partial report, then resume using the printed output directory:
+
+```sh
+.venv/bin/python scripts/scan-rsi-pb-sp500.py --resume data/ad-hoc/rsi-pb-sp500-TIMESTAMP
+```
+
+Resume preserves the original cutoff, universe, strategy rules and options, and retries failed batches. Run the command without `--resume` for a fresh market snapshot. `--output PATH` selects a new empty output directory; `--universe-file stock_universe.json` explicitly uses repository membership. Exit codes: 0 completed (including disclosed short histories), 2 provider/coverage failure, 130 interrupted. Run `--help` for all options.
+
 ## Development and tests
 
 Use a separate Postgres project/database for development. Never point a development scanner at production. Source runs default to development with Telegram and paper trading disabled; an intentional production service sets `TRADING_BOT_ENV=prod` in its launching environment.
