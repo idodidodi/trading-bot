@@ -101,8 +101,5 @@ def message(signal):
     from datetime import datetime
     from zoneinfo import ZoneInfo
     stamp = datetime.fromtimestamp(signal['confirmed_at']/1000,ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y at %H:%M (Israel time)')
-    rules=signal['rules']
-    return (f"{signal['direction'].upper()} Pin-Bars\n{signal['symbol']} · {signal['timeframe']}\n"
-            f"EMA {rules['fast']}/{rules['slow']}: {signal['fast_ema']:g} / {signal['slow_ema']:g}\n"
-            f"Body: {signal['body']:g} · lower wick: {signal['lower_wick']:g} · upper wick: {signal['upper_wick']:g}\n"
+    return (f"{signal['direction'].upper()} Pin-Bars\n{signal['symbol']} · {signal['timeframe']} · Price: {signal['close']}\n"
             f"Source: {signal['source']}\nConfirmed: {stamp}\nSignal only · completed Pin-Bar candle")
