@@ -16,7 +16,7 @@ const text=e=>[e.textContent,...e.children.map(c=>c instanceof Element?text(c):S
 function setup(value,testResponse={message:'Connection test passed.'},hosted=false){
  const nodes=new Map(),get=id=>{if(!nodes.has(id))nodes.set(id,new Element('div'));return nodes.get(id);};
  const requests=[];
- const context=vm.createContext({window:{DASHBOARD_CONFIG:hosted?{supabaseUrl:'https://cloud.test'}:{}},document:{getElementById:get,createElement:t=>new Element(t)},sessionStorage:{getItem:()=>null},location:{pathname:'/logs'},fetch:async (url,options)=>{requests.push({url,options});return {ok:!testResponse.error||url!=='/api/connection-test',json:async()=>url==='/api/versions'?await value:url==='/api/connection-test'?await testResponse:{rows:[]}};},URLSearchParams,AbortController,setTimeout,clearTimeout,Intl,Node:Element});
+ const context=vm.createContext({window:{DASHBOARD_CONFIG:hosted?{supabaseUrl:'https://cloud.test'}:{}},document:{getElementById:get,createElement:t=>new Element(t),createTextNode:t=>t},sessionStorage:{getItem:()=>null},location:{pathname:'/logs'},fetch:async (url,options)=>{requests.push({url,options});return {ok:!testResponse.error||url!=='/api/connection-test',json:async()=>url==='/api/versions'?await value:url==='/api/connection-test'?await testResponse:{rows:[]}};},URLSearchParams,AbortController,setTimeout,clearTimeout,Intl,Node:Element});
  vm.runInContext(fs.readFileSync(new URL('./app.js',import.meta.url),'utf8'),context);
  return {context,get,requests};
 }
@@ -70,7 +70,8 @@ test('closing the dialog discards a pending version response',async()=>{
  let resolve;const pending=new Promise(r=>{resolve=r;});const {get}=setup(pending);
  const loading=get('settings').onclick();get('close-settings').onclick();
  resolve({environment:'dev',local:{version:'late'}});await loading;
- assert.equal(text(get('version-content')),' Checking versions…');
+ assert.ok(!text(get('version-content')).includes('late'));
+ assert.ok(text(get('version-content')).includes('Checking versions…'));
 });
 
 test('Telegram routing renders thirteen destinations and saves numeric strings with revision',async()=>{
@@ -102,4 +103,33 @@ test('cached Telegram routes are read only and stale dialog responses are discar
  assert.ok(!controls.some(e=>e.textContent==='Save Telegram groups'));
  await context.telegramRoutingControls(get('stale'),()=>false);
  assert.equal(descendants(get('stale')).filter(e=>e.tag==='input').length,0);
+});
+
+for(const fails of [false,true])test(`settings load while versions are pending and survive version ${fails?'failure':'success'}`,async()=>{
+ const {context,get}=setup({});
+ let finishVersions;
+ context.request=(path)=>path==='/api/versions'?new Promise((resolve,reject)=>{finishVersions=fails?()=>reject(Error('Versions offline')):()=>resolve({environment:'prod',local:{version:'ready'}});}):Promise.resolve({});
+ context.personalTelegramControls=async panel=>{panel.append(new Element('input'));};
+ context.telegramRoutingControls=async panel=>{panel.append(Object.assign(new Element('p'),{textContent:'Routing ready'}));};
+ context.developmentSettingsControls=async()=>{};
+ const pending=get('settings').onclick();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(get('settings-dialog').open,true);
+ assert.ok(descendants(get('version-content')).some(e=>e.tag==='input'));
+ assert.ok(text(get('version-content')).includes('Routing ready'));
+ assert.ok(text(get('version-content')).includes('Checking versions…'));
+ finishVersions();await pending;
+ assert.ok(descendants(get('version-content')).some(e=>e.tag==='input'));
+ assert.ok(text(get('version-content')).includes(fails?'Versions offline':'ready'));
+});
+
+test('versions render without waiting for slow settings requests',async()=>{
+ const {context,get}=setup({environment:'prod',local:{version:'ready'}});
+ let finish;context.personalTelegramControls=()=>new Promise(resolve=>{finish=resolve;});
+ context.telegramRoutingControls=async()=>{};context.developmentSettingsControls=async()=>{};
+ const pending=get('settings').onclick();await new Promise(resolve=>setImmediate(resolve));
+ assert.ok(text(get('version-content')).includes('Installed app'));
+ assert.ok(text(get('version-content')).includes('Loading personal alerts…'));
+ finish();await pending;
+ assert.ok(!text(get('version-content')).includes('Loading personal alerts…'));
 });

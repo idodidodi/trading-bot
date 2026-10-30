@@ -32,3 +32,5 @@
 
 .development-settings{border:1px solid #2a3d55;border-radius:12px;padding:16px;margin:20px 0}.development-settings label{display:flex;margin:12px 0}.development-settings h3{margin-top:0}
 .telegram-routing label{justify-content:space-between;flex-wrap:wrap}.telegram-routing input{width:min(100%,260px);box-sizing:border-box}
+
+.settings-loading{display:flex;align-items:center;gap:8px}.loading-spinner{display:inline-block;width:14px;height:14px;border:2px solid #52657c;border-top-color:#a8caff;border-radius:50%;animation:settings-spin .8s linear infinite}@keyframes settings-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.loading-spinner{animation:none}}
