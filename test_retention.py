@@ -34,7 +34,7 @@ class LocalRetentionTests(unittest.TestCase):
         self.file('data/active.log')
         self.file('data/history.csv')
         rows = r.inventory(self.root, ['data/inactive.log'], NOW)
-        self.assertEqual({x['path'] for x in rows if x['action']=='quarantine'},
+        self.assertEqual({Path(x['path']).as_posix() for x in rows if x['action']=='quarantine'},
                          {'__pycache__/old.pyc', 'data/inactive.log'})
         self.assertTrue((self.root/'__pycache__/old.pyc').exists())
 
