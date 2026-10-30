@@ -277,9 +277,9 @@ class TelegramDestinationError(RuntimeError):
 
 
 def send_telegram(token, chat_id, text, silent=False, source_identity=None):
-    from telegram_delivery import footer, source
+    from telegram_delivery import footer
     from telegram_formatting import presentation
-    text = footer(text, source_identity or source())
+    text = footer(text, source_identity)
     text, entities = presentation(text)
     from telegram_checklist import enabled, prepare, keyboard, bind
     checklist_key = prepare(Store(), token, text, entities) if enabled() else None

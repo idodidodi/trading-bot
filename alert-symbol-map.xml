@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Public display names only. Feed identifiers and signal identities remain internal.
+     Qualified symbols (provider:venue:ticker) use the final ticker for lookup. -->
+<alert-symbol-map>
+  <asset name="S&amp;P 500"><symbol>^GSPC</symbol><symbol>SPX</symbol></asset>
+  <asset name="U.S. Dollar Index"><symbol>DX-Y.NYB</symbol><symbol>DOLLAR_INDEX</symbol><symbol>DXY</symbol></asset>
+  <asset name="U.S. Oil (WTI)"><symbol>USOIL</symbol><symbol>USOIL/USD</symbol></asset>
+  <asset name="Gold"><symbol>XAUUSD</symbol><symbol>XAU/USD</symbol></asset>
+  <asset name="DAX"><symbol>^GDAXI</symbol><symbol>DAX</symbol></asset>
+  <asset name="WTI Oil Futures"><symbol>CL=F</symbol></asset>
+  <asset name="Gold Futures"><symbol>GC=F</symbol></asset>
+  <asset name="S&amp;P 500 E-mini Futures"><symbol>ES=F</symbol><symbol>ES</symbol></asset>
+</alert-symbol-map>
