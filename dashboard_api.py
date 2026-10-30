@@ -17,6 +17,9 @@ def read(store, path):
     if url.path=='/api/telegram-routing':
         from telegram_routing import read
         return read(store) | {'editable': False}
+    if url.path=='/api/stock-reports':
+        from stock_reports import status
+        return status(store)
     if url.path=='/api/versions':
         from version_info import versions
         return versions(store)

@@ -440,7 +440,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 from local_settings import read
                 self.respond(200, read(store))
                 return
-            if route in ('/api/telegram-routing', '/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/bb-pin-bars', '/api/rsi-pb', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions'):
+            if route in ('/api/telegram-routing', '/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/bb-pin-bars', '/api/rsi-pb', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions','/api/stock-reports'):
                 from dashboard_api import read
                 try:
                     self.respond(200, read(store, self.path))

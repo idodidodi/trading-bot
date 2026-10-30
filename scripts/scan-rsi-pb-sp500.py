@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from stock_report_data import fetch_batch
+
 NY = ZoneInfo('America/New_York')
 FRAMES = ('monthly', 'weekly', 'daily', '4h')
 UNIVERSE_URL = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
@@ -60,44 +62,6 @@ def universe(path=None):
     if not isinstance(symbols, list) or not symbols or any(not isinstance(s, str) or not re.fullmatch(r'[A-Z][A-Z0-9.\-]{0,14}', s) for s in symbols):
         raise ValueError('Invalid universe symbols')
     return dict(symbols=sorted(set(symbols)), source=source, as_of=dated)
-
-
-def fetch_batch(symbols, frame, cutoff, history_bars, feed):
-    """Use bounded native-bar requests; don't inherit the weekly screen's 800-day cap."""
-    from alpaca_feed import request_page, FRAMES as provider_frames
-    from scanner import Candle, check_candles
-    from market_calendar import stock_candle_end
-    # Four-hour requests use a conservative two regular-session bars/day estimate.
-    days_per_bar = {'monthly': 31, 'weekly': 7, 'daily': 1.45, '4h': .73}[frame]
-    start = datetime.fromtimestamp(cutoff / 1000, timezone.utc) - timedelta(days=math.ceil(history_bars * days_per_bar) + 30)
-    params = dict(symbols=','.join(symbols), timeframe=provider_frames[frame], feed=feed,
-                  adjustment='split', asof='-', sort='asc', limit=10000,
-                  start=start.isoformat(), end=datetime.fromtimestamp(cutoff / 1000, timezone.utc).isoformat())
-    histories = {s: [] for s in symbols}
-    tokens = set()
-    for _ in range(1000):
-        response = request_page(params)
-        bars = response.get('bars') if isinstance(response, dict) else None
-        if not isinstance(bars, dict) or set(bars) - set(symbols):
-            raise ValueError('Provider returned invalid or unexpected symbols')
-        for symbol, rows in bars.items():
-            if not isinstance(rows, list):
-                raise ValueError('Invalid provider candle response')
-            for row in rows:
-                dt = datetime.fromisoformat(row['t'].replace('Z', '+00:00'))
-                if dt.tzinfo is None:
-                    raise ValueError('Provider timestamp has no timezone')
-                end = stock_candle_end(dt, frame)
-                histories[symbol].append(Candle(int(dt.timestamp()*1000), int(end.timestamp()*1000),
-                                               *(float(row[k]) for k in ('o', 'h', 'l', 'c'))))
-        token = response.get('next_page_token')
-        if not token:
-            return {s: check_candles(sorted(bars, key=lambda b: b.start), cutoff) for s, bars in histories.items()}
-        if not isinstance(token, str) or token in tokens:
-            raise ValueError('Provider pagination did not advance')
-        tokens.add(token)
-        params['page_token'] = token
-    raise ValueError('Provider exceeded 1000 pages for one batch; reduce --batch-size')
 
 
 def evaluate(symbol, frame, bars, rules, recent_bars, feed):

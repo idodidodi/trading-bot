@@ -67,3 +67,7 @@ SQLite remains only in the explicit offline [import/recovery command](https://gi
 Preserve final migration snapshots, the hosted backup, import receipt and retirement manifest. After new Postgres writes or deliveries, do not restart stale SQLite. Follow the recovery section of the installation guide; prefer repairing Postgres when effects or identities require reconciliation.
 
 The [archived SQLite documentation](https://github.com/idodidodi/trading-bot/tree/main/docs/archive/sqlite-runtime) is historical reference. Its installers, sync instructions and storage assumptions are superseded by the current guide.
+
+## Scheduled stock PDF reports
+
+Full S&P 500 weekly reports run Sunday at 08:00 Israel time; monthly reports run on the first calendar day at 08:00. PDFs are grouped by strategy and direction, with shared candle times and columns for ticker, company, candle open/close prices, and sector. Permanent portfolio alerts continue. See [installation, delivery, and coverage details](docs/stock-reports.md); apply `cloud/stock-reports.sql` before activating the updated worker.

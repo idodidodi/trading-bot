@@ -564,5 +564,8 @@
   "kraken_request_spacing_seconds": 1,
   "excluded_assets": [
     "USDCNY"
-  ]
+  ],
+  "stock_reports": {
+    "enabled": true
+  }
 }
