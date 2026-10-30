@@ -29,5 +29,9 @@ data.zip
 
 # Installation-specific Telegram destinations
 telegram-group-map.json
-output/pdf/
+# Generated reports, scan data and scratch scripts
+output/
 tmp/pdfs/
+
+# Private retention archives and recovery manifests
+.retention/
