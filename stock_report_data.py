@@ -85,4 +85,3 @@ def fetch_batch(symbols, frame, cutoff, history_bars, feed):
         tokens.add(token)
         params['page_token'] = token
     raise ValueError('Provider exceeded 1000 pages for one batch; reduce --batch-size')
-
