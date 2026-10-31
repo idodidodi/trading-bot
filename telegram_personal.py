@@ -50,6 +50,11 @@ def deliver_personal(store, token, text, event, send, silent=False, payload=None
         try:
             deliver(store, token, saved_chat, text, event,
                     partial(send, dismissal_user_id=person['telegram_user_id']), silent=silent)
+            from chasing_runtime import enabled as chasing_enabled, people as chasing_people, enroll
+            if chasing_enabled() and strategy == 'rsi' and payload:
+                for recipient in chasing_people(store):
+                    if str(recipient['user_id']) == str(person['user_id']):
+                        enroll(store,payload,recipient)
         except (WorkerOwned, *RETRYABLE):
             raise
         except RuntimeError:

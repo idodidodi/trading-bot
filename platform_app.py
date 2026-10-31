@@ -651,6 +651,9 @@ def main():
     from postgres_store import resilient_worker
     worker = threading.Thread(target=resilient_worker(delivery_worker, 'delivery'), args=(store, token, chat_id, dry_run, stop), daemon=True)
     worker.start()
+    from chasing_runtime import worker as chasing_worker
+    chasing_thread = threading.Thread(target=resilient_worker(chasing_worker,'chasing'),args=(store,token,dry_run,stop),name='chasing',daemon=True)
+    chasing_thread.start()
     from telegram_checklist import worker as checklist_worker
     threading.Thread(target=resilient_worker(checklist_worker, 'telegram-checklist'),
                      args=(store, token, dry_run, stop), name='telegram-checklist', daemon=True).start()
@@ -704,6 +707,7 @@ def main():
         summary_thread.join(timeout=12)
         paper_thread.join(timeout=16)
         replay_thread.join(timeout=16)
+        chasing_thread.join(timeout=21)
         if scanner_thread:
             scanner_thread.join(timeout=21)
 

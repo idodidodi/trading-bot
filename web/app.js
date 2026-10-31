@@ -394,6 +394,40 @@ async function telegramRoutingControls(panel,isCurrent){
   section.append(status);
  }catch(e){if(isCurrent())section.append(node('p','Telegram routing unavailable. Only the installation owner can access online routing; the cloud migration must be installed.'));}
 }
+async function chasingControls(panel,isCurrent){
+ if(!online)return;
+ const section=node('section');section.append(node('h3','Chasing'));panel.append(section);
+ try{
+  let value=await request('/api/chasing-settings');if(!isCurrent())return;
+  if(!value.groups?.chasing||!value.groups?.live_positions)section.append(node('p','Your personal chase chats have not been connected yet. You can save your preferences now.'));
+  const row=node('label','Stop chasing after favorable move (%) '),pct=node('input');
+  pct.type='number';pct.min='0';pct.max='100';pct.step='any';pct.value=value.stop_pct;
+  pct.setAttribute('aria-label','Stop chasing after favorable move (%)');row.append(pct);section.append(row);
+  section.append(node('p','Measured from the original signal close: up for bullish, down for bearish. Applies to new chases; running chases retain their saved threshold.'));
+  const inputs={};
+  for(const [key,label] of [['chasing','Receive chasing notifications'],['live_positions','Receive live-position notifications']]){
+   const line=node('label'),input=node('input');input.type='checkbox';input.checked=value[key]===true;
+   input.setAttribute('aria-label',label);line.append(input,document.createTextNode(' '+label));section.append(line);inputs[key]=input;
+  }
+  const status=node('p');status.setAttribute('role','status');
+  section.append(button('Save chasing settings',async()=>{
+   const stop_pct=Number(pct.value);
+   if(!pct.value.trim()||!Number.isFinite(stop_pct)||stop_pct<=0||stop_pct>=100){status.textContent='Enter a percentage greater than zero and below 100.';return;}
+   try{value=await request('/api/chasing-settings',{action:'save',revision:value.revision,stop_pct,chasing:inputs.chasing.checked,live_positions:inputs.live_positions.checked});status.textContent='Saved for new chases.';}catch(e){status.textContent=e.message;}
+  }),status);
+  for(const s of value.sessions||[]){section.append(node('p',`${s.root.symbol} · ${s.root.direction} · ${s.status} · stop ${s.stop_pct}%`));}
+ }catch(e){section.append(node('p','Chasing settings unavailable: '+e.message));}
+ try{
+  const data=await request('/api/chasing-registration');if(!isCurrent())return;
+  const admin=node('section'),member=node('select'),chase=node('input'),live=node('input'),status=node('p');
+  admin.append(node('h3','Personal chase chats'),node('p','Create two private groups per person with only that person and the bot. Verify membership and identity before registering.'));
+  for(const m of data.members||[]){const option=node('option',m.label);option.value=m.user_id;member.append(option);}
+  function selectMember(){const m=(data.members||[]).find(m=>m.user_id===member.value);chase.value=m?.routes?.chasing||'';live.value=m?.routes?.live_positions||'';}
+  member.onchange=selectMember;selectMember();
+  for(const [label,input] of [['User',member],['Chasing chat ID',chase],['Live positions chat ID',live]]){const row=node('label',label+' ');row.append(input);admin.append(row);}
+  admin.append(button('Register verified chats',async()=>{try{await request('/api/chasing-registration',{user_id:member.value,chasing:chase.value.trim(),live_positions:live.value.trim()});status.textContent='Registered. Personal notification choices remain separate.';}catch(e){status.textContent=e.message;}}),status);section.append(admin);
+ }catch{/* Registration is owner-only. Personal settings remain available. */}
+}
 function settingsLoading(label){
  const status=node('p');status.className='settings-loading';status.setAttribute('role','status');
  const spinner=node('span');spinner.className='loading-spinner';spinner.setAttribute('aria-hidden','true');
@@ -402,9 +436,9 @@ function settingsLoading(label){
 async function openVersions(){
  const dialog=$('settings-dialog'),panel=$('version-content'),id=++versionRequest;
  const isCurrent=()=>id===versionRequest&&dialog.open;
- const personal=node('div'),routing=node('div'),development=node('div'),versions=node('section');
+ const personal=node('div'),routing=node('div'),development=node('div'),chasing=node('div'),versions=node('section');
  versions.append(node('h3','Versions'),settingsLoading('Checking versions…'));
- panel.replaceChildren(personal,routing,development,versions);
+ panel.replaceChildren(personal,chasing,routing,development,versions);
  if(!dialog.open)dialog.showModal();
  async function loadSettings(target,label,load){
   const loading=settingsLoading(label);target.append(loading);
@@ -412,6 +446,7 @@ async function openVersions(){
  }
  await Promise.all([
   loadSettings(personal,'Loading personal alerts…',personalTelegramControls),
+  loadSettings(chasing,'Loading chasing settings…',chasingControls),
   loadSettings(routing,'Loading Telegram groups…',telegramRoutingControls),
   loadSettings(development,'Loading local settings…',developmentSettingsControls),
   loadVersionDetails(versions,isCurrent),

@@ -5,7 +5,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-INTERVALS = {'1h': 60, '4h': 240, 'daily': 1440, 'weekly': 10080}
+INTERVALS = {'1m': 1, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240, 'daily': 1440, 'weekly': 10080}
 
 
 def validate_feed(asset, timeframe):

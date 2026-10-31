@@ -3,9 +3,9 @@
 Discussion and research design, 31 October 2026. Companion to the
 [main chasing plan](rsi-chasing-backtest-plan.md), incorporating the follow-up voice
 requirements. This is documentation only. The user has now supplied six CSV file paths
-for Kraken NEAR/USD, including the added 15m timeframe. They have not yet been imported
-or audited; no empirical success rates, volume correlations or trading profits have
-been calculated.
+for Kraken NEAR/USD, including the added 15m timeframe. They have been audited and replayed offline. There are six eligible 4h roots, but no
+complete strict minute execution windows; profitability and volume-success effects
+remain unestablished. See [implementation notes](rsi-chasing-implementation.md).
 The favorable-move chase stop is now a **user-editable personal Settings percentage**,
 default **0.5%**, rather than a hard-coded constant. Each research run snapshots an
 explicit value; “0.5% stop” examples below refer to the default, not a fixed requirement.
@@ -65,104 +65,32 @@ different elapsed times: the configured maximum of 60 bars is **240 hours on 4h 
 versus 60 minutes on 1m bars**, before session gaps. Keep parameters fixed for
 the first comparison and label any timeframe-specific tuning as another experiment.
 
-## 3. Proposed chase sequence and unresolved semantics
+## 3. Current first-divergence rule
 
-The user's new direction is to descend to smaller timeframes **while price goes against
-the original signal**, stopping further chase search upon an eligible **1m divergence**.
-All chased divergences remain in the original direction. Finding a 5m divergence alone
-does not end chasing; reaching the session's saved favorable percentage beyond the
-original 4h close still does (default 0.5%).
-Neither terminal event means entry or starts opposite-direction monitoring.
+The latest user clarification replaces the descending ladder. After an original 4h
+alert, evaluate each minute from **1m → 5m → 15m → 30m → 1h → 4h**. The first
+newly available eligible same-direction divergence ends the search and generates one
+final personal Chasing alert. A 5m, 15m or 1h finding stops chasing just as a 1m finding
+does. No intermediate confirmations or prescribed sequence are required.
 
-The full ladder **4h → 1h → 30m → 15m → 5m → 1m** is a proposed experiment using all supplied
-files, not a silently settled requirement to visit every rung. Compare a small policy set:
+The current implementation gates divergence selection on adverse movement relative to
+the original 4h close, uses fresh closed-minute prices, and independently checks the
+user's favorable-stop percentage. Within a check, the lowest eligible timeframe wins;
+within one timeframe use its earliest newly available event. Events already known at
+the previous check are not replayed when price later turns adverse. The final card
+remains eligible for I'm in, with no search running. Only that click starts opposite
+monitoring, initially using 4h bars on the five-minute schedule.
 
-| Policy | Behavior | Purpose |
-| --- | --- | --- |
-| Original alert | Hypothetical immediate original entry | Reference policy |
-| Same-frame chase | Further 4h divergences under the earlier plan | Isolate the value of changing timeframe |
-| Strict ladder | Require a new event at each rung in the proposed order | Test sequential confirmation |
-| Skip-capable descent | After 4h/1h, allow an eligible event on any configured smaller rung; persist the chosen path and do not ascend | Test whether requiring intermediate rungs loses useful opportunities |
-| Direct lower-frame control | Wait for a 5m or 1m event after the 4h original without requiring intermediate divergences | Test whether the ladder adds anything beyond one later signal |
-| Delay/price-only control | Similar elapsed wait or adverse price threshold, without requiring another divergence | Test whether simply waiting explains apparent improvement |
+For research compare **original entry**, **first follow-up entry**, fixed-delay and
+price-only controls. Any former strict descending ladder is now a historical alternative
+experiment, not the live strategy. Distinguish an event becoming available after the
+original from pre-existing lower-frame confluence. Keep original-root denominators,
+no-follow-up and favorably stopped roots, data gaps and incomplete execution paths.
 
-Use original-alert entry as a reference, but do not score only roots that eventually
-complete the ladder. Preserve no-child, expired, favorably stopped, 1m-complete and
-data-incomplete roots in the report. Initial exploratory work can compare all policies;
-freeze a smaller set before holdout evaluation rather than expanding combinations forever.
-
-### Define “price goes against us” before replay
-
-Possible meanings differ materially:
-
-- **Against original close:** `d*(price/P0 - 1) < -A`, with original 4h close `P0` and
-  `d=+1` bullish / `-1` bearish. Initial research baseline `A=0`; test a small nonzero
-  buffer as a separately recorded sensitivity. This includes sideways trading below P0.
-- **Against the latest chase close:** measure from the last accepted parent-stage close.
-  Useful for stage-local worsening, but it changes the gate after every stage.
-- **Currently moving against direction:** falling for bullish or rising for bearish over
-  a defined recent interval, even if price remains favorable relative to P0.
-
-Suggested first research baseline: gate stage advancement against **original close**,
-because it is stable and matches the favorable-stop anchor. This is a proposal pending
-written agreement. Keep price observations and candidate events available for research;
-emit/advance only when the selected gate qualifies. Evaluate the favorable stop regardless
-of the adverse gate; pausing lower-timeframe search must not disable price-stop checks.
-
-Decide whether recovery inside the interval between P0 and the configured stop **pauses** the
-current rung, resets the ladder or continues searching. Suggested experiment: pause
-advancement, preserve rung/deadline, resume only for newly eligible events if price turns
-adverse again. Do not replay all signals formed while paused as fresh alerts. The user
-has not approved that pause policy, any numerical adverse buffer or a stage timeout yet.
-
-### Child timing and waiting windows
-
-For sequential chase events, require child **event availability strictly after parent
-event availability**, including configured stage/delivery latency. A proposed stronger
-variant also requires the child's P2 candle to close after the parent becomes available.
-P1 may be earlier: a divergence requires history. Compare this with pre-existing
-cross-timeframe confluence separately; a 1m divergence already known inside the original
-4h candle is not a newly discovered subsequent chase event.
-
-At each step use only closed, available bars. Do not search backward through all child
-bars inside an already closed parent and describe those as future confirmation. Define
-deterministic tie handling if several stages have events at the same instant. Suggested
-strict-ladder default: no instantaneous multi-stage cascade through equal timestamps.
-For the skip-capable experiment declare priority, such as the lowest eligible timeframe;
-test it as a policy choice rather than selecting whichever child later performs best.
-
-The reference window for one transition is proposed as **one parent-frame duration after
-the parent event** in a continuous market. With aligned boundaries, 30m → 15m offers
-thirty minutes and two child bars; 15m → 5m offers fifteen minutes and three child bars;
-5m → 1m offers five minutes and five child bars. A skip-capable 30m → 5m transition
-would instead offer thirty minutes and six child bars. It is not
-automatically “five candles” at every rung. For exchange sessions, choose and record
-wall time versus active trading time. Also report fixed 5/15/30/60-minute sensitivities
-where appropriate, without treating short unavailable windows as failed divergences.
-Specify what happens at timeout: stay on the rung, fall back to another rung or expire.
-This is still open; do not silently resume the original unlimited chase.
-
-### Terminal 1m event and entry interaction
-
-An eligible same-direction 1m divergence creates a final Chasing alert and stops further
-same-direction divergence/price-chase work for that root. Proposed state:
-`chase_search_complete_1m`, entry still unconfirmed. Preserve the full parent chain.
-Do not switch to opposite monitoring until that user actually clicks I'm in.
-
-An important product decision remains: **can the user click I'm in on the final 1m card
-after search completion?** Suggested behavior is yes, with no continuing chase checks;
-the accepted click starts opposite monitoring. Keep search completion and entry permission
-as separate fields so the card need not be invalidated automatically. Favorable-stop
-cards and old sibling cards may need different entry eligibility; decide those explicitly.
-For competing click/1m/favorable-stop events, serialize transitions. A proposed priority
-within one due check is favorable-stop observation before emitting a non-terminal or
-1m card; already accepted entry exits the chase lifecycle. Preserve ambiguous intraminute
-ordering in research. There is no automatic post-entry stop/reopen/close action.
-
-The **timeframe** for post-entry opposite divergence is still open. The five-minute
-schedule is a polling interval, not a decision to use 5m candles. Compare original 4h,
-last chase timeframe and a fixed selected timeframe as separate exit research variants.
-Do not start monitoring all opposite timeframes implicitly.
+The targeted literature review did not establish a reliable published success rate for
+this exact first-divergence, low-to-high, RSI(3)/BB strategy. Adjacent RSI(14) and chart-
+pattern studies use different rules. Empirical evaluation must therefore use the pinned
+historical data and explicit entry/exit/cost assumptions, not borrowed percentages.
 
 ## 4. TradingView CSV intake plan
 
@@ -215,8 +143,8 @@ different instrument is a separate proxy experiment. [Official volume limitation
 **Repository gap:** `scanner.Candle` and candle caches hold OHLC without volume;
 `scanner.read_csv`, Python `csv_backtests.parse` and JavaScript `parseCSV` do not retain
 volume. The CSV upload paths accept only 1h/4h/daily/weekly/monthly, with 20,000-row/2 MB
-limits. The 30m/15m/5m/1m multi-file workflow therefore needs a future offline importer with
-a volume-preserving research record, synchronized timeframe streams and file hashes.
+limits. The new `chasing_research.py` offline importer implements the separate
+30m/15m/5m/1m workflow with volume preservation, synchronized streams and file hashes.
 Do not alter production candle schemas or upload limits just to conduct this first study.
 
 ## 5. Volume analysis with no future information
@@ -269,12 +197,12 @@ sample may support exploratory findings without a reliable percentage forecast.
 
 ## 6. Conditional lower-timeframe divergence study
 
-For each eligible parent event, measure
-`P(new same-direction child divergence within W and before chase stop | parent, adverse gate)`.
-Compute separate transition tables for 4h→1h, 1h→30m, 30m→15m, 15m→5m and 5m→1m, plus the
-explicit skip/direct controls. Report numerator, at-risk parent count, available exposure,
-median waiting time, no-event proportion and uncertainty. Do not multiply transition
-probabilities as if stages or roots were independent.
+For each eligible 4h original, measure the probability and time to the **first**
+qualifying same-direction divergence before the favorable stop or research deadline.
+Break out the selected event's timeframe, direction and relative-volume cohort; these
+are mutually exclusive first-hit categories. Keep all original roots in the denominator.
+A sequence-transition matrix is an optional comparison experiment only; it no longer
+specifies the chase behavior.
 
 Use two comparisons:
 
@@ -289,7 +217,7 @@ Use two comparisons:
    Report both original-root coverage and paired comparisons; child occurrence alone
    does not establish better MAE, higher net expectancy or a higher success rate.
 
-Treat the run's configured favorable stop, 1m completion and chosen expiry as terminal/competing
+Treat the run's configured favorable stop, first-divergence completion and chosen expiry as terminal/competing
 events for the search. End-of-file is right censoring, not a no-child failure. Record
 paused adverse-gate time separately. If estimating probability before a deadline, use
 a declared survival/competing-risk method or fully observed windows and disclose the
@@ -355,15 +283,15 @@ data; reserve a fresh evaluation period before claiming validated improvement.
 
 | Scenario | Proposed handling / decision still needed |
 | --- | --- |
-| Price moves adversely without ever forming the next divergence | Remain on the selected rung only until a chosen stage/root timeout; timeout/fallback policy is open. Never invent a child event. |
+| Price moves adversely without ever forming the next divergence | Continue checking all configured frames; do not invent a divergence. No extra live expiry is imposed; research windows are explicit. |
 | Price recovers above original close but stays below the configured stop | Decide pause/resume versus continued descent; a return notification alone does not mark entry. |
-| Further adverse move after a 1m divergence | Search is already complete under the new rule. Decide whether an explicit new root/rearm is allowed; no automatic restart assumed. |
-| Final 1m signal appears immediately after 4h, before a 1h/30m/15m/5m stage | Strict ladder ignores it as a transition; skip/direct policy may use it. Compare rather than choose retrospectively. |
+| Further adverse move after the first follow-up divergence | Search stays complete, regardless of the selected timeframe; no automatic restart. |
+| A new 1m signal appears before larger-frame signals | It can end chasing immediately; no intermediate stages are required. |
 | A child P2 occurs before the parent, but its structural confirmation is later | Choose availability-only versus post-parent-P2 rule and label it; keep old confluence separate. |
 | Only opposite-direction lower-frame divergences appear before entry | Do not treat them as same-direction chase events or as proof the user entered. Decide whether a future conflict notice is useful. |
-| 1m completion, configured stop and I'm in occur in one minute | Persist known ordering; serialize live actions; show OHLC ambiguity bounds in research. Do not fabricate intraminute sequence. |
+| first-divergence completion, configured stop and I'm in occur in one minute | Persist known ordering; serialize live actions; show OHLC ambiguity bounds in research. Do not fabricate intraminute sequence. |
 | User clicks I'm in on final/old card after search completion | Define card eligibility and manual-entry access; never silently reject all entry reporting or reopen chasing. |
-| No more monitoring after 1m, but a user wants to enter much later | Decide final-card expiry and entry-price observation policy; a stale candle price is not a fill. |
+| No more monitoring after first divergence, but a user wants to enter much later | Decide final-card expiry and entry-price observation policy; a stale candle price is not a fill. |
 | Original and chase volume give conflicting indications | Separate original versus child features and decision times; no ad hoc “best volume” selection. |
 | One supplied timeframe has shorter history, a session gap or different feed | Restrict synchronized cohort, report lost roots and keep missing data distinct from no signal. |
 | A 4h volume threshold is met only after an earlier child signal | That future 4h volume cannot filter the earlier child; use the last completed 4h volume or wait for close. |
@@ -373,7 +301,7 @@ data; reserve a fresh evaluation period before claiming validated improvement.
 ## 9. Concrete next outputs for the supplied files
 
 1. File/coverage audit and normalized, volume-preserving dataset manifest, without runtime
-   connections or external effects. Agree gate, ladder, child timing, windows and exits.
+   connections or external effects. Record first-hit priority, adverse gate, event timing, windows and exits.
 2. Root/transition event ledger with pause/stop reasons and an audit timeline for selected
    examples, demonstrating no lookahead and independent simulated/user entry records.
 3. Original-versus-chase MAE report, transition occurrence/lift tables, relative-volume

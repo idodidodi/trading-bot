@@ -18,13 +18,14 @@ class DismissibleMessage:
     key: str = field(default_factory=lambda: uuid.uuid4().hex)
     phase: str = 'active'
     delete_at: float | None = None
+    extra_keyboard: list = field(default_factory=list)
 
     def keyboard(self, undo=False):
         action = 'undo' if undo else 'done'
         return {'inline_keyboard': [[{
             'text': '↩ Undo' if undo else '✓ Done',
             'callback_data': f'dismiss:{action}:{self.key}',
-        }]]}
+        }]] + ([] if undo else deepcopy(self.extra_keyboard))}
 
     def snapshot(self):
         """JSON-safe state, including original text/entities and pending deadline."""

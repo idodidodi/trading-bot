@@ -133,7 +133,10 @@ def _worker(store, token, dry_run, stop):
         for update in updates:
             query = update.get('callback_query')
             if query:
-                if query.get('data', '').startswith('dismiss:'):
+                if query.get('data', '').startswith('chase:enter:'):
+                    from chasing_runtime import enabled as chasing_enabled, callback
+                    if chasing_enabled():callback(store,token,query)
+                elif query.get('data', '').startswith('dismiss:'):
                     if modern:
                         process(store, token, query)
                         due = next_deadline(store, token)
