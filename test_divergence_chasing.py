@@ -38,9 +38,17 @@ class ChaseTests(unittest.TestCase):
         now=1060000
         s,events=step(s,now,price=99,price_at=now,
                       signals=[signal('1h',now),signal('1m',now),signal('5m',now)])
-        self.assertEqual(s['stage'],'1m')
+        self.assertEqual(s['stage'],'5m')
         self.assertEqual(len(events),1)
         self.assertEqual(step(s,1120000,price=98,price_at=1120000,signals=[signal('1m',1120000)])[1],[])
+
+    def test_one_minute_signal_is_ignored_but_minute_price_stop_still_applies(self):
+        s=create('a',signal(),1000000)
+        s,events=step(s,1060000,price=99,price_at=1060000,signals=[signal('1m',1060000)])
+        self.assertEqual(s['status'],'chasing')
+        self.assertEqual(events,[])
+        s,events=step(s,1120000,price=100.5,price_at=1120000,signals=[signal('1m',1120000)])
+        self.assertEqual(s['status'],'stopped_favorable')
 
     def test_no_future_or_preexisting_child_and_adverse_gate(self):
         s=create('a',signal(),1000000)

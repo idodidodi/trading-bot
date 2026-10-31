@@ -2,7 +2,7 @@
 import json
 import os
 import time
-from divergence_chasing import create, step, FRAMES
+from divergence_chasing import create, step, FRAMES, CHASE_FRAMES
 
 
 def enabled():
@@ -45,7 +45,7 @@ def market(root,now):
     bars={f:check_candles(fetch_kraken(asset,f),now) for f in reversed(FRAMES)}
     minute=bars['1m']
     if not minute:raise ValueError('Minute prices unavailable')
-    signals=[s for f,rows in bars.items() for s in detect(rows,root['rules'],symbol,f,provisional=True)]
+    signals=[s for f,rows in bars.items() if f in CHASE_FRAMES for s in detect(rows,root['rules'],symbol,f,provisional=True)]
     return minute[-1].close,minute[-1].end,signals
 
 

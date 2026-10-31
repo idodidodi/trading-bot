@@ -9,7 +9,7 @@ import math
 from pathlib import Path
 import statistics
 
-from divergence_chasing import FRAMES, DURATIONS, create, step, percentage
+from divergence_chasing import FRAMES, CHASE_FRAMES, DURATIONS, create, step, percentage
 
 
 def read_series(path, frame, cutoff):
@@ -117,7 +117,7 @@ def run(paths, symbol, cutoff, stop_pct=.5, cost_bps=10., horizon=3, start_at=No
     rules=load_rules();series={};volumes={};audit={};signals={}
     for frame in FRAMES:
         series[frame],volumes[frame],audit[frame]=read_series(paths[frame],frame,cutoff)
-        signals[frame]=detect_series(series[frame],volumes[frame],rules,symbol,frame,audit[frame]['verified_empty'])
+        signals[frame]=detect_series(series[frame],volumes[frame],rules,symbol,frame,audit[frame]['verified_empty']) if frame in CHASE_FRAMES else []
     if any(not bars for bars in series.values()):raise ValueError('Every timeframe needs completed candles')
     common_start=max(b[0].start for b in series.values());common_end=min(b[-1].end for b in series.values())
     minutes=series['1m'];starts=[b.start for b in minutes]
@@ -152,15 +152,14 @@ def run(paths, symbol, cutoff, stop_pct=.5, cost_bps=10., horizon=3, start_at=No
             events.extend(new)
             if session['status']!='chasing':break
         chase=[e for e in events if e['kind']=='chase']
-        entries={'original':at,'first_chase':chase[0]['at'] if chase else None,
-                 'final_1m':chase[-1]['at'] if chase and chase[-1]['signal']['timeframe']=='1m' else None}
+        entries={'original':at,'first_chase':chase[0]['at'] if chase else None}
         outcomes={p:outcome(minutes,starts,t,end,root['direction'],cost_bps,audit['1m']['verified_empty']) if t is not None
                   else dict(status='censored_no_entry' if session['status']=='chasing' and common_end<end else 'no_entry') for p,t in entries.items()}
         roots.append(dict(id=session['id'],signal=root,status=session['status'],stage=session['stage'],
                           observation_end=min(end,common_end),outcomes=outcomes))
         ledger.extend(events)
     summary={}
-    for policy in ('original','first_chase','final_1m'):
+    for policy in ('original','first_chase'):
         values=[r['outcomes'][policy] for r in roots if r['outcomes'][policy]['status']=='complete']
         no_entry=sum(r['outcomes'][policy]['status'].startswith('no_entry') for r in roots)
         incomplete=len(roots)-len(values)-no_entry
@@ -170,6 +169,7 @@ def run(paths, symbol, cutoff, stop_pct=.5, cost_bps=10., horizon=3, start_at=No
             net_win_rate=sum(v['net_return_pct']>0 for v in values)/len(values) if values else None,
             per_original_root_mean_return_pct_with_unentered_cash_zero=sum(v['net_return_pct'] for v in values)/len(roots) if roots and not incomplete else None)
     config=dict(symbol=symbol,cutoff=cutoff,stop_pct=percentage(stop_pct),roundtrip_cost_bps=cost_bps,
+                chase_timeframes=list(CHASE_FRAMES),
                 start_at=start_at,end_at=end_at,
                 selection='first divergence, smallest timeframe first',horizon_4h_bars=horizon,rules=rules,
                 gate='adverse to original close',observation='closed minute close',

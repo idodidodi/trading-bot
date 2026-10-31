@@ -1,3 +1,5 @@
+> Current variation: `codex/chasing-5m-and-up` excludes 1m divergence triggers while retaining minute price data. Earlier 1m research below is historical context. See `docs/chasing-5m-comparison.md`.
+
 # Four-hour RSI chase research: volume, nested timeframes and profitability
 
 Discussion and research design, 31 October 2026. Companion to the
@@ -70,10 +72,10 @@ the first comparison and label any timeframe-specific tuning as another experime
 ## 3. Current first-divergence rule
 
 The latest user clarification replaces the descending ladder. After an original 4h
-alert, evaluate each minute from **1m → 5m → 15m → 30m → 1h → 4h**. The first
+alert, evaluate each minute from **5m → 15m → 30m → 1h → 4h**. The first
 newly available eligible same-direction divergence ends the search and generates one
 final personal Chasing alert. A 5m, 15m or 1h finding stops chasing just as a 1m finding
-does. No intermediate confirmations or prescribed sequence are required.
+does in the preserved baseline. On the current branch 1m divergences are ignored. No intermediate confirmations or prescribed sequence are required.
 
 The current implementation gates divergence selection on adverse movement relative to
 the original 4h close, uses fresh closed-minute prices, and independently checks the
@@ -288,7 +290,7 @@ data; reserve a fresh evaluation period before claiming validated improvement.
 | Price moves adversely without ever forming the next divergence | Continue checking all configured frames; do not invent a divergence. No extra live expiry is imposed; research windows are explicit. |
 | Price recovers above original close but stays below the configured stop | Decide pause/resume versus continued descent; a return notification alone does not mark entry. |
 | Further adverse move after the first follow-up divergence | Search stays complete, regardless of the selected timeframe; no automatic restart. |
-| A new 1m signal appears before larger-frame signals | It can end chasing immediately; no intermediate stages are required. |
+| A new 1m signal appears before larger-frame signals | Ignore it on the 5m-and-up branch; continue looking for an eligible 5m-or-higher finding. |
 | A child P2 occurs before the parent, but its structural confirmation is later | Choose availability-only versus post-parent-P2 rule and label it; keep old confluence separate. |
 | Only opposite-direction lower-frame divergences appear before entry | Do not treat them as same-direction chase events or as proof the user entered. Decide whether a future conflict notice is useful. |
 | first-divergence completion, configured stop and I'm in occur in one minute | Persist known ordering; serialize live actions; show OHLC ambiguity bounds in research. Do not fabricate intraminute sequence. |

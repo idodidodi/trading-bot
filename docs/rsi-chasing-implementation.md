@@ -1,14 +1,15 @@
 # First-divergence chase implementation
 
-Implemented locally on the planning branch. Not deployed, enabled or provisioned in
-production; no real Telegram messages or orders were sent during implementation.
+This five-minute variation is implemented on `codex/chasing-5m-and-up` and is not deployed.
+The owner groups and base dashboard/database setup exist from the prior iteration;
+live chasing remains inactive. See [the branch comparison](chasing-5m-comparison.md).
 
 ## Current behavior
 
 After delivery of a new provisional 4h personal RSI alert, an opted-in registered user
 gets a separate chase session and a Chasing start card. Once per minute, while the fresh
 closed-minute price is adverse to the original close, inspect new same-direction
-divergences in **1m → 5m → 15m → 30m → 1h → 4h** order. The first qualifying finding
+divergences in **5m → 15m → 30m → 1h → 4h** order. The first qualifying finding
 at **any** timeframe produces the final chase alert and stops searching. The earlier
 descending ladder is superseded. Within one frame, select its earliest newly available
 event; old findings are not replayed when price later turns adverse.
@@ -35,7 +36,7 @@ confirm entry. No Close the deal action is offered because execution is not conn
 
 ```mermaid
 flowchart TD
- A["Original 4h alert"] --> B["Check each minute: 1m → 5m → 15m → 30m → 1h → 4h"]
+ A["Original 4h alert"] --> B["Check each minute: 5m → 15m → 30m → 1h → 4h"]
  B -->|"First eligible same-direction divergence"| C["Final Chasing alert: search stopped"]
  B -->|"Configured favorable move"| D["Stop and notify"]
  B -->|"Return to original close"| E["Notify; keep chasing"]
@@ -108,7 +109,7 @@ unfinished/future bars, and splits detector history at absent scheduled candles.
 reuses repository RSI(3), BB and provisional-close rules; exported indicator columns are
 ignored. Volume features include raw signal-candle volume and RVOL against the preceding
 20 same-frame candles. Outcomes compare original and first-chase entry, strictly after
-availability, through a common origin horizon with configurable cost. A final-1m subgroup
+availability, through a common origin horizon with configurable cost. The preserved baseline includes a final-1m subgroup
 is diagnostic only; it is not a requirement for the first-chase policy.
 
 Reports include root/event ledgers, all-root counts, no-entry/incomplete counts, pairwise
@@ -136,3 +137,5 @@ All six original outcomes and both chase entries have complete paths in
 `data/chasing-near-complete-comparison/`. No fills occur on empty observations. Four
 provider/export overlap conflicts remain recorded, with original values preserved.
 The initial strict-gap audit above is historical; this update supersedes its data blocker.
+
+Current five-minute branch: one-minute candles supply price observations and simulated fills only; they cannot trigger a chase. The original trigger behavior is preserved on `codex/chasing-1m-baseline`.

@@ -1,8 +1,28 @@
 import json
+import unittest
 from unittest.mock import patch
 from test_postgres_support import PostgresTestCase, TestStore
 from test_divergence_chasing import signal
-from chasing_runtime import enroll, tick, deliver_pending, callback
+from chasing_runtime import enroll, tick, deliver_pending, callback, market
+
+
+class MarketTests(unittest.TestCase):
+    def test_minute_prices_are_fetched_without_minute_divergence_detection(self):
+        from scanner import Candle
+        from divergence_chasing import CHASE_FRAMES, DURATIONS
+        now=20000000;detected=[];fetched=[]
+        def fetch(asset,frame):
+            fetched.append(frame)
+            return [Candle(now-DURATIONS[frame],now,100,100,100,100)]
+        def detect(rows,rules,symbol,frame,**kw):
+            detected.append(frame)
+            return []
+        with patch('kraken_feed.fetch_kraken',side_effect=fetch),patch('scanner.detect',side_effect=detect):
+            price,at,signals=market(dict(symbol='kraken:Kraken:NEAR/USD',rules={}),now)
+        self.assertEqual((price,at,signals),(100,now,[]))
+        self.assertIn('1m',fetched)
+        self.assertEqual(set(detected),set(CHASE_FRAMES))
+        self.assertNotIn('1m',detected)
 
 USER='00000000-0000-0000-0000-000000000001'
 INST='00000000-0000-0000-0000-000000000002'

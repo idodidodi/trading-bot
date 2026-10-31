@@ -9,7 +9,7 @@ flowchart TD
     D -- Yes --> E[Send favorable-stop alert and stop chasing]
     D -- No --> F{Price is adverse to original close?}
     F -- No --> C
-    F -- Yes --> G[Inspect newly available same-direction divergences\n1m → 5m → 15m → 30m → 1h → 4h]
+    F -- Yes --> G[Inspect newly available same-direction divergences\n5m → 15m → 30m → 1h → 4h]
     G --> H{Any eligible divergence?}
     H -- No --> C
     H -- Yes --> I[Send first eligible finding and stop chasing\nKeep I'm in and Done available]
@@ -34,3 +34,5 @@ at most once per rolling minute per user. Neither Done nor an alert reports a tr
 
 The backtest runs separately: every original is retained, and observational follow-ups
 found after a strategy stop are labeled separately from strategy-eligible alerts.
+
+Current five-minute branch: one-minute candles supply price observations and simulated fills only; they cannot trigger a chase. The original trigger behavior is preserved on `codex/chasing-1m-baseline`.

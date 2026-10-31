@@ -195,7 +195,9 @@ def detail_report(out,report,paths,grid,cutoff,hours=12,failure_pct=2):
     from chasing_research import read_series,detect_series
     from platform_app import load_rules
     children=[]
-    for frame in FRAMES[1:]:
+    eligible=report.get('config',{}).get('chase_timeframes',FRAMES)
+    for frame in eligible:
+        if frame=='4h':continue
         bars,volumes,audit=read_series(paths[frame],frame,cutoff*1000)
         children.extend(detect_series(bars,volumes,load_rules(),'KRAKEN:NEARUSD',frame,audit['verified_empty']))
     children.sort(key=lambda s:(s['confirmed_at'],-FRAMES.index(s['timeframe'])))
@@ -211,7 +213,6 @@ def detail_report(out,report,paths,grid,cutoff,hours=12,failure_pct=2):
             when=child['confirmed_at']//1000;idx=bisect_right(starts,when-60)-1
             if idx>=0 and (1 if s['direction']=='bullish' else -1)*(grid[idx][4]/s['price2']-1)<0:
                 observed=child;break
-        if follow and follow['signal']['timeframe']=='4h':follow=None
         second=follow['signal'] if follow else observed
         second_at=(follow['at']//1000 if follow else second['confirmed_at']//1000) if second else None
         before=excursion(grid,starts,at,second_at or deadline,s['price2'],s['direction'],failure_pct)
@@ -240,8 +241,9 @@ def detail_report(out,report,paths,grid,cutoff,hours=12,failure_pct=2):
                         failure_pct,fmt(after.get('failure_threshold_at')),after.get('status','no_followup'),
                         local(r['original_at']),local(r['followup_at']),local(after.get('recovery_at'))])
     lines=['# One-year NEAR/USD RSI divergence report','',
+           'Eligible chasing frames (smallest first): '+ ' → '.join(reversed(eligible))+'. One-minute prices remain available for path measurement and hypothetical fills.',
            f"Original signal interval: {stamp(report['config']['start_at']//1000) if report.get('config',{}).get('start_at') else 'see replay.json'} (inclusive) to {stamp(report['config']['end_at']//1000) if report.get('config',{}).get('end_at') else 'see replay.json'} (exclusive). Data cutoff: {stamp(cutoff)}.",
-           'Every original 4h divergence is listed in cases.csv. Follow-ups are same-direction lower-frame divergences while adverse to the original close.',
+           'Every original 4h divergence is listed in cases.csv. Strategy follow-ups are eligible same-direction chasing divergences while adverse to the original close; any qualifying new 4h finding is retained. Observation-only follow-ups search the eligible lower frames.',
            'Strategy follow-ups stop at the first eligible event; observation-only follow-ups after a favorable stop are marked separately.',
            f'Search window: {hours} hours. Post-follow-up window: {hours} hours. Late windows are censored, never counted as successes.',
            f'Before MAE is measured from original P2 close; after MAE/MFE and the {failure_pct}% failure flag use the first observed minute close at the follow-up alert.',
@@ -288,6 +290,7 @@ def detail_report(out,report,paths,grid,cutoff,hours=12,failure_pct=2):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output',type=Path,required=True);p.add_argument('--cache',type=Path,required=True)
+    p.add_argument('--candles',type=Path,help='Replay an existing normalized dataset without network downloads')
     p.add_argument('--start',default='2025-10-31T00:00:00Z');p.add_argument('--end',default='2026-10-31T00:00:00Z')
     p.add_argument('--cutoff',default='2026-10-31T13:45:00Z')
     p.add_argument('--refresh-report',action='store_true');p.add_argument('--window-hours',type=int,default=12)
@@ -296,11 +299,22 @@ def main():
     if not start<end<=cutoff<=int(time.time()):p.error('Invalid annual bounds')
     if args.window_hours<1 or not math.isfinite(args.failure_pct) or args.failure_pct<=0:p.error('Invalid report window or adverse threshold')
     args.output.mkdir(parents=True,exist_ok=True);data=args.output/'candles';data.mkdir(exist_ok=True)
-    if args.refresh_report:
-        report=json.loads((args.output/'replay.json').read_text());grid=[]
+    if args.candles:data=args.candles
+    if args.refresh_report or args.candles:
+        grid=[]
         with (data/'1m.csv').open() as f:
             for r in csv.DictReader(f):grid.append((timestamp(r['time']),*(float(r[k]) for k in ('open','high','low','close','Volume')),int(r['n_trades'])))
+    if args.refresh_report:
+        report=json.loads((args.output/'replay.json').read_text())
         detail_report(args.output,report,{f:data/f'{f}.csv' for f in FRAMES},grid,cutoff,args.window_hours,args.failure_pct)
+        return
+    if args.candles:
+        from chasing_research import run
+        paths={f:data/f'{f}.csv' for f in FRAMES}
+        report=run(paths,'KRAKEN:NEARUSD',cutoff*1000,start_at=start*1000,end_at=end*1000)
+        (args.output/'replay.json').write_text(json.dumps(report,indent=2)+'\n')
+        details=detail_report(args.output,report,paths,grid,cutoff,args.window_hours,args.failure_pct)
+        print(json.dumps(dict(originals=len(details),summary=report['summary'],output=str(args.output)),indent=2),flush=True)
         return
     minutes={};evidence=[];seed=None;warmup=(start-60*86400)//14400*14400
     for urls in [[BASE+f'Kraken_OHLCVT_Full.zip.part{i:02}' for i in range(5)],[BASE+'Kraken_OHLCVT_2026Q3.zip']]:

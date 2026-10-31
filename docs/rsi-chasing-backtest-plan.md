@@ -60,7 +60,7 @@ explicit hypothetical trade policies, and whether waiting for further divergence
 The bot itself continues to send signals; it does not choose entries for the user.
 
 **Latest user clarification (supersedes the descending ladder):** after the original
-4h alert, check each minute in this order: **1m → 5m → 15m → 30m → 1h → 4h**.
+4h alert, check each minute in this order: **5m → 15m → 30m → 1h → 4h**.
 At the first newly eligible **same-direction** divergence, send the final personal
 Chasing alert and **stop chasing immediately**, regardless of its timeframe. Do not
 require a sequence of confirmations. Keep I'm in available on that final card; only
@@ -119,7 +119,7 @@ These are proposals and alternatives, not additional accepted requirements.
 
 | Decision | Suggested first version | Alternatives / question |
 | --- | --- | --- |
-| Monitoring candle timeframe | Check 1m→5m→15m→30m→1h→4h each minute; stop on the first qualifying same-direction divergence | No mandatory chain. Opposite monitoring initially uses 4h bars at five-minute polling cadence. |
+| Monitoring candle timeframe | Check 5m→15m→30m→1h→4h each minute; stop on the first qualifying same-direction divergence | No mandatory chain. Opposite monitoring initially uses 4h bars at five-minute polling cadence. |
 | Adverse-price gate | Restrict lower-frame chase advancement to adverse movement; test original-close signed distance as a stable baseline | “Against us” could instead mean relative to latest chase close or a fresh adverse move over a recent interval. Set buffer and pause/resume policy explicitly. Always evaluate the favorable stop even when the adverse gate is off. |
 | First follow-up divergence | Notify, stop chase search at any qualifying timeframe, keep final card entry-eligible | Only clicking I’m in confirms entry; finding a signal alone does not. |
 | Follow-up timing | Only events newly available since the previous check and after original enrollment; lowest timeframe wins within a check | Missing/stale minute prices pause eligibility. Historical confluence is separate research. |
@@ -608,3 +608,5 @@ unverified; no production activation has been performed.
 The current first-divergence behavior is drawn in [the flow diagram](rsi-chasing-flow.md).
 The cached one-year NEAR/USD batch and metric definitions are documented in
 [the annual study guide](annual-near-backtest.md).
+
+Current five-minute branch: one-minute candles supply price observations and simulated fills only; they cannot trigger a chase. The original trigger behavior is preserved on `codex/chasing-1m-baseline`.

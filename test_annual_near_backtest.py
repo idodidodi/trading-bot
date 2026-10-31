@@ -12,6 +12,19 @@ from decimal import Decimal
 
 
 class AnnualTests(unittest.TestCase):
+    def test_actual_new_four_hour_followup_is_retained(self):
+        original=dict(confirmed_at=60000,direction='bullish',price2=100)
+        follow=dict(confirmed_at=180000,direction='bullish',timeframe='4h')
+        report=dict(roots=[dict(id='root',signal=original,status='complete_first')],
+                    events=[dict(session='root',kind='chase',signal=follow,at=180000)],report_hash='test')
+        rows=[(i*60,99,99,99,99,1,1) for i in range(10)]
+        with tempfile.TemporaryDirectory() as d, \
+             patch('chasing_research.read_series',return_value=([],{},dict(verified_empty=[]))), \
+             patch('chasing_research.detect_series',return_value=[]):
+            result=detail_report(Path(d),report,{f:Path(d) for f in ('1h','30m','15m','5m','1m')},rows,600)
+        self.assertEqual(result[0]['followup_source'],'strategy')
+        self.assertEqual(result[0]['followup']['timeframe'],'4h')
+
     def test_correlation_ranks_average_tied_volume_values(self):
         self.assertEqual(ranks([30,10,10,20]),[4,1.5,1.5,3])
 

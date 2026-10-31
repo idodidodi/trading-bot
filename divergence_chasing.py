@@ -8,8 +8,9 @@ import hashlib
 import json
 
 FRAMES = ('4h', '1h', '30m', '15m', '5m', '1m')
+CHASE_FRAMES = FRAMES[:-1]
 DURATIONS = dict(zip(FRAMES, (14400000, 3600000, 1800000, 900000, 300000, 60000)))
-VERSION = 'chasing-v1'
+VERSION = 'chasing-v2-5m'
 
 
 def percentage(value):
@@ -41,7 +42,7 @@ def create(user, root, at, stop_pct=.5, expires_at=None):
 def step(session, now, *, price=None, price_at=None, signals=(), enter=False):
     """Return a fresh state and logical events. Caller serializes/persists atomically.
 
-    Every minute inspect newly available divergences from 1m upward through 4h.
+    Every minute inspect newly available divergences from 5m upward through 4h.
     The first eligible event ends searching; its card remains entry-eligible.
     Closed minute prices are the reproducible v1 stop/return observation source.
     """
@@ -73,7 +74,7 @@ def step(session, now, *, price=None, price_at=None, signals=(), enter=False):
                     s['last_return_at'] = now
                     event('return_to_close', price=price, price_at=price_at)
                 if signed < 0:
-                    candidates = [c for c in signals if c['timeframe'] in FRAMES
+                    candidates = [c for c in signals if c['timeframe'] in CHASE_FRAMES
                                   and c['symbol'] == s['root']['symbol']
                                   and c['direction'] == s['root']['direction']
                                   and s['checked_at'] < c['confirmed_at'] <= price_at]
