@@ -4,6 +4,8 @@ Status: discussion draft; no runtime implementation or activation authorized by 
 Prepared 31 October 2026 on `codex/rsi-chasing-backtest-plan`, from source commit
 `908f3147da812cbe6949c2909246e3e0ad14d614`.
 Updated with the user's favorable-move stop rule: 0.5% beyond the original signal close.
+Extended with the voice-session requirements for volume, 4h-first research and descending
+timeframes. See the [detailed research design and literature check](rsi-chasing-research-design.md).
 
 ## 1. Agreed behavior and scope
 
@@ -47,6 +49,20 @@ monitoring. The return-to-close notification above remains non-terminal; reachin
 0.5% favorable threshold is the new terminal exception. Once I'm in has already been
 accepted, the session follows its opposite-monitoring lifecycle instead of this chase rule.
 
+**Backtest and chase additions from the voice session:** prioritize original **4h** RSI
+signals and user-supplied TradingView CSVs for **4h, 1h, 30m, 5m and 1m** of the same
+asset. Study signal-candle volume, defined success rates, net profitability under
+explicit hypothetical trade policies, and whether waiting for further divergences helps.
+The bot itself continues to send signals; it does not choose entries for the user.
+
+The proposed new chase approach descends to lower timeframes **only while price moves
+against the original signal**. After a same-direction 1h divergence, look for another
+on smaller timeframes. A **1m divergence completes the chase search** because no smaller
+supplied timeframe remains; send the final chase signal without inferring entry. A 5m
+divergence alone does not stop the search. The exact ladder, adverse-price definition,
+child search windows, missing-stage fallback and entry access after 1m completion remain
+written decisions. The original-close 0.5% favorable stop remains in effect while chasing.
+
 This task produces a plan only. No chats, provider downloads, production queries,
 scanners, alerts, account connections, orders, deployment or GitHub push were performed.
 There are no backtest results or claimed strategy improvements.
@@ -59,7 +75,8 @@ There are no backtest results or claimed strategy improvements.
 | Actual alert timing | [`scanner.py`](../scanner.py) evaluates provisional and structurally confirmed signals. [`platform_app.py`](../platform_app.py), `Store.insert`, cancels default delivery for structural confirmations. Provisional signals carry `alert_timing='pivot_close'`; their `confirmed_at` field means P2 close | The existing original Telegram alert is a **candle-close provisional** divergence, not a pattern known only one bar later. Later bars must never decide whether that earlier alert existed. |
 | Identity and deduplication | `signal_alert_identity` groups Telegram alerts by instrument/feed, timeframe, direction, P2 and provisional/confirmed stage; dashboard evidence retains individual P1/P2 pairs | One P2 can have several qualifying P1 pairs. Preserve all evidence but avoid generating several chase messages or sessions for one original alert. |
 | Cadence | [`scan_schedule.py`](../scan_schedule.py) waits for the next source candle close; `scanner._scanner_worker` can sleep until other scheduled work. Seed `scanner.json` has `poll_seconds=14400`; saved Postgres config is authoritative after setup | Changing one poll value will not deliver a separate one-minute/five-minute monitoring service. Large full-universe cycles must not block due monitor work. |
-| Supported bars | `scanner.TIMEFRAMES` and current provider adapters expose 1h, 4h, daily, weekly, monthly (adapter subsets vary); no current 1m/5m scanner path | Polling every minute is different from calculating RSI on 1m bars. Minute prices/bars and their history require an explicit adapter/data plan. |
+| Supported bars | `scanner.TIMEFRAMES` and current provider adapters expose 1h, 4h, daily, weekly, monthly (adapter subsets vary); no current 30m/5m/1m scanner path | Polling cadence is different from RSI candle timeframe. The supplied multi-frame CSV workflow needs a separate research importer before any live adapter work. |
+| Volume | `scanner.Candle`, candle caches and both Python/JavaScript CSV parsers retain OHLC without volume | Preserve volume in a new offline research record; existing stored outcomes cannot establish the requested volume relationship. |
 | Personal delivery | [`telegram_personal.py`](../telegram_personal.py), [`telegram_delivery.py`](../telegram_delivery.py), [`cloud/telegram-personal.sql`](../cloud/telegram-personal.sql) already provide per-user routes, suppression decisions, reservations and persisted message state | Extend those controls, with user/session-specific events and no shared-chat fallback. Telegram delivery remains at-least-once under ambiguous timeouts. |
 | Existing Done | [`docs/telegram-personal-alerts.md`](telegram-personal-alerts.md), [`telegram_dismissal.py`](../telegram_dismissal.py): personal Done starts message deletion with a three-second Undo window | Message dismissal is separate from signal state. Its behavior for the new chats must be explicitly chosen. |
 | Listener ownership | [`telegram_checklist.py`](../telegram_checklist.py) owns polling, persisted offsets and callback dispatch; personal callbacks bind bot/chat/message/user | Add callbacks to this listener, not another `getUpdates` consumer. Preserve ownership/effects checks and deletion deadlines. |
@@ -90,7 +107,10 @@ These are proposals and alternatives, not additional accepted requirements.
 
 | Decision | Suggested first version | Alternatives / question |
 | --- | --- | --- |
-| Monitoring candle timeframe | Keep the original signal timeframe, with due checks every 60/300 seconds; separately sample minute prices for close-return notifications | If the intent is faster **new divergences**, explicitly choose 1m or 5m RSI bars, or a smaller timeframe mapped from the original. A weekly chart cannot generate new closed weekly patterns each minute. What timeframe is wanted for chase and opposite detection? |
+| Monitoring candle timeframe | Primary research starts from 4h and compares proposed descent 4h→1h→30m→5m→1m with strict, skip-capable and direct-lower-frame controls; chase polling remains every minute | User clarified smaller-timeframe chasing. Which rungs are mandatory, may stages be skipped, and which candle timeframe should be used for opposite detection after entry? Five-minute polling does not settle that last choice. |
+| Adverse-price gate | Restrict lower-frame chase advancement to adverse movement; test original-close signed distance as a stable baseline | “Against us” could instead mean relative to latest chase close or a fresh adverse move over a recent interval. Set buffer and pause/resume policy explicitly. Always evaluate the favorable stop even when the adverse gate is off. |
+| Final 1m divergence | Notify and stop further chase searches; keep entry unconfirmed | Decide whether the final card remains eligible for I'm in and for how long. Suggested: allow a deliberate click without reopening chasing; do not silently infer entry or switch direction. |
+| Child-event timing/window | Require a newly available child after the parent, with a proposed one-parent-duration search window | Decide whether P2 itself must close after parent availability, whether historical confluence counts separately, and timeout/fallback rules. Five 1m bars after 5m is not five 5m bars after 30m. |
 | Alert stage | Match today's P2-close provisional alerts; label them clearly | Require structural confirmation instead, accepting one monitoring-bar delay. Decide independently for chase and opposite, and test each policy separately. |
 | What counts as the next divergence? | Any new qualifying same-direction P2 after the original P2, using the existing rolling set of eligible P1 pivots | Require each new P2 to diverge against original P2, original P1, or the last chase P2; perhaps require a more adverse close than the last chase. These produce different events and must be separate backtest variants. |
 | Entry before another divergence | Offer a start card in Chasing immediately after enrollment in the original alert, with Done / I'm in | Otherwise the user cannot click I'm in until a chase/price notification appears. Decide whether the original personal RSI alert should also carry I'm in, or whether the start card is wanted. |
@@ -104,8 +124,10 @@ These are proposals and alternatives, not additional accepted requirements.
 | Preferences during monitoring | Two independent message checkboxes: Chasing and Live positions. Suppress messages without implying entry/closure; show monitoring state separately | Should opting out also pause computation? Decide resumption/backlog policy. Warn before disabling Live positions notifications for an entered session and make the consequence visible. |
 | New-category defaults | Register disabled until each user's destinations and choices are verified | Existing categories default on; do not use that implicit default to send new categories to unverified chats. Decide whether existing RSI category opt-out also prevents new chase enrollment. |
 
-Priority for the first discussion: timeframe/stage, Done semantics, entry access before a
-second divergence, and price-trigger policy. These determine what the backtest must replay.
+Priority for the next discussion: adverse-gate reference, required/skippable rungs,
+child timing/windows and final-card entry eligibility, plus the outstanding Done semantics
+and opposite timeframe. Research success/exit definitions must be fixed before reporting
+profitability. The companion design proposes bounded experiments rather than assumes answers.
 
 ## 4. Proposed lifecycle and durable records
 
@@ -114,7 +136,8 @@ user's monitoring and message state. Suggested lifecycle:
 
 | State | Event | Result / next due |
 | --- | --- | --- |
-| `chasing` | New same-direction divergence | Create recipient-specific chase outbox event; stay `chasing`, next due +60s |
+| `chasing` | Eligible intermediate same-direction divergence while adverse gate qualifies | Create recipient-specific chase event, advance the chosen lower-frame rung; stay `chasing`, next due +60s |
+| `chasing` | Eligible same-direction 1m divergence | Freeze chain evidence, enqueue final Chasing alert, move to `chase_search_complete_1m`; clear chase/price deadlines, entry still unconfirmed |
 | `chasing` | Eligible original-close price notification | Create rate-limited outbox event; stay `chasing`, next due +60s |
 | `chasing` | Price reaches 0.5% favorably beyond original close | Atomically move to `chase_stopped_favorable`, freeze trigger evidence, enqueue one logical stop alert to this user's Chasing chat, clear chase/price deadlines |
 | `chasing` | Owner's valid I'm in callback | Atomically record reported entry, disable further chase/price events, move to `monitoring_opposite`, next due +300s |
@@ -122,11 +145,12 @@ user's monitoring and message state. Suggested lifecycle:
 | `monitoring_opposite` | First eligible opposite event | Atomically freeze selected evidence and enqueue Live positions event; move to `opposite_found`; clear periodic search deadline |
 | `opposite_found` | Delivery failure/retry | Retry the same logical alert, never restart periodic search or select a different opposite event |
 | `chase_stopped_favorable` | Delivery failure/retry | Retry the same stop alert; do not resume chasing or start opposite monitoring |
+| `chase_search_complete_1m` | Delivery failure/retry | Retry the same final alert; no resumed chase or automatic opposite monitoring. Later I'm in eligibility is a separate decision |
 | Any | Done / Undo | Apply only the agreed message action; no monitoring transition |
 
 Potential `expired`, `stopped_by_user` and `closed_reported` states require the decisions
-above. `chase_stopped_favorable` is an agreed terminal chase state. Neither it nor
-`opposite_found` is proof of a closed trade. No automatic direction switching
+above. `chase_stopped_favorable` and `chase_search_complete_1m` end chase search; neither
+confirms entry. `opposite_found` is not proof of a closed trade. No automatic direction switching
 on prices, message delivery, another user's action or a hypothetical backtest fill.
 
 Suggested new private Postgres records (names provisional):
@@ -135,6 +159,8 @@ Suggested new private Postgres records (names provisional):
   finding IDs, exact feed/venue/symbol, source and monitor timeframes, direction,
   rule/policy versions, P2 close/time, alert-created and accepted-send times if known,
   status/revision, next due, last processed evidence cursor and enrollment time.
+  Retain current rung, parent/child event chain, adverse-gate reference, pause state,
+  stage/root deadline and a separate entry-eligibility flag for terminal search cards.
 - **Entry:** accepted callback receipt time and Telegram update ID, source message and
   chase evidence, `entry_source='user_click'`, optional user-entered fill price, observed
   market price/time/source/staleness. A click confirms reported entry, **not broker fill
@@ -155,13 +181,14 @@ installation membership checks. Only an authorized owner/admin can register veri
 destinations for another user; reject arbitrary caller-supplied user IDs elsewhere.
 Callbacks must validate bot, chat, message, enrolled Telegram user, session and revision.
 
-Serialize I'm in, the favorable stop and due monitor jobs with row locks/compare-and-set
+Serialize I'm in, 1m completion, the favorable stop and due monitor jobs with row locks/compare-and-set
 revisions. Only one transition can win while the session is `chasing`; if entry wins,
 do not apply the chase stop to the entered session. If the stop wins, do not let a stale
 button silently restart monitoring. Decide separately how a user can report entry after
-the chase has stopped. Duplicate
-callbacks must return the already accepted result, not reset the entry time or deadline.
-Callbacks on old cards can enter only their still-active root session. Disable stale
+the chase has stopped. For 1m completion, decide whether a final card stays entry-eligible
+without an active search. Duplicate callbacks must return the already accepted result,
+not reset the entry time or deadline. Callbacks on old cards can enter only an explicitly
+entry-eligible root session. Disable stale
 I'm in buttons on sibling cards where possible; server-side checks remain authoritative.
 Decide the UX if Done deletion wins a race with I'm in; preserve a dashboard entry control
 so deleting a card cannot make a still-active chase impossible to enter.
@@ -170,7 +197,8 @@ Commit state transitions and outbox insertion together. Before sending, recheck 
 revision and opt-out policy so queued chasing cards are suppressed after entry; an
 already in-flight Telegram request can still complete. Suppress queued non-terminal
 chase/return cards after the favorable stop too; its own terminal alert remains eligible
-for delivery despite the session being stopped. Check preferences again for
+for delivery despite the session being stopped. Apply the same revision policy on 1m
+completion while preserving its final alert. Check preferences again for
 retries and retain suppression decisions so re-enabling does not replay old notifications.
 Bind message IDs to sessions after sends and reconcile ambiguous sends using the
 existing reservation model. Promise one **logical** alert, not exactly-once Telegram.
@@ -298,6 +326,13 @@ Primary question: does waiting for a defined chase entry reduce adverse excursio
 an actionable alert, and what opportunity/delay cost does it introduce? Do not present
 lower drawdown among successful chases as proof the whole strategy is better.
 
+The expanded study also asks whether a defined hypothetical trading policy is profitable,
+when success rates are higher, whether signal-candle **relative volume** adds predictive
+value, and whether lower-frame divergences are more frequent/useful after a parent
+divergence than at matched adverse-price times. The [companion research design](rsi-chasing-research-design.md)
+defines CSV intake, bounded ladder/control policies, volume features, conditional-rate
+denominators, success/exit proposals, costs, holdout validation and uncovered scenarios.
+
 Record separately: P2 close, structural confirmation when applicable, provider-available
 time, monitor-check time, alert-enqueue time, Telegram accepted-send time if historically
 known, hypothetical fill time, and real user-click time if later collected. Call the
@@ -393,11 +428,12 @@ pretending it is a zero-MAE completed trade. For uncertain tail observations rep
 coverage/censoring, not success. Group confidence intervals by root/asset-time block;
 multiple P1 pairs, overlapping roots and timeframes are correlated observations.
 
-Initial research is excursion analysis. An optional later trading simulation can exit
-at the first opposite alert's next executable price, using the five-minute event clock
-and a fixed terminal timeout. Choose position sizing, concurrent-exposure limits, short
-availability and exits before reporting win rate, expectancy, profit factor or portfolio
-drawdown. This exit rule is a research experiment, not automatic live trade closing.
+Research now includes both excursion analysis and **fully specified hypothetical
+profitability comparisons**. Proposed exits include fixed-horizon marking/closing and
+first eligible opposite alert on a declared candle timeframe with a fixed terminal
+timeout. Choose costs, sizing, concurrent-exposure limits, short availability and exits
+before reporting net win rate, expectancy, profit factor or portfolio drawdown. These
+are simulation conventions; they do not authorize live entry decisions or trade closing.
 
 ### Preventing lookahead and preserving reproducibility
 
@@ -446,8 +482,8 @@ Do not select thresholds based on the final test period's drawdown improvement.
 | Stage | Concrete output | Completion condition |
 | --- | --- | --- |
 | 0 — Written decisions | Resolve the priority questions and record policy version | User agrees what is being monitored and what the buttons mean; no live changes |
-| 1 — Data feasibility | Coverage/latency/identity manifest for a small historical slice | Minute data verified where needed; unsupported markets explicitly excluded |
-| 2 — Offline research | Event replay, O/C comparison CSV/JSON and readable report | Reproducible hashes, prefix/lookahead tests, complete/no-chase cohorts and stated costs; no Telegram/production dependency |
+| 1 — Data feasibility | Audit supplied 4h/1h/30m/5m/1m TradingView CSVs, preserve volume, synchronize coverage | Exact feed/session identities, volume type and common history verified; missing data explicitly excluded |
+| 2 — Offline research | Original/chase MAE, transition probabilities/lift, volume associations, defined success and hypothetical net profitability reports | Frozen policies/exits/costs, all-root cohorts, prefix/lookahead tests, holdout evidence and reproducible hashes; no Telegram/production dependency |
 | 3 — Private persistence and settings | Additive schema/API, personal registration, two preferences, monitor status/history | Disposable Postgres access/isolation and upgrade tests pass; no production migration |
 | 4 — Worker/callback implementation | Shared due scheduler, callbacks, price policy, outbox and restart recovery | Fake clock/providers/Telegram demonstrate lifecycle and races; external effects disabled |
 | 5 — Manual onboarding and later activation | Four verified chats, saved mappings/preferences, reviewed source release | Separate authorized setup; existing production service only; safe verification without alerts/orders |
@@ -477,6 +513,13 @@ Required later acceptance cases:
   verify entered sessions are unaffected and the anchor never resets to a chase close.
 - Multiple P1 pairs for one P2, overlapping roots/timeframes, feed change, asset removal,
   opted-out/unregistered users, re-enable without replay, and mapping/preference revisions.
+- Sequential lower-frame availability, adverse-gate pause/resume, missing/intermediate
+  rungs, fixed stage timeouts and final 1m notification/search completion without entry.
+  Confirm the final card's chosen entry policy and no automatic restart after more drawdown.
+- Volume retention, no-volume versus zero-volume, original/child/confirmation timing,
+  cross-timeframe reconciliation, matched conditional-rate denominators, costs, small
+  volume-bin samples and chronological holdout boundaries. No leaked final 4h volume at
+  an earlier child event, and no real click inferred from any simulated fill.
 - First opposite event atomically stops searching even if delivery fails; retry preserves
   evidence. No shared fallback, cross-user state access, duplicate transition or order call.
 - Python/JavaScript prefix parity, provisional failure remaining in cohort, fill/MAE timing,
