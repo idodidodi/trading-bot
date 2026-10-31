@@ -19,19 +19,25 @@ These are position exits, distinct from the original alert candle's monitoring t
 
 ## Additional same-direction divergence: trailing extension
 
-The owner added: after another divergence, use a **1% milestone**, do not close
-immediately, and use a **0.5% trailing stop**.
+The owner confirmed the following after another same-direction divergence. Favorable
+thresholds are measured from entry, mirrored for long and short positions. Replace the
+immediate fixed-profit exit with this trailing approach:
 
-The working interpretation awaiting confirmation is: replace the immediate fixed-profit
-exit, wait for **+1% favorable movement from entry**, then arm a **0.5% price trail**
-from the best price reached. For a long this trails the highest price; for a short it
-trails the lowest price. This is a proposed interpretation, not an approved state machine.
+| Signal timeframe | Favorable movement from entry | Trailing distance from best price |
+|---|---:|---:|
+| 1h | Reach +1% | Activate 0.5% trail |
+| 4h | Reach +1% | Activate 0.5% trail |
+| 4h | Reach +2% | Increase trailing distance to 1% |
+
+Keep the original loss stop active until trailing activation: 0.5% for 1h and 1% for
+4h. For a long the trail follows the highest price; for a short it follows the lowest
+price. Reaching a milestone activates/changes the trail; it is not an immediate profit
+exit. The 4h change from 0.5% to 1% is a widening of trailing distance.
 
 Outstanding details before implementation:
 
-- Confirm that +1% from entry activates the trail for both 1h and 4h signals, rather
-  than representing a different threshold or price anchor.
-- Confirm whether the original loss stop remains active before trailing activation.
+- Define the 4h widening transition precisely, including treatment of an existing
+  protective stop level and whether the 1% trailing stage remains latched after retracement.
 - Define the qualifying additional divergence: eligible timeframe and when it becomes
   available. Define treatment of repeated divergences and a threshold crossing in the
   same candle; never infer intraminute order from OHLC alone.
