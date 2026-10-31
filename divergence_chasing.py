@@ -58,6 +58,7 @@ def step(session, now, *, price=None, price_at=None, signals=(), enter=False, le
         event('reported_exit')
     elif enter and s['status'] in ('chasing', 'complete_first'):
         from position_monitor import start
+        if s.get('lookback',{}).get('status')=='pending':s['lookback'].update(status='cancelled',reason='Entry reported')
         s.update(status='opposite', entry_at=now, next_due=now,position=start(s['root']['timeframe'],now))
         if s['chain']:s['position']['additional_divergence']=deepcopy(s['chain'][0])
         event('entered')

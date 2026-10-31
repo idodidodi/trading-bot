@@ -1,3 +1,5 @@
+> New control: [Chase + look back](chase-lookback.md) reviews the missed interval from the original alert, with historical timestamps and no backdated entry.
+
 > Latest operational change: pre-entry chase checks every five minutes; after “I’m in,” minute position-rule checks and Telegram exit alerts. See [the monitoring specification](telegram-position-monitor.md). Earlier research results remain pinned snapshots.
 
 # RSI divergence chasing and backtest plan

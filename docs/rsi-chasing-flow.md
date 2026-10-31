@@ -3,6 +3,11 @@
 ```mermaid
 flowchart TD
     A[New eligible personal 1h or 4h RSI alert] --> B[Chase check every five minutes]
+    A -. Chase + look back .-> LB[Replay from original alert to click
+Report historical finding, stop, or incomplete coverage]
+    LB -. No finding or incomplete; session still active .-> B
+    LB -. First finding in active session .-> H
+    LB -. Stop reached or session already terminal .-> LS[Keep chase stopped]
     B --> C{Favorable move reaches user's chasing threshold?}
     C -- Yes --> D[Send stop notice and stop chasing]
     C -- No --> E{Price adverse to original close?}
@@ -44,3 +49,5 @@ See [the full operational specification](telegram-position-monitor.md).
 
 Earlier annual comparison results remain pinned to their recorded implementation and
 minute chase-check cadence. This updated flow is not a claim of a deployed worker.
+
+The [lookback specification](chase-lookback.md) defines retrospective results and terminal-state preservation. The return to live chasing applies only while the original session remains active.

@@ -22,27 +22,39 @@ def people(store):
 
 def enqueue(db,s,event):
     key=f"{s['id']}:{event['kind']}:{event['at']}"
+    if event.get('request_id'):key+=':'+event['request_id']
     db.execute('INSERT INTO chasing_outbox(id,session_id,event) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',
                (key,s['id'],json.dumps(event)))
 
 
-def enroll(store,root,person):
+def proposal(root,person,now):
     if not enabled() or root.get('timeframe') not in ('1h','4h') or root.get('signal_status')!='provisional':return
-    now=int(time.time()*1000)
     if not person['chasing'] or not person['routes'].get('chasing'):return
     # Never enroll an old catch-up alert or pre-registration history.
     if now-root['confirmed_at']>DURATIONS[root['timeframe']] or root['confirmed_at']<person.get('created_at',now/1000)*1000:return
     s=create(person['user_id'],root,now,person['stop_pct'])
     s['settings_revision']=person['revision']
+    return s
+
+
+def chase_buttons(key):
+    return [[dict(text='Chase',callback_data='chase:start:'+key),
+             dict(text='Chase + look back',callback_data='chase:lookback:'+key)]]
+
+
+def enroll(store,root,person):
+    now=int(time.time()*1000)
+    s=proposal(root,person,now)
+    if s is None:return
     with store.connect() as db:
         created=db.execute('INSERT INTO chasing_sessions SELECT %s,installation,%s,%s FROM runtime_control WHERE id=1 AND bot_runtime.chasing_is_owner(installation,%s::uuid) ON CONFLICT DO NOTHING RETURNING id',
                           (s['id'],s['user'],json.dumps(s),s['user'])).fetchone()
         if created:enqueue(db,s,dict(kind='started',at=now,session=s['id']))
 
 
-def market(root,now):
+def market_bars(root,now):
     """Initial live support: exact Kraken spot roots only. Other feeds stay unavailable."""
-    from scanner import check_candles, detect
+    from scanner import check_candles
     from kraken_feed import fetch_kraken
     symbol=root['symbol']
     if not symbol.startswith('kraken:Kraken:'):raise ValueError('Chasing live feed currently requires Kraken spot')
@@ -64,11 +76,30 @@ def market(root,now):
         bars[f]=rows
     minute=bars['1m']
     if not minute:raise ValueError('Minute prices unavailable')
-    signals=[s for f,rows in bars.items() if f in CHASE_FRAMES for s in detect(rows,root['rules'],symbol,f,provisional=True)]
-    return minute[-1].close,minute[-1].end,signals
+    return bars
 
 
-def tick(store,now,fetch=market,clock=None):
+def signals_for(root,bars):
+    from scanner import detect
+    return [s for f,rows in bars.items() if f in CHASE_FRAMES for s in detect(rows,root['rules'],root['symbol'],f,provisional=True)]
+
+
+def market(root,now):
+    bars=market_bars(root,now);minute=bars['1m']
+    return minute[-1].close,minute[-1].end,signals_for(root,bars)
+
+
+def history(root,now):
+    from scanner import minimum_history
+    bars=market_bars(root,now)
+    for frame,rows in bars.items():
+        if frame=='1m':continue
+        if sum(b.end<=root['confirmed_at'] for b in rows)<minimum_history(root['rules']):
+            raise ValueError('Historical indicator warm-up is unavailable')
+    return bars['1m'],signals_for(root,bars)
+
+
+def tick(store,now,fetch=market,clock=None,lookback_fetch=history):
     from postgres_store import assert_worker
     assert_worker(store)
     with store.connect() as db:
@@ -76,8 +107,28 @@ def tick(store,now,fetch=market,clock=None):
     cache={}
     for key,snapshot in rows:
         checked_now=clock() if clock else now
+        if snapshot.get('lookback',{}).get('status')=='pending':
+            from chase_lookback import replay,finish
+            try:
+                if snapshot['chain']:
+                    result=dict(status='found',from_at=snapshot['root']['confirmed_at'],through_at=snapshot['parent_at'],signal=snapshot['chain'][0],recorded=True)
+                elif snapshot['lookback']['requested_at']-snapshot['root']['confirmed_at']>12*3600000:
+                    result=replay(snapshot,snapshot['lookback']['requested_at'],[],[])
+                else:
+                    minutes,signals=lookback_fetch(snapshot['root'],checked_now)
+                    result=replay(snapshot,snapshot['lookback']['requested_at'],minutes,signals)
+            except (ValueError,OSError,KeyError,TypeError,IndexError):
+                result=dict(status='incomplete',reason='Provider history is unavailable; no missed-signal conclusion can be made',from_at=snapshot['root']['confirmed_at'],through_at=None)
+            checked_now=clock() if clock else now
+            with store.connect() as db:
+                row=db.execute('SELECT state FROM chasing_sessions WHERE id=%s FOR UPDATE',(key,)).fetchone()
+                if not row or row[0]['revision']!=snapshot['revision']:continue
+                state,event=finish(row[0],result,checked_now)
+                db.execute('UPDATE chasing_sessions SET state=%s WHERE id=%s',(json.dumps(state),key))
+                enqueue(db,state,event)
+            continue
         try:
-            root=snapshot['root'];feed=(root['symbol'],json.dumps(root['rules'],sort_keys=True))
+            root=snapshot['root'];feed=(root['symbol'],root['timeframe'],json.dumps(root['rules'],sort_keys=True))
             if feed not in cache:cache[feed]=fetch(root,checked_now)
             price,price_at,signals=cache[feed]
             checked_now=clock() if clock else now
@@ -129,6 +180,19 @@ def text_for(s,event):
     if kind=='reported_exit':return head+'You reported exiting. Position monitoring stopped. No broker closure was inferred.'
     if kind=='position_data_delayed':return head+'Position data delayed. Exit conditions cannot be evaluated reliably; please monitor the position manually. Retrying every minute.'
     if kind=='position_data_resumed':return head+'Fresh minute data resumed. Position monitoring continues; movement during the data gap is unknown.'
+    if kind=='lookback_result':
+        from zoneinfo import ZoneInfo
+        result=event['result']
+        def when(at):return datetime.fromtimestamp(at/1000,ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y %H:%M %Z')
+        prefix=head+'LOOKBACK · retrospective review since '+when(result['from_at'])+'\n'
+        if result['status']=='found':
+            signal=result['signal']
+            suffix='Chasing is complete; entry is unconfirmed.' if s['status']=='complete_first' else 'The prior session state is unchanged; this does not reopen it.'
+            return prefix+f"Same-direction {signal['timeframe']} divergence available at {when(signal['confirmed_at'])}.\nThis is a historical finding reported now. {suffix}"
+        if result['status']=='stopped_favorable':return prefix+'The favorable-move stop was reached at '+when(result['through_at'])+' before an eligible second divergence. Chasing is stopped.'
+        if result['status']=='expired':return prefix+'The configured chase deadline was reached at '+when(result['through_at'])+' before an eligible second divergence. This does not restart chasing.'
+        if result['status']=='incomplete':return prefix+result['reason']+'. Lookback is incomplete; no absence of divergence is claimed.'
+        return prefix+'No eligible second divergence at the scheduled five-minute checks through '+when(result['through_at'])+'. Live chasing continues if this session is still active.'
     return head+dict(started='Chasing started. Only I’m in confirms your entry.',return_to_close='Price returned to the original close. Chasing continues.',expired='Chase expired after 40 hours.')[kind]
 
 
@@ -165,6 +229,7 @@ def deliver_pending(store,token):
             item=prepare_message(store,token,chat,text,[],owner)
             if s['status'] in ('chasing','complete_first'):
                 item.extra_keyboard=[[dict(text="I'm in",callback_data='chase:enter:'+s['id'])]]
+                item.extra_keyboard+=chase_buttons(s['id'])
             elif s.get('position') and s['position']['status']!='closed':
                 item.extra_keyboard=[[dict(text="I've exited",callback_data='chase:exit:'+s['id'])]]
             message=api(token,'sendMessage',dict(chat_id=chat,text=text,reply_markup=item.keyboard(),disable_notification=kwargs.get('silent',False)))
@@ -186,25 +251,45 @@ def deliver_pending(store,token):
 def callback(store,token,query):
     from telegram_checklist import api,bot_key
     from postgres_store import assert_worker
-    leaving=query.get('data','').startswith('chase:exit:')
-    key=query.get('data','').removeprefix('chase:exit:' if leaving else 'chase:enter:')
+    data=query.get('data','');parts=data.split(':',2)
+    if len(parts)!=3 or parts[0]!='chase' or parts[1] not in ('enter','exit','start','lookback'):return
+    action=parts[1];key=parts[2];leaving=action=='exit'
     message=query.get('message') or {};user=query.get('from',{}).get('id')
     assert_worker(store)
     answer='Entry unavailable for this message.'
     with store.connect() as db:
         binding=db.execute('SELECT 1 FROM chasing_outbox o JOIN telegram_personal_messages m ON m.id=o.dismissal_id WHERE o.session_id=%s AND o.bot=%s AND o.chat=%s AND o.message_id=%s AND o.telegram_user_id=%s AND m.state::jsonb->>\'phase\'=\'active\'',
                            (key,bot_key(token),str(message.get('chat',{}).get('id')),message.get('message_id'),user)).fetchone()
+        if not binding:
+            binding=db.execute('''SELECT 1 FROM telegram_personal_messages m
+              CROSS JOIN LATERAL jsonb_array_elements(coalesce(m.state::jsonb->'extra_keyboard','[]')) AS r(value)
+              CROSS JOIN LATERAL jsonb_array_elements(r.value) AS b(value)
+              WHERE m.bot=%s AND m.state::jsonb->>'chat_id'=%s AND (m.state::jsonb->>'message_id')::bigint=%s
+              AND (m.state::jsonb->>'user_id')::bigint=%s AND m.state::jsonb->>'phase'='active'
+              AND b.value->>'callback_data'=%s''',(bot_key(token),str(message.get('chat',{}).get('id')),message.get('message_id'),user,data)).fetchone()
         if binding:
             row=db.execute('SELECT state FROM chasing_sessions WHERE id=%s AND bot_runtime.chasing_is_owner(installation,user_id) FOR UPDATE',(key,)).fetchone()
             if not row:
                 api(token,'answerCallbackQuery',dict(callback_query_id=query['id'],text=answer))
                 return
             s=row[0]
-            s,events=step(s,int(time.time()*1000),enter=not leaving,leave=leaving)
+            now=int(time.time()*1000);events=[]
+            if action=='lookback':
+                from chase_lookback import request
+                import hashlib
+                request_id=hashlib.sha256(query['id'].encode()).hexdigest()[:16]
+                s,answer=request(s,now,request_id)
+            elif action=='start':
+                if s['status']=='chasing' and s.get('lookback',{}).get('status')!='pending':
+                    if not s.get('manual_live_from_at'):
+                        s.update(checked_at=now,last_price_at=now,next_due=now+300000,manual_live_from_at=now,revision=s['revision']+1)
+                    answer='Chasing live from your click; use Chase + look back to review the missed interval.'
+                else:answer='This chase is already complete, stopped, entered, or reviewing history; it was not restarted.'
+            else:s,events=step(s,now,enter=not leaving,leave=leaving)
             db.execute('UPDATE chasing_sessions SET state=%s WHERE id=%s',(json.dumps(s),key))
             for event in events:enqueue(db,s,event)
             if leaving and s['status']=='reported_exited':answer='Exit reported. Monitoring stopped.'
-            elif s['entry_at'] is not None:answer='Entry recorded. Minute monitoring is starting; awaiting a fresh market reference.' if events else 'Entry was already recorded.'
+            elif action=='enter' and s['entry_at'] is not None:answer='Entry recorded. Minute monitoring is starting; awaiting a fresh market reference.' if events else 'Entry was already recorded.'
     api(token,'answerCallbackQuery',dict(callback_query_id=query['id'],text=answer))
 
 

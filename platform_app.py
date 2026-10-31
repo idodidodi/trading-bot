@@ -276,7 +276,7 @@ class TelegramDestinationError(RuntimeError):
     """Telegram definitively rejected the destination; safe to use General."""
 
 
-def send_telegram(token, chat_id, text, silent=False, source_identity=None, dismissal_user_id=None):
+def send_telegram(token, chat_id, text, silent=False, source_identity=None, dismissal_user_id=None, dismissal_actions=None):
     from telegram_delivery import footer
     from telegram_formatting import presentation
     text = footer(text, source_identity)
@@ -287,6 +287,7 @@ def send_telegram(token, chat_id, text, silent=False, source_identity=None, dism
     if dismissal_user_id is not None:
         from telegram_personal import prepare_message
         dismissal = prepare_message(Store(), token, chat_id, text, entities, dismissal_user_id)
+        if dismissal_actions:dismissal.extra_keyboard=dismissal_actions
     payload = {'chat_id': chat_id, 'text': text, 'entities': entities,
                'disable_notification': silent}
     if checklist_key:

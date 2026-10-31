@@ -1,6 +1,7 @@
 """Per-user delivery decisions and persistent dismissal state for personal groups."""
 from functools import partial
 import json
+import time
 from telegram_routing import market_group
 
 
@@ -48,13 +49,17 @@ def deliver_personal(store, token, text, event, send, silent=False, payload=None
         if not eligible or not allowed:
             continue
         try:
+            from chasing_runtime import enabled as chasing_enabled, people as chasing_people, enroll,proposal,chase_buttons
+            chase_person=None;sender=partial(send,dismissal_user_id=person['telegram_user_id'])
+            if chasing_enabled() and strategy=='rsi' and payload:
+                chase_person=next((p for p in chasing_people(store) if str(p['user_id'])==str(person['user_id'])),None)
+                candidate=proposal(payload,chase_person,int(time.time()*1000)) if chase_person else None
+                if candidate:sender=partial(sender,dismissal_actions=chase_buttons(candidate['id']))
             deliver(store, token, saved_chat, text, event,
-                    partial(send, dismissal_user_id=person['telegram_user_id']), silent=silent)
-            from chasing_runtime import enabled as chasing_enabled, people as chasing_people, enroll
-            if chasing_enabled() and strategy == 'rsi' and payload:
-                for recipient in chasing_people(store):
-                    if str(recipient['user_id']) == str(person['user_id']):
-                        enroll(store,payload,recipient)
+                    sender, silent=silent)
+            if chase_person:
+                current=next((p for p in chasing_people(store) if str(p['user_id'])==str(person['user_id'])),None)
+                if current:enroll(store,payload,current)
         except (WorkerOwned, *RETRYABLE):
             raise
         except RuntimeError:
