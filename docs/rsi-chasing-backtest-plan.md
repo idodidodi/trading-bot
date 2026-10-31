@@ -604,3 +604,7 @@ preserve existing sessions/delivery history, then enable only reviewed recipient
 Implementation validation and dataset limits are recorded in the implementation guide.
 Production configuration, second-user enrollment and any performance benefit remain
 unverified; no production activation has been performed.
+
+The current first-divergence behavior is drawn in [the flow diagram](rsi-chasing-flow.md).
+The cached one-year NEAR/USD batch and metric definitions are documented in
+[the annual study guide](annual-near-backtest.md).
