@@ -1,5 +1,7 @@
 # RSI divergence chasing and backtest plan
 
+**Automated-entry milestone reminder:** revisit the owner’s [proposed timeframe-based position exits](automated-entry-exit-draft.md) before implementing automated entries or exits. The rule is provisional and needs clarification.
+
 Status: implementation on the planning branch; not deployed or activated in production.
 Prepared 31 October 2026 on `codex/rsi-chasing-backtest-plan`, from source commit
 `908f3147da812cbe6949c2909246e3e0ad14d614`.
