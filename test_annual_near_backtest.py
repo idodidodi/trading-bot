@@ -70,6 +70,11 @@ class AnnualTests(unittest.TestCase):
         self.assertIsNone(r['mfe_after_recovery_pct'])
         self.assertEqual(r['first_favorable_close_at'],60)
 
+    def test_zero_excursion_does_not_claim_a_false_extreme_time(self):
+        r=excursion([(0,98,99,97,98,1,1)],[0],0,60,100,'bullish')
+        self.assertEqual(r['mfe_pct'],0)
+        self.assertIsNone(r['mfe_at'])
+
     def test_dataset_labels_empty_minutes_and_aggregates_volume(self):
         with tempfile.TemporaryDirectory() as d:
             out=Path(d)

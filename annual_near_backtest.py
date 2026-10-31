@@ -126,13 +126,16 @@ def excursion(grid,starts,at,end,baseline,direction,failure_pct=2):
         if first_adverse is not None and r[0]+60>first_adverse and d*(r[4]/baseline-1)>=0 and recovery is None:recovery=r[0]+60
     resumed=[r for r in rows if recovery is not None and r[0]>=recovery]
     best_after=max(resumed,key=lambda r:d*((r[2] if d==1 else r[3])/baseline-1)) if resumed else None
+    mae=max(0,-d*((adverse[3] if d==1 else adverse[2])/baseline-1)*100)
+    mfe=max(0,d*((favorable[2] if d==1 else favorable[3])/baseline-1)*100)
+    post_mfe=max(0,d*((best_after[2] if d==1 else best_after[3])/baseline-1)*100) if best_after else None
     return dict(status='complete' if rows[-1][0]+60>=end else 'censored',
-                mae_pct=max(0,-d*((adverse[3] if d==1 else adverse[2])/baseline-1)*100),mae_at=adverse[0]+60,
-                mfe_pct=max(0,d*((favorable[2] if d==1 else favorable[3])/baseline-1)*100),mfe_at=favorable[0]+60,
+                mae_pct=mae,mae_at=adverse[0]+60 if mae>0 else None,
+                mfe_pct=mfe,mfe_at=favorable[0]+60 if mfe>0 else None,
                 first_adverse_at=first_adverse,first_favorable_close_at=first_favorable,
                 recovery_at=recovery,failure_threshold_at=failure,failure_pct=failure_pct,
-                mfe_after_recovery_pct=max(0,d*((best_after[2] if d==1 else best_after[3])/baseline-1)*100) if best_after else None,
-                mfe_after_recovery_at=best_after[0]+60 if best_after else None,through_at=rows[-1][0]+60)
+                mfe_after_recovery_pct=post_mfe,
+                mfe_after_recovery_at=best_after[0]+60 if post_mfe else None,through_at=rows[-1][0]+60)
 
 
 def ranks(values):
@@ -242,6 +245,7 @@ def detail_report(out,report,paths,grid,cutoff,hours=12,failure_pct=2):
            'Strategy follow-ups stop at the first eligible event; observation-only follow-ups after a favorable stop are marked separately.',
            f'Search window: {hours} hours. Post-follow-up window: {hours} hours. Late windows are censored, never counted as successes.',
            f'Before MAE is measured from original P2 close; after MAE/MFE and the {failure_pct}% failure flag use the first observed minute close at the follow-up alert.',
+           'If no follow-up exists, the before-phase measures the original-price path for the stated search window, even if causal chasing stopped earlier. It is not a live position or an extended alert session.',
            'Recovery requires a later minute close back to that follow-up baseline after an adverse excursion. This is price-path research, not an actual entry/fill.',
            'Times are UTC; extreme times identify the containing minute close, not an inferred intraminute trade order.','',
            f"Original 4h signals: {len(details)}.",f"Strategy follow-ups: {sum(r['followup_source']=='strategy' for r in details)}.",
@@ -252,10 +256,17 @@ def detail_report(out,report,paths,grid,cutoff,hours=12,failure_pct=2):
            'The failure flag is a configurable research example, not a broker stop or proof of permanent strategy failure; a later recovery can still occur.',
            'Maximum favorable moves and drawdowns are bounded by the stated window; a future move outside it is not included.',
            'No trades or alerts were sent. No-trade minutes are labeled observations and cannot receive hypothetical fills.']
+    followup_table=['| Follow-up population | Cases | Further adverse threshold reached | Recovery observed at least once |',
+                    '|---|---:|---:|---:|']
+    for source in ('strategy','observation_only_after_stop'):
+        group=[r for r in details if r['followup_source']==source]
+        followup_table.append(f"| {source} | {len(group)} | {sum(bool((r['after'] or {}).get('failure_threshold_at')) for r in group)} | {sum(bool((r['after'] or {}).get('recovery_at')) for r in group)} |")
+    lines.append('\n'.join(followup_table))
+    lines.extend(['','A recovery can occur before a later failure-threshold crossing. Recovery counts are not profitable-trade counts. See research.md for the separate fixed-horizon net-return comparison.'])
     (out/'report.md').write_text('\n\n'.join(lines)+'\n')
     cases=['# Every four-hour divergence','', 'Times below are Israel time; full UTC values and exact prices are in cases.csv.','']
     pct=lambda v:'unavailable' if v is None else f'{v:.3f}%'
-    local=lambda t:datetime.fromtimestamp(t,ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y %H:%M') if t else 'not observed'
+    local=lambda t:datetime.fromtimestamp(t,ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y %H:%M %z') if t else 'not observed'
     for i,r in enumerate(details,1):
         a=r['after'] or {};b=r['before']
         cases.extend([f"## {i}. {local(r['original_at'])} — {r['original']['direction']}",'',
