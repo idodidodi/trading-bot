@@ -147,6 +147,7 @@ def run(paths, symbol, cutoff, stop_pct=.5, cost_bps=10., horizon=3, start_at=No
         events=[]
         for bar in minutes[bisect_right(starts,at-1):]:
             if bar.end>min(end,common_end):break
+            if bar.end<session['next_due']:continue
             k=bisect_right(times,session['parent_at']);j=bisect_right(times,bar.end)
             session,new=step(session,bar.end,price=bar.close,price_at=bar.end,signals=children[k:j])
             events.extend(new)

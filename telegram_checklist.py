@@ -133,7 +133,7 @@ def _worker(store, token, dry_run, stop):
         for update in updates:
             query = update.get('callback_query')
             if query:
-                if query.get('data', '').startswith('chase:enter:'):
+                if query.get('data', '').startswith(('chase:enter:','chase:exit:')):
                     from chasing_runtime import enabled as chasing_enabled, callback
                     if chasing_enabled():callback(store,token,query)
                 elif query.get('data', '').startswith('dismiss:'):

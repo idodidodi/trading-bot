@@ -1,3 +1,5 @@
+> Latest operational change: pre-entry chase checks every five minutes; after “I’m in,” minute position-rule checks and Telegram exit alerts. See [the monitoring specification](telegram-position-monitor.md). Earlier research results remain pinned snapshots.
+
 # RSI divergence chasing and backtest plan
 
 **Automated-entry milestone reminder:** revisit the owner’s [proposed timeframe-based position exits](automated-entry-exit-draft.md) before implementing automated entries or exits. The base exits and trailing milestones are confirmed; execution and transition details remain for the automated-entry design.

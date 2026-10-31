@@ -4,6 +4,28 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+import threading
+import time
+
+_request_lock=threading.Lock()
+_next_request_at=0.
+_cooldown_until=0.
+
+
+def pace_public_request():
+    """Share a <=1 request/second budget between scanner and monitor threads."""
+    global _next_request_at
+    with _request_lock:
+        now=time.monotonic()
+        if now<_cooldown_until:raise ValueError('Kraken rate-limit cooldown; retry next minute')
+        delay=max(0.,_next_request_at-now)
+        if delay:time.sleep(delay)
+        _next_request_at=time.monotonic()+1.
+
+
+def cooldown(seconds=60):
+    global _cooldown_until
+    with _request_lock:_cooldown_until=max(_cooldown_until,time.monotonic()+seconds)
 
 INTERVALS = {'1m': 1, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240, 'daily': 1440, 'weekly': 10080}
 
@@ -25,10 +47,12 @@ def fetch_kraken(asset, timeframe):
     params = urllib.parse.urlencode(dict(pair=asset['symbol'].replace('/', ''),
                                         interval=INTERVALS[timeframe], assetVersion=1))
     try:
+        pace_public_request()
         with urllib.request.urlopen('https://api.kraken.com/0/public/OHLC?' + params, timeout=20) as response:
             data = json.load(response)
     except urllib.error.HTTPError as exc:
         code = exc.code
+        if code==429:cooldown()
         exc.close()
         raise ValueError('Kraken rate limit reached; retry next scan' if code == 429
                          else 'Kraken request failed; retry next scan') from None
@@ -37,6 +61,7 @@ def fetch_kraken(asset, timeframe):
         if any('Unknown asset pair' in str(e) for e in errors):
             raise ValueError('Kraken spot pair is unavailable; verify the exact pair in Assets')
         if any('limit' in str(e).lower() or 'throttl' in str(e).lower() for e in errors):
+            cooldown()
             raise ValueError('Kraken rate limit reached; retry next scan')
         raise ValueError('Kraken rejected request; check spot pair and provider availability')
     result = data.get('result', {})

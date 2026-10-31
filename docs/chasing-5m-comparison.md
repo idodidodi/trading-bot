@@ -54,6 +54,10 @@ not change. A 2% flag is research metadata, not an implemented broker stop.
 
 ## Reproduce without provider requests
 
+Use source at commit `e951063` to reproduce this historical comparison. The later
+position-monitor iteration changes pre-entry polling to five minutes; running its
+current replay code is a new cadence experiment, not a reproduction of these results.
+
 Keep the original dataset and report directory unchanged. Run:
 
 ```sh

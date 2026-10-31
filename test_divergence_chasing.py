@@ -8,6 +8,29 @@ def signal(frame='4h', at=1000000, direction='bullish', price=100):
 
 
 class ChaseTests(unittest.TestCase):
+    def test_entry_after_chase_uses_existing_followup_without_requiring_third_divergence(self):
+        s=create('a',signal(),1000000)
+        s,_=step(s,1300000,price=99,price_at=1300000,signals=[signal('5m',1300000)])
+        s,_=step(s,1400000,enter=True)
+        self.assertEqual(s['position']['additional_divergence']['timeframe'],'5m')
+        s,_=step(s,1440000,price=100,price_at=1440000)
+        s,events=step(s,1500000,price=101,price_at=1500000)
+        self.assertEqual(s['position']['status'],'monitoring')
+        self.assertEqual(s['position']['trail_pct'],.5)
+        self.assertEqual(events[0]['kind'],'position_trail')
+
+    def test_one_hour_root_is_independent_and_monitoring_uses_original_timeframe(self):
+        one=create('a',signal('1h'),1000000);four=create('a',signal('4h'),1000000)
+        self.assertNotEqual(one['id'],four['id'])
+        self.assertEqual(one['next_due'],1300000)
+        one,events=step(one,1300000,price=99,price_at=1300000,signals=[signal('4h',1300000)])
+        self.assertEqual(events,[])
+        one,_=step(one,1300001,enter=True)
+        self.assertEqual(one['position']['stop_pct'],.5)
+        self.assertEqual(one['next_due'],1300001)
+        one,_=step(one,1360000,price=100,price_at=1360000)
+        self.assertEqual(one['next_due'],1420000)
+
     def test_inclusive_symmetric_stop_and_stale_data(self):
         for direction, price in [('bullish',100.5),('bearish',99.5)]:
             s=create('a',signal(direction=direction),1000000)

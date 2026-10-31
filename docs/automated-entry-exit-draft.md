@@ -1,4 +1,4 @@
-# Reminder for the automated-entry milestone
+# Position-exit rules and automated-entry milestone reminder
 
 Before designing or implementing automated entries/exits, revisit this rule with the
 owner and backtest it separately. Recorded and clarified 31 October 2026. This reminder
@@ -34,20 +34,19 @@ Keep the original loss stop active until trailing activation: 0.5% for 1h and 1%
 price. Reaching a milestone activates/changes the trail; it is not an immediate profit
 exit. The 4h change from 0.5% to 1% is a widening of trailing distance.
 
-Outstanding details before implementation:
+The alert-only implementation is described in [Telegram position monitoring](telegram-position-monitor.md). The original loss stop is replaced by the active trail. On reaching +2% for 4h, the 1% trail becomes the only stop; the widening transition is applied literally and remains latched.
 
-- Define the 4h widening transition precisely, including treatment of an existing
-  protective stop level and whether the 1% trailing stage remains latched after retracement.
-- Define the qualifying additional divergence: eligible timeframe and when it becomes
-  available. Define treatment of repeated divergences and a threshold crossing in the
-  same candle; never infer intraminute order from OHLC alone.
-- Specify whether the original signal timeframe or the follow-up entry timeframe
-  determines the initial stop/target when they differ.
-- Define execution details, costs and gaps before live use. A trailing trigger does not
-  guarantee a fill at the trigger price.
+Before future broker execution, separately validate the alert policy's choices:
 
-The current bot reports signals and user-declared entry. This note does not activate
-broker orders, position closing, or new live risk controls. The existing configurable
+- Eligible additional divergences are currently fresh same-direction 5m-or-higher
+  signals, capped at the original timeframe. Repeated signals do not reset the trail,
+  and an existing exit wins when a new divergence arrives on the same observation.
+- The original signal timeframe currently determines stop/target percentages, even
+  when the follow-up finding uses another timeframe.
+- Add actual fill prices, execution costs, gap behavior and broker order semantics.
+  A sampled trailing alert does not guarantee a fill at its threshold.
+
+The branch now implements these rules as sampled Telegram exit recommendations after user-declared entry. It is not deployed. This does not activate broker orders or close positions. The existing configurable
 favorable-move chasing stop remains a separate monitoring rule.
 
 Once clarified, compare this exit policy with the preserved 1m and 5m-and-up variations

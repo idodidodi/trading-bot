@@ -13,8 +13,24 @@ from scanner import prepare_store, scan_once
 from test_scanner import fixture
 
 
+class PacingTests(unittest.TestCase):
+    def test_public_requests_share_one_second_spacing_and_cooldown_fails_without_request(self):
+        import kraken_feed as feed
+        clock=[10.];sleeps=[]
+        def sleep(seconds):sleeps.append(seconds);clock[0]+=seconds
+        with patch.object(feed,'_next_request_at',0.),patch.object(feed,'_cooldown_until',0.), \
+             patch('kraken_feed.time.monotonic',side_effect=lambda:clock[0]),patch('kraken_feed.time.sleep',side_effect=sleep):
+            feed.pace_public_request();feed.pace_public_request()
+            self.assertEqual(sleeps,[1.])
+            feed.cooldown()
+            with self.assertRaisesRegex(ValueError,'cooldown'):feed.pace_public_request()
+            self.assertEqual(sleeps,[1.])
+
+
 class KrakenTests(PostgresTestCase):
     def setUp(self):
+        pacing=patch('kraken_feed.pace_public_request');pacing.start();self.addCleanup(pacing.stop)
+        cooling=patch('kraken_feed.cooldown');cooling.start();self.addCleanup(cooling.stop)
         self.asset = dict(id='BTCUSD', provider='kraken', symbol='BTC/USD', exchange='Kraken',
                           feed_confirmed=True, enabled=True, timeframes=['4h'])
 

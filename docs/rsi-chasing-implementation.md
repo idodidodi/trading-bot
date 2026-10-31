@@ -1,3 +1,5 @@
+> Latest runtime behavior supersedes cadence/entry-only passages below: see [minute position monitoring and five-minute chasing](telegram-position-monitor.md).
+
 # First-divergence chase implementation
 
 This five-minute variation is implemented on `codex/chasing-5m-and-up` and is not deployed.

@@ -91,3 +91,7 @@ have a smaller executed sample, so compare matched roots and all-root cash-inclu
 returns rather than treating conditional entry means as strategy superiority. Neither
 maximum favorable excursion nor a rebound proves a realizable profitable exit policy.
 Volume observations require a separate held-out predictive test before changing filters.
+
+Historical reports must be replayed with their recorded source hashes/commit. The later
+Telegram position-monitor iteration introduces five-minute pre-entry checks; it does
+not retroactively change the saved one-year reports or validate the new exit policy.
