@@ -172,6 +172,18 @@ def descriptive_research(out,report,details):
         lines.append(f"| {feature} | {len(pairs)} | {rho:.3f} |" if rho is not None else f'| {feature} | {len(pairs)} | unavailable |')
     lines.extend(['','Raw closing-candle volume and relative volume (versus its preceding 20 traded candles) are recorded separately. Correlation describes this sample and does not establish that a volume filter improves success. Signals may overlap and share a price path, so ordinary independent-observation confidence claims would be misleading.','',
         'No strategy parameters were optimized on these outcomes. Any proposed volume, stop, timing or timeframe change needs a frozen rule and unseen-period/other-asset evaluation before claiming an improvement. Maximum favorable excursion assumes hindsight and is not a realizable exit rule.'])
+    bins={}
+    lines.extend(['','| Original relative-volume group | Complete entries | Net-positive share | Mean net return |',
+                  '|---|---:|---:|---:|'])
+    for label,predicate in [('Below preceding-20 average',lambda x:x<1),('At/above preceding-20 average',lambda x:x>=1)]:
+        values=[v['original']['net_return_pct'] for v in report.get('volume_observations',[])
+                if v.get('rvol20') is not None and predicate(v['rvol20']) and v['original'].get('status')=='complete']
+        win=sum(v>0 for v in values)/len(values)*100 if values else None
+        mean=statistics.mean(values) if values else None
+        bins[label]=dict(n=len(values),net_positive_pct=win,mean_net_return_pct=mean)
+        lines.append(f'| {label} | {len(values)} | {fmt(win)} | {fmt(mean)} |')
+    lines.extend(['','The relative-volume split uses 1.0 (the preceding average), not a threshold fitted to maximize these outcomes. These descriptive subgroup percentages are not forecasts or a validated success-rate improvement.'])
+    correlations['relative_volume_groups']=bins
     (out/'research.md').write_text('\n'.join(lines)+'\n')
     (out/'volume_summary.json').write_text(json.dumps(correlations,indent=2)+'\n')
 
@@ -279,7 +291,7 @@ def main():
             for r in csv.DictReader(f):grid.append((timestamp(r['time']),*(float(r[k]) for k in ('open','high','low','close','Volume')),int(r['n_trades'])))
         detail_report(args.output,report,{f:data/f'{f}.csv' for f in FRAMES},grid,cutoff,args.window_hours,args.failure_pct)
         return
-    minutes={};evidence=[];seed=None;warmup=timestamp('2025-09-01T00:00:00Z')
+    minutes={};evidence=[];seed=None;warmup=(start-60*86400)//14400*14400
     for urls in [[BASE+f'Kraken_OHLCVT_Full.zip.part{i:02}' for i in range(5)],[BASE+'Kraken_OHLCVT_2026Q3.zip']]:
         prior,proof=archive_minutes(urls,args.cache/'archives',warmup,cutoff,minutes)
         if prior and (seed is None or prior[0]>seed[0]):seed=prior

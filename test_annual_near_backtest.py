@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from annual_near_backtest import dataset, excursion, recent_minutes, require_archive_coverage, detail_report, ranks
+from annual_near_backtest import dataset, excursion, recent_minutes, require_archive_coverage, detail_report, ranks, descriptive_research
 from kraken_archive import RemoteZip
 from repair_kraken_minutes import Client
 from decimal import Decimal
@@ -14,6 +14,17 @@ from decimal import Decimal
 class AnnualTests(unittest.TestCase):
     def test_correlation_ranks_average_tied_volume_values(self):
         self.assertEqual(ranks([30,10,10,20]),[4,1.5,1.5,3])
+
+    def test_volume_groups_exclude_censored_outcomes(self):
+        rows=[dict(volume=10,rvol20=.5,original=dict(status='complete',net_return_pct=-1)),
+              dict(volume=20,rvol20=1,original=dict(status='complete',net_return_pct=2)),
+              dict(volume=30,rvol20=2,original=dict(status='incomplete'))]
+        with tempfile.TemporaryDirectory() as d:
+            descriptive_research(Path(d),dict(volume_observations=rows),[])
+            bins=json.loads((Path(d)/'volume_summary.json').read_text())['relative_volume_groups']
+        self.assertEqual(bins['Below preceding-20 average']['net_positive_pct'],0)
+        self.assertEqual(bins['At/above preceding-20 average']['n'],1)
+        self.assertEqual(bins['At/above preceding-20 average']['net_positive_pct'],100)
 
     def test_missing_archive_coverage_cannot_be_called_empty(self):
         proof={'manifest':{'columns':['timestamp','open','high','low','close','volume','trades'],
