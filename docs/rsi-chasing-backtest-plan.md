@@ -3,6 +3,7 @@
 Status: discussion draft; no runtime implementation or activation authorized by this document.
 Prepared 31 October 2026 on `codex/rsi-chasing-backtest-plan`, from source commit
 `908f3147da812cbe6949c2909246e3e0ad14d614`.
+Updated with the user's favorable-move stop rule: 0.5% beyond the original signal close.
 
 ## 1. Agreed behavior and scope
 
@@ -29,8 +30,22 @@ their existing Telegram preferences. Chat creation and registration will be manu
 Also consider a Chasing notification when price moves favorably from the original
 signal candle close immediately, or returns to that close after drawdown, without
 another divergence. Such notifications must be limited to **at most once per minute**
-and must **not stop chasing**. Only **I'm in** changes monitoring direction. Exact trigger,
-thresholds, expiry and overlap behavior remain decisions below.
+and, below the favorable-stop threshold defined next, must **not stop chasing**. Only
+**I'm in** changes monitoring direction. Close-return trigger tolerances, expiry and
+overlap behavior remain decisions below.
+
+**Added requirement:** while the user is still chasing, stop that chase when price
+reaches **at least 0.5% in the original divergence direction beyond the original signal
+candle's close**, and notify the user in their Chasing chat. For bullish signals this is
+`price >= original_close * 1.005`; for bearish signals it is
+`price <= original_close * 0.995`. No further divergence is needed. This covers an
+immediate favorable move and a recovery after drawdown. The 0.5% is measured from the
+original close, not from the drawdown low/high or a later chase candle.
+
+This stops chasing without implying entry, profit on a trade, or a switch to opposite
+monitoring. The return-to-close notification above remains non-terminal; reaching the
+0.5% favorable threshold is the new terminal exception. Once I'm in has already been
+accepted, the session follows its opposite-monitoring lifecycle instead of this chase rule.
 
 This task produces a plan only. No chats, provider downloads, production queries,
 scanners, alerts, account connections, orders, deployment or GitHub push were performed.
@@ -84,7 +99,8 @@ These are proposals and alternatives, not additional accepted requirements.
 | Close the deal now | Hide it until supported, or show a clearly labeled unavailable action explaining there is no connected execution account | A separately approved **Mark closed manually** action could record user-reported closure without an order. Do not silently interpret Close the deal as either a broker close or manual bookkeeping. |
 | Eligible opposite divergence | Require its event-availability time to be after the accepted entry click; evaluate all new events since the last cursor at each five-minute run | Include an opposite event already known before the click? Require P2 itself to form after entry? With confirmed detection, P2 may precede the click but confirmation may follow. Choose the intended rule explicitly. |
 | New overlapping originals | Preserve separate root sessions, showing original timeframe/date and session ID on every card | One active root per user/feed/timeframe/direction, or explicit replacement. Never automatically overwrite an entered session. Define whether one divergence can notify several roots or is consolidated. |
-| Expiry/cancellation | Add an explicit finite chase horizon and a separate manual Stop control after choosing their values | Wall time vs trading time vs original bars; opposite-monitor timeout; structural breach; asset removal. None are agreed automatic stop rules. |
+| Other expiry/cancellation | Add an explicit finite chase horizon and a separate manual Stop control after choosing their values | Wall time vs trading time vs original bars; opposite-monitor timeout; structural breach; asset removal. These additional automatic stop rules remain undecided; the favorable 0.5% stop is agreed. |
+| Favorable-move stop observation | The 0.5% threshold and stop/notify behavior are agreed; use the immutable original signal close | Still choose fresh trade/quote versus closed-minute price, whether a wick counts, and gap/restart handling. A lack of another divergence must not prevent evaluating this rule. |
 | Preferences during monitoring | Two independent message checkboxes: Chasing and Live positions. Suppress messages without implying entry/closure; show monitoring state separately | Should opting out also pause computation? Decide resumption/backlog policy. Warn before disabling Live positions notifications for an entered session and make the consequence visible. |
 | New-category defaults | Register disabled until each user's destinations and choices are verified | Existing categories default on; do not use that implicit default to send new categories to unverified chats. Decide whether existing RSI category opt-out also prevents new chase enrollment. |
 
@@ -100,14 +116,17 @@ user's monitoring and message state. Suggested lifecycle:
 | --- | --- | --- |
 | `chasing` | New same-direction divergence | Create recipient-specific chase outbox event; stay `chasing`, next due +60s |
 | `chasing` | Eligible original-close price notification | Create rate-limited outbox event; stay `chasing`, next due +60s |
+| `chasing` | Price reaches 0.5% favorably beyond original close | Atomically move to `chase_stopped_favorable`, freeze trigger evidence, enqueue one logical stop alert to this user's Chasing chat, clear chase/price deadlines |
 | `chasing` | Owner's valid I'm in callback | Atomically record reported entry, disable further chase/price events, move to `monitoring_opposite`, next due +300s |
 | `monitoring_opposite` | No eligible opposite event | Advance evidence cursor, stay in state, next due +300s |
 | `monitoring_opposite` | First eligible opposite event | Atomically freeze selected evidence and enqueue Live positions event; move to `opposite_found`; clear periodic search deadline |
 | `opposite_found` | Delivery failure/retry | Retry the same logical alert, never restart periodic search or select a different opposite event |
+| `chase_stopped_favorable` | Delivery failure/retry | Retry the same stop alert; do not resume chasing or start opposite monitoring |
 | Any | Done / Undo | Apply only the agreed message action; no monitoring transition |
 
 Potential `expired`, `stopped_by_user` and `closed_reported` states require the decisions
-above. `opposite_found` is not proof of a closed trade. No automatic direction switching
+above. `chase_stopped_favorable` is an agreed terminal chase state. Neither it nor
+`opposite_found` is proof of a closed trade. No automatic direction switching
 on prices, message delivery, another user's action or a hypothetical backtest fill.
 
 Suggested new private Postgres records (names provisional):
@@ -126,6 +145,8 @@ Suggested new private Postgres records (names provisional):
   grouped). Price events use durable crossing sequence plus a rate reservation.
 - **Price trigger state:** last fresh observation/time, adverse excursion/rearm state,
   immutable original-close anchor, last notification reservation time and pending event.
+  For the favorable stop, persist threshold `0.005`, trigger observation/source/time,
+  actual signed move, stopped-at time and the unique terminal notification event.
 - **Callback audit:** user, message binding, action/update ID, transition revision and
   result. Keep rejected/duplicate outcomes sufficient for diagnosis without secrets.
 
@@ -134,7 +155,11 @@ installation membership checks. Only an authorized owner/admin can register veri
 destinations for another user; reject arbitrary caller-supplied user IDs elsewhere.
 Callbacks must validate bot, chat, message, enrolled Telegram user, session and revision.
 
-Serialize I'm in and due monitor jobs with row locks/compare-and-set revisions. Duplicate
+Serialize I'm in, the favorable stop and due monitor jobs with row locks/compare-and-set
+revisions. Only one transition can win while the session is `chasing`; if entry wins,
+do not apply the chase stop to the entered session. If the stop wins, do not let a stale
+button silently restart monitoring. Decide separately how a user can report entry after
+the chase has stopped. Duplicate
 callbacks must return the already accepted result, not reset the entry time or deadline.
 Callbacks on old cards can enter only their still-active root session. Disable stale
 I'm in buttons on sibling cards where possible; server-side checks remain authoritative.
@@ -143,7 +168,9 @@ so deleting a card cannot make a still-active chase impossible to enter.
 
 Commit state transitions and outbox insertion together. Before sending, recheck session
 revision and opt-out policy so queued chasing cards are suppressed after entry; an
-already in-flight Telegram request can still complete. Check preferences again for
+already in-flight Telegram request can still complete. Suppress queued non-terminal
+chase/return cards after the favorable stop too; its own terminal alert remains eligible
+for delivery despite the session being stopped. Check preferences again for
 retries and retain suppression decisions so re-enabling does not replay old notifications.
 Bind message IDs to sessions after sends and reconcile ambiguous sends using the
 existing reservation model. Promise one **logical** alert, not exactly-once Telegram.
@@ -165,6 +192,39 @@ this anchor. Distinguish this from the confirmation-bar close and any later entr
 For direction `d=+1` bullish or `d=-1` bearish, define signed distance
 `x = d * (observed_price / P0 - 1)`. Positive is favorable; negative is adverse.
 
+### Required 0.5% favorable stop
+
+At the first eligible fresh observation with `x >= 0.005` while still `chasing`, stop the
+chase and enqueue one logical stop alert. The rule does not require prior drawdown or
+another divergence. Example with original close 100: bullish stops at 100.50 or above;
+bearish stops at 99.50 or below. A jump beyond the threshold also qualifies; the alert
+must show the actual observed move rather than fabricate a fill or exact touch at 0.5%.
+Use consistent decimal/tick precision so an exact threshold touch is not lost to binary
+floating-point rounding; document treatment when the threshold lies between tradable ticks.
+
+Suggested text: **“Price is now 0.5% or more above/below the original signal candle
+close in the bullish/bearish divergence direction. Chasing stopped.”** Include original
+close, threshold, observed price, signed move, observation time and source. Send it to
+that user's Chasing destination, subject to their personal message preference. A muted
+notification does not prevent the stop; retain the terminal reason in the dashboard.
+
+Stop immediately when the monitor observes the trigger, even if Telegram delivery is
+delayed. Stop alerts are one-shot terminal events, distinct from repeating return-to-close
+messages. Decide whether the once-per-minute chat cap also covers this terminal event;
+suggest prioritizing it over pending return cards and, if capped, retaining one pending
+terminal alert without delaying the state transition. Do not suppress it just because
+a recent return-to-close message used a notification slot.
+
+The threshold is fixed at 0.5%; remaining observation choices are price source, freshness,
+intraminute touch versus closed-minute evidence, and what happens if the threshold was
+crossed during an outage but price has already returned. Historical OHLC alone cannot
+resolve whether a click or threshold touch occurred first inside one minute. Record
+that ambiguity and apply a declared policy rather than invent event ordering. If the
+threshold and a new divergence are discovered in the same still-chasing check, propose
+one terminal stop alert and suppress its competing non-terminal chase card.
+
+### Non-terminal close-return notification alternatives
+
 Concrete policies to discuss:
 
 1. **Recovery only:** arm after `x <= -A`; notify when a later fresh observation reaches
@@ -172,7 +232,8 @@ Concrete policies to discuss:
    drawdown; `E` is a near-close tolerance. This misses immediate favorable moves.
 2. **Immediate move plus recovery (suggested experiment):** separately notify once on
    the first post-alert favorable crossing `x >= F`, without requiring drawdown; also
-   apply policy 1. This covers both voiced cases, with distinct message labels.
+   apply policy 1. If a separate non-terminal immediate-move message is wanted, choose
+   `F < 0.005`; at/above 0.005 the required stop rule takes precedence.
 3. **Every eligible recross:** notify whenever price crosses the selected return boundary,
    with hysteresis and cooldown. More responsive, potentially more noise; do not notify
    every minute merely because price remains on one side.
@@ -196,7 +257,8 @@ duplicating events; keep a suppressed crossing pending for coalescing or discard
 according to an explicit policy. Retry only the original logical event while still
 relevant; do not accumulate historical crossing notifications during an outage. Ambiguous
 network retries can still duplicate a visible message under existing Telegram semantics.
-None of these price events stops chasing or marks entry.
+These close-return events do not stop chasing or mark entry. The separate 0.5% favorable
+stop above terminates chasing and still does not mark entry.
 
 ## 6. Four-chat manual setup, after implementation is approved
 
@@ -254,6 +316,11 @@ missing; never claim a reconstructed theoretical alert was actually sent.
   chase alert under the selected policy, with identical delay/fill conventions. Later
   chase entries C2/C3 may be reported as predefined separate variants. Do not choose the
   lowest bullish/highest bearish future chase or the best-performing chase retrospectively.
+  Replay the 0.5% favorable stop before admitting new chase entries: roots stopped before
+  an eligible entry remain in the all-original cohort as stopped/no-entry, not silently
+  excluded successes. Declare ordering for a pending simulated fill versus the stop;
+  once simulated entry is accepted, the chase stop no longer applies to that simulated
+  session. Real I'm in actions remain separate from these simulated events.
 - **Signal-price diagnostics:** also calculate excursions from original/chase P2 closes,
   clearly named as reference-price evidence. Do not mix these with O/C fill outcomes.
 - **Price-trigger entry R:** optional separate variant entering after the agreed
@@ -315,6 +382,9 @@ For fill `E>0`, direction `d` and the price path between fill and the selected e
 - **Operational behavior:** chase alerts per root/user/day, immediate/recovery price
   notification counts, coalescing/cap suppression, stale/missing-data minutes, entry
   switches, time to eligible opposite divergence and opposite-alert delivery lag.
+  Include favorable-stop count/rate, time to 0.5%, stop-alert lag, entries prevented and
+  subsequent price paths over the fixed research windows. Stopping monitoring does not
+  erase research follow-up or establish that skipping an entry was beneficial.
 
 Publish two cohorts: all original roots, including those with no chase, and paired roots
 with eligible chase fills. In an optional all-root wait-for-chase policy, no chase means
@@ -399,7 +469,12 @@ Required later acceptance cases:
   no open-candle leakage, no missed eligible events between five-minute checks.
 - Immediate favorable move, drawdown/return without divergence, exact boundary, gap
   across anchor, same-candle ambiguity, hysteresis/rearm, durable rolling-60s cap across
-  a minute boundary, and chasing continuing after every price notification.
+  a minute boundary, and chasing continuing after non-terminal return notifications.
+- Bullish +0.5% / bearish -0.5% from original close, inclusive boundary and just short,
+  immediate move and drawdown recovery, gap beyond threshold, stale prices, muted user,
+  duplicate checks, restart/retry and simultaneous divergence or I'm in. Require one
+  logical stop notification, no later chase work and no automatic opposite monitoring;
+  verify entered sessions are unaffected and the anchor never resets to a chase close.
 - Multiple P1 pairs for one P2, overlapping roots/timeframes, feed change, asset removal,
   opted-out/unregistered users, re-enable without replay, and mapping/preference revisions.
 - First opposite event atomically stops searching even if delivery fails; retry preserves
