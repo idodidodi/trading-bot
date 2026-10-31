@@ -109,25 +109,25 @@ is diagnostic only; it is not a requirement for the first-chase policy.
 Reports include root/event ledgers, all-root counts, no-entry/incomplete counts, pairwise
 MAE comparisons, volume observations and conditional net return summaries. Missing price
 paths never become fabricated wins or zero-drawdown trades. The tool does not yet fit
-predictive volume models or optimize filters; there are no valid complete outcomes in
-the supplied sample from which to fit or validate those models. Opposite-alert exits,
+predictive volume models or optimize filters. The repaired sample now has complete paths,
+but only six original roots and two chase entries, which do not support fitting or
+validating those models. Opposite-alert exits,
 portfolio sizing and holdout inference remain research extensions, not claimed results.
 
-## Supplied NEAR/USD audit
+## Initial NEAR/USD audit (superseded by repair)
 
-Pinned cutoff: 31 October 2026, 13:45 UTC. Six eligible original 4h roots in the common
-file range. All files contain signal-candle volume. Absent intervals: 1m **1,763**;
-5m **10**; 15m **2**; 30m **1**; 1h and 4h **0**. The cause of absent rows is unverified;
-they may include no-trade intervals, but no price interpolation or fill assumption was
-silently applied. All six original three-4h-bar execution paths are incomplete, so no
-supported profitability, net win-rate or volume-success effect is reported.
+The original audit counted 1,763 absent 1m intervals, ten 5m intervals, two 15m intervals
+and one 30m interval. It could not establish why those rows were absent and therefore
+excluded incomplete outcome paths. Those initial outputs remain in
+`data/chasing-near-validated/` for comparison, not as the current completed result.
+The earlier `data/chasing-near-first/` run used the superseded ladder and must not be
+used as the current strategy result.
 
-Local ignored outputs are under `data/chasing-near-validated/` (`report.json` and
-`report.md`). They include source hashes and explicit costs/rules. Raw user files remain
-in their original locations and are not committed. The earlier `data/chasing-near-first/`
-run used the superseded ladder and must not be used as the current result.
+## Gap repair update
 
-The targeted literature search did not establish a transferable published success rate
-for this exact low-to-high first-divergence strategy. Use reproducible historical evidence
-rather than rates from other RSI periods or divergence definitions. The existing research
-design retains price-only/waiting controls, costs and held-out validation requirements.
+The minute-interval blocker is now resolved using verified Kraken no-trade history and
+the user-approved labeled empty-observation policy. See [repair procedure and results](kraken-minute-repair.md).
+All six original outcomes and both chase entries have complete paths in
+`data/chasing-near-complete-comparison/`. No fills occur on empty observations. Four
+provider/export overlap conflicts remain recorded, with original values preserved.
+The initial strict-gap audit above is historical; this update supersedes its data blocker.

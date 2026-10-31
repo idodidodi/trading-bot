@@ -75,7 +75,9 @@ See [implementation and verification](rsi-chasing-implementation.md) for scope a
 
 No production scanner, chat setup, messages, account connection, orders, deployment or
 GitHub push was performed. Offline replay has been run against the supplied CSVs;
-missing minute paths prevent a supported profitability or success-rate conclusion.
+the initial missing-minute blocker is resolved by verified no-trade observations (see
+[repair results](kraken-minute-repair.md)). The small sample and source conflicts still
+prevent a validated profitability or success-rate conclusion.
 
 ## 2. Repository findings that shape the design
 

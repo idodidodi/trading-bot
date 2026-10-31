@@ -20,7 +20,7 @@ class ResearchTests(unittest.TestCase):
             with self.assertRaises(ValueError):read_series(p,'1m',timestamp('2026-10-01T00:02:00Z'))
 
     def test_execution_never_uses_preentry_wick_and_gap_never_becomes_success(self):
-        bars=[Candle(60000*i,60000*(i+1),100,101,99,100) for i in range(1,6)]
+        bars=[Candle(60000*i,60000*(i+1),100,101,99,100) for i in range(1,7)]
         bars[0]=replace(bars[0],high=500,low=1)
         starts=[b.start for b in bars]
         result=outcome(bars,starts,60000,360000,'bullish',10)

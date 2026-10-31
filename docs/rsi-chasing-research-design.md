@@ -4,8 +4,10 @@ Discussion and research design, 31 October 2026. Companion to the
 [main chasing plan](rsi-chasing-backtest-plan.md), incorporating the follow-up voice
 requirements. This is documentation only. The user has now supplied six CSV file paths
 for Kraken NEAR/USD, including the added 15m timeframe. They have been audited and replayed offline. There are six eligible 4h roots, but no
-complete strict minute execution windows; profitability and volume-success effects
-remain unestablished. See [implementation notes](rsi-chasing-implementation.md).
+complete strict minute execution windows in the initial audit. The approved
+[no-trade repair](kraken-minute-repair.md) now yields complete paths for six originals
+and two chase entries; predictive profitability and volume-success effects remain
+unestablished. See [implementation notes](rsi-chasing-implementation.md).
 The favorable-move chase stop is now a **user-editable personal Settings percentage**,
 default **0.5%**, rather than a hard-coded constant. Each research run snapshots an
 explicit value; “0.5% stop” examples below refer to the default, not a fixed requirement.
