@@ -4,6 +4,9 @@ Discussion and research design, 31 October 2026. Companion to the
 [main chasing plan](rsi-chasing-backtest-plan.md), incorporating the follow-up voice
 requirements. This is documentation only. No CSVs have been supplied in this chat and
 no empirical success rates, volume correlations or trading profits have been calculated.
+The favorable-move chase stop is now a **user-editable personal Settings percentage**,
+default **0.5%**, rather than a hard-coded constant. Each research run snapshots an
+explicit value; “0.5% stop” examples below refer to the default, not a fixed requirement.
 
 ## 1. What the next backtest should answer
 
@@ -23,7 +26,7 @@ bearish results separately. Answer four different questions rather than one comb
 The live bot remains a **signal notifier**. It does not decide whether a user enters.
 Backtests can define hypothetical entry/exit policies to answer profitability questions;
 they cannot turn simulated fills into real I'm in clicks or authorize automatic trading.
-The 0.5% favorable chase stop is a monitoring rule, not an assumed trade take-profit.
+The configurable favorable chase stop is a monitoring rule, not an assumed trade take-profit.
 
 ## 2. Small literature check and what it establishes
 
@@ -46,7 +49,7 @@ Sources checked on 31 October 2026. These inform test design, not a borrowed win
 
 The targeted search did **not establish a transferable conditional probability** for this
 exact sequence: 4h RSI(3)/BB divergence → adverse movement → 1h/30m/5m/1m divergences
-with this pivot/tolerance logic and the 0.5% stop. That is a limit of this small review,
+with this pivot/tolerance logic and the default 0.5% stop. That is a limit of this small review,
 not a claim that no related research exists. Do not import success percentages from
 other RSI periods, hidden-divergence rules, assets, horizons or discretionary examples.
 
@@ -65,7 +68,8 @@ the first comparison and label any timeframe-specific tuning as another experime
 The user's new direction is to descend to smaller timeframes **while price goes against
 the original signal**, stopping further chase search upon an eligible **1m divergence**.
 All chased divergences remain in the original direction. Finding a 5m divergence alone
-does not end chasing; reaching 0.5% favorably beyond the original 4h close still does.
+does not end chasing; reaching the session's saved favorable percentage beyond the
+original 4h close still does (default 0.5%).
 Neither terminal event means entry or starts opposite-direction monitoring.
 
 The full ladder **4h → 1h → 30m → 5m → 1m** is a proposed experiment using all supplied
@@ -103,7 +107,7 @@ written agreement. Keep price observations and candidate events available for re
 emit/advance only when the selected gate qualifies. Evaluate the favorable stop regardless
 of the adverse gate; pausing lower-timeframe search must not disable price-stop checks.
 
-Decide whether recovery inside the interval between P0 and the 0.5% stop **pauses** the
+Decide whether recovery inside the interval between P0 and the configured stop **pauses** the
 current rung, resets the ladder or continues searching. Suggested experiment: pause
 advancement, preserve rung/deadline, resume only for newly eligible events if price turns
 adverse again. Do not replay all signals formed while paused as fresh alerts. The user
@@ -270,7 +274,7 @@ Use two comparisons:
    Report both original-root coverage and paired comparisons; child occurrence alone
    does not establish better MAE, higher net expectancy or a higher success rate.
 
-Treat the 0.5% favorable stop, 1m completion and chosen expiry as terminal/competing
+Treat the run's configured favorable stop, 1m completion and chosen expiry as terminal/competing
 events for the search. End-of-file is right censoring, not a no-child failure. Record
 paused adverse-gate time separately. If estimating probability before a deadline, use
 a declared survival/competing-risk method or fully observed windows and disclose the
@@ -293,6 +297,8 @@ three separately labeled results, applying the main plan's after-alert/fill base
   proposals**, not approved trade exits. Report target-first, adverse-first, timeout,
   same-minute ambiguous ordering and missing-data cases separately. Keep original-close
   chase-stop success separate from this after-alert baseline.
+  Changing the user's chase-stop setting must not silently change these research outcome
+  thresholds or any hypothetical trade take-profit/stop-loss values.
 - **Fixed-horizon hypothetical returns:** simulate entries at next eligible minute opens
   under original/first-chase/final-1m policies; exit at the main plan's fixed common-origin
   horizons and equal-exposure horizons. Include spread/slippage, commissions and any
@@ -335,12 +341,12 @@ data; reserve a fresh evaluation period before claiming validated improvement.
 | Scenario | Proposed handling / decision still needed |
 | --- | --- |
 | Price moves adversely without ever forming the next divergence | Remain on the selected rung only until a chosen stage/root timeout; timeout/fallback policy is open. Never invent a child event. |
-| Price recovers above original close but stays below the 0.5% stop | Decide pause/resume versus continued descent; a return notification alone does not mark entry. |
+| Price recovers above original close but stays below the configured stop | Decide pause/resume versus continued descent; a return notification alone does not mark entry. |
 | Further adverse move after a 1m divergence | Search is already complete under the new rule. Decide whether an explicit new root/rearm is allowed; no automatic restart assumed. |
 | Final 1m signal appears immediately after 4h, before a 1h/30m/5m stage | Strict ladder ignores it as a transition; skip/direct policy may use it. Compare rather than choose retrospectively. |
 | A child P2 occurs before the parent, but its structural confirmation is later | Choose availability-only versus post-parent-P2 rule and label it; keep old confluence separate. |
 | Only opposite-direction lower-frame divergences appear before entry | Do not treat them as same-direction chase events or as proof the user entered. Decide whether a future conflict notice is useful. |
-| 1m completion, 0.5% stop and I'm in occur in one minute | Persist known ordering; serialize live actions; show OHLC ambiguity bounds in research. Do not fabricate intraminute sequence. |
+| 1m completion, configured stop and I'm in occur in one minute | Persist known ordering; serialize live actions; show OHLC ambiguity bounds in research. Do not fabricate intraminute sequence. |
 | User clicks I'm in on final/old card after search completion | Define card eligibility and manual-entry access; never silently reject all entry reporting or reopen chasing. |
 | No more monitoring after 1m, but a user wants to enter much later | Decide final-card expiry and entry-price observation policy; a stale candle price is not a fill. |
 | Original and chase volume give conflicting indications | Separate original versus child features and decision times; no ad hoc “best volume” selection. |
