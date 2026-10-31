@@ -30,8 +30,8 @@ def enroll(store,root,person):
     s=create(person['user_id'],root,now,person['stop_pct'])
     s['settings_revision']=person['revision']
     with store.connect() as db:
-        created=db.execute('INSERT INTO chasing_sessions SELECT %s,installation,%s,%s FROM runtime_control WHERE id=1 ON CONFLICT DO NOTHING RETURNING id',
-                          (s['id'],s['user'],json.dumps(s))).fetchone()
+        created=db.execute('INSERT INTO chasing_sessions SELECT %s,installation,%s,%s FROM runtime_control WHERE id=1 AND bot_runtime.chasing_is_owner(installation,%s::uuid) ON CONFLICT DO NOTHING RETURNING id',
+                          (s['id'],s['user'],json.dumps(s),s['user'])).fetchone()
         if created:enqueue(db,s,dict(kind='started',at=now,session=s['id']))
 
 
@@ -53,7 +53,7 @@ def tick(store,now,fetch=market):
     from postgres_store import assert_worker
     assert_worker(store)
     with store.connect() as db:
-        rows=db.execute("SELECT id,state FROM chasing_sessions WHERE (state->>'next_due')::bigint<=%s ORDER BY (state->>'next_due')::bigint LIMIT 100",(now,)).fetchall()
+        rows=db.execute("SELECT id,state FROM chasing_sessions WHERE bot_runtime.chasing_is_owner(installation,user_id) AND (state->>'next_due')::bigint<=%s ORDER BY (state->>'next_due')::bigint LIMIT 100",(now,)).fetchall()
     cache={}
     for key,snapshot in rows:
         try:
@@ -141,7 +141,11 @@ def callback(store,token,query):
         binding=db.execute('SELECT 1 FROM chasing_outbox o JOIN telegram_personal_messages m ON m.id=o.dismissal_id WHERE o.session_id=%s AND o.bot=%s AND o.chat=%s AND o.message_id=%s AND o.telegram_user_id=%s AND m.state::jsonb->>\'phase\'=\'active\'',
                            (key,bot_key(token),str(message.get('chat',{}).get('id')),message.get('message_id'),user)).fetchone()
         if binding:
-            s=db.execute('SELECT state FROM chasing_sessions WHERE id=%s FOR UPDATE',(key,)).fetchone()[0]
+            row=db.execute('SELECT state FROM chasing_sessions WHERE id=%s AND bot_runtime.chasing_is_owner(installation,user_id) FOR UPDATE',(key,)).fetchone()
+            if not row:
+                api(token,'answerCallbackQuery',dict(callback_query_id=query['id'],text=answer))
+                return
+            s=row[0]
             s,events=step(s,int(time.time()*1000),enter=True)
             db.execute('UPDATE chasing_sessions SET state=%s WHERE id=%s',(json.dumps(s),key))
             if s['entry_at'] is not None:answer='Entry recorded. Opposite divergence monitoring is active.' if s['status']=='opposite' else 'Entry was already recorded.'

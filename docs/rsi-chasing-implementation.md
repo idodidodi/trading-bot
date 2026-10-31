@@ -72,6 +72,11 @@ State transitions commit with their outbox events; delivery retries do not resta
 
 ## Deployment prerequisites (not performed)
 
+The initial rollout is restricted to the installation owner from the existing database
+record. Server-side settings, registration, enrollment, polling, callbacks and recipient
+selection enforce this scope; another member cannot opt in. Both notification choices
+and the runtime flag remain off until real personal chats have been verified.
+
 1. Review this implementation and apply `cloud/divergence-chasing.sql` after the current
    personal Telegram migration, first in a disposable environment. It creates no chats.
 2. Each person manually creates Chasing and Live positions groups containing only them

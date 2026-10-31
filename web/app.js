@@ -420,7 +420,7 @@ async function chasingControls(panel,isCurrent){
  try{
   const data=await request('/api/chasing-registration');if(!isCurrent())return;
   const admin=node('section'),member=node('select'),chase=node('input'),live=node('input'),status=node('p');
-  admin.append(node('h3','Personal chase chats'),node('p','Create two private groups per person with only that person and the bot. Verify membership and identity before registering.'));
+  admin.append(node('h3','Personal chase chats'),node('p','Owner-only rollout: create two private groups containing only the installation owner and the bot. Verify membership and identity before registering.'));
   for(const m of data.members||[]){const option=node('option',m.label);option.value=m.user_id;member.append(option);}
   function selectMember(){const m=(data.members||[]).find(m=>m.user_id===member.value);chase.value=m?.routes?.chasing||'';live.value=m?.routes?.live_positions||'';}
   member.onchange=selectMember;selectMember();

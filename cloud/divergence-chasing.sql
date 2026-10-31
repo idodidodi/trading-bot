@@ -35,6 +35,8 @@ DECLARE pref public.chasing_preferences; reg jsonb; target uuid; pct numeric;
 BEGIN
  IF operation IN ('/api/chasing-settings','/api/chasing-registration') THEN
   IF auth.uid() IS NULL OR NOT public.dashboard_can_view(installation) THEN RAISE EXCEPTION 'Not authorized'; END IF;
+  -- Initial rollout is restricted to the installation owner at the server boundary.
+  IF NOT EXISTS(SELECT 1 FROM dashboard_installations i WHERE i.id=installation AND i.owner_id=auth.uid()) THEN RAISE EXCEPTION 'Chasing is available to the installation owner only'; END IF;
   IF operation='/api/chasing-registration' THEN
    IF NOT EXISTS(SELECT 1 FROM dashboard_installations i WHERE i.id=installation AND i.owner_id=auth.uid()) THEN RAISE EXCEPTION 'Owner required';END IF;
    PERFORM pg_advisory_xact_lock(hashtextextended(installation::text||':chasing-registration',0));
@@ -42,10 +44,10 @@ BEGIN
     RETURN jsonb_build_object('members',(SELECT jsonb_agg(jsonb_build_object('user_id',u.id,
      'label',coalesce(to_jsonb(u)->>'email',u.id::text),'routes',coalesce(r.routes,'{}')))
      FROM auth.users u LEFT JOIN telegram_recipients r ON r.user_id=u.id AND r.installation=installation
-     WHERE u.id IN (SELECT i.owner_id FROM dashboard_installations i WHERE i.id=installation
-       UNION SELECT m.user_id FROM dashboard_members m WHERE m.installation=installation)));
+     WHERE u.id IN (SELECT i.owner_id FROM dashboard_installations i WHERE i.id=installation)));
    END IF;
    target:=(input->>'user_id')::uuid;
+   IF target IS DISTINCT FROM auth.uid() THEN RAISE EXCEPTION 'Only the installation owner may be enrolled'; END IF;
    IF NOT EXISTS(SELECT 1 FROM dashboard_installations i WHERE i.id=installation AND i.owner_id=target)
       AND NOT EXISTS(SELECT 1 FROM dashboard_members m WHERE m.installation=installation AND m.user_id=target) THEN RAISE EXCEPTION 'Member required';END IF;
    IF input->>'chasing' !~ '^-[1-9][0-9]{0,18}$' OR input->>'live_positions' !~ '^-[1-9][0-9]{0,18}$'
@@ -85,11 +87,18 @@ END $$;
 REVOKE ALL ON FUNCTION public.dashboard_api_before_chasing(uuid,text,jsonb) FROM PUBLIC,anon,authenticated;
 REVOKE ALL ON FUNCTION public.dashboard_api(uuid,text,jsonb) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.dashboard_api(uuid,text,jsonb) TO authenticated;
+CREATE OR REPLACE FUNCTION bot_runtime.chasing_is_owner(installation uuid,user_id uuid) RETURNS boolean
+LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$
+ SELECT EXISTS(SELECT 1 FROM public.dashboard_installations i WHERE i.id=$1 AND i.owner_id=$2);
+$$;
+REVOKE ALL ON FUNCTION bot_runtime.chasing_is_owner(uuid,uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION bot_runtime.chasing_is_owner(uuid,uuid) TO trading_worker;
 CREATE OR REPLACE FUNCTION bot_runtime.chasing_recipients() RETURNS jsonb
 LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$
  SELECT coalesce(jsonb_agg(jsonb_build_object('user_id',r.user_id,'telegram_user_id',r.telegram_user_id,
  'routes',r.routes,'stop_pct',p.stop_pct,'revision',p.revision,'created_at',extract(epoch FROM p.created_at),'chasing',p.chasing,'live_positions',p.live_positions)), '[]')
  FROM public.telegram_recipients r JOIN public.chasing_preferences p USING(installation,user_id)
+ JOIN public.dashboard_installations i ON i.id=r.installation AND i.owner_id=r.user_id
  JOIN bot_runtime.runtime_control c ON c.installation=r.installation AND c.enabled;
 $$;
 REVOKE ALL ON FUNCTION bot_runtime.chasing_recipients() FROM PUBLIC,anon,authenticated;

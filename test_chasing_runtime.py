@@ -35,6 +35,21 @@ class RuntimeTests(PostgresTestCase):
             db.execute('SELECT * FROM bot_runtime.chasing_sessions')
 
     @patch.dict('os.environ',{'DIVERGENCE_CHASING_ENABLED':'true'})
+    def test_non_owner_cannot_enroll_even_with_enabled_person_snapshot(self):
+        other='00000000-0000-0000-0000-000000000099'
+        person=dict(user_id=other,chasing=True,routes={'chasing':'-10003'},stop_pct=.5,revision=1,created_at=0)
+        root=signal(at=1000000)|dict(signal_status='provisional',rules={})
+        with patch('chasing_runtime.time.time',return_value=1000):enroll(self.store,root,person)
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM chasing_sessions').fetchone()[0],0)
+            db.execute('INSERT INTO auth.users VALUES(%s) ON CONFLICT DO NOTHING',(other,))
+            db.execute('INSERT INTO public.dashboard_members(installation,user_id) VALUES(%s,%s) ON CONFLICT DO NOTHING',(INST,other))
+            db.execute('INSERT INTO public.telegram_recipients(installation,user_id,telegram_user_id,routes) VALUES(%s,%s,99,%s)',(INST,other,'{}'))
+            db.execute('INSERT INTO public.chasing_preferences(installation,user_id,chasing,live_positions) VALUES(%s,%s,true,true)',(INST,other))
+            self.assertEqual(db.execute('SELECT bot_runtime.chasing_recipients()').fetchone()[0],[])
+        with self.assertRaises(Exception):self.api(dict(action='save',revision=1,stop_pct=.5,chasing=True,live_positions=True),user=other)
+
+    @patch.dict('os.environ',{'DIVERGENCE_CHASING_ENABLED':'true'})
     def test_bound_personal_callback_enters_and_opposite_delivery_is_terminal(self):
         person=dict(user_id=USER,telegram_user_id=72,chasing=True,live_positions=True,
                     routes={'chasing':'-10001','live_positions':'-10002'},stop_pct=.5,revision=1,created_at=0)
