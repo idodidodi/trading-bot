@@ -43,6 +43,7 @@ uses one explicitly recorded native-provider dataset.
 ## Outputs and interpretation
 
 - `report.md`: definitions, interval, source cutoff and counts.
+- `research.md`: hypothetical return comparison and descriptive closing-volume/relative-volume rank correlations; `volume_summary.json` contains the correlation inputs' counts and results.
 - `cases.md`: a readable card for every original 4h divergence, in Israel time.
 - `cases.csv` and `cases.json`: every original, exact UTC times, follow-up timeframe,
   price anchors, adverse/favorable extremes, recovery, threshold and censorship status.

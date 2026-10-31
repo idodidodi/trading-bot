@@ -5,13 +5,16 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from annual_near_backtest import dataset, excursion, recent_minutes, require_archive_coverage, detail_report
+from annual_near_backtest import dataset, excursion, recent_minutes, require_archive_coverage, detail_report, ranks
 from kraken_archive import RemoteZip
 from repair_kraken_minutes import Client
 from decimal import Decimal
 
 
 class AnnualTests(unittest.TestCase):
+    def test_correlation_ranks_average_tied_volume_values(self):
+        self.assertEqual(ranks([30,10,10,20]),[4,1.5,1.5,3])
+
     def test_missing_archive_coverage_cannot_be_called_empty(self):
         proof={'manifest':{'columns':['timestamp','open','high','low','close','volume','trades'],
                            'coverage':{'start':'2025-01-01','end':'2025-01-31'}}}
