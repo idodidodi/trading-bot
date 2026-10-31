@@ -2,16 +2,18 @@
 
 Discussion and research design, 31 October 2026. Companion to the
 [main chasing plan](rsi-chasing-backtest-plan.md), incorporating the follow-up voice
-requirements. This is documentation only. No CSVs have been supplied in this chat and
-no empirical success rates, volume correlations or trading profits have been calculated.
+requirements. This is documentation only. The user has now supplied six CSV file paths
+for Kraken NEAR/USD, including the added 15m timeframe. They have not yet been imported
+or audited; no empirical success rates, volume correlations or trading profits have
+been calculated.
 The favorable-move chase stop is now a **user-editable personal Settings percentage**,
 default **0.5%**, rather than a hard-coded constant. Each research run snapshots an
 explicit value; “0.5% stop” examples below refer to the default, not a fixed requirement.
 
 ## 1. What the next backtest should answer
 
-Use **4h original RSI divergences** as the primary population. The user intends to supply
-TradingView exports for the same asset at **4h, 1h, 30m, 5m and 1m**. Retain bullish and
+Use **4h original RSI divergences** as the primary population. The supplied TradingView
+file set covers **4h, 1h, 30m, 15m, 5m and 1m**, subject to a data audit. Retain bullish and
 bearish results separately. Answer four different questions rather than one combined score:
 
 1. Does original signal-candle volume, particularly relative volume, predict subsequent
@@ -48,7 +50,7 @@ Sources checked on 31 October 2026. These inform test design, not a borrowed win
   [The Probability of Backtest Overfitting](https://www.davidhbailey.com/dhbpapers/backtest-prob.pdf).
 
 The targeted search did **not establish a transferable conditional probability** for this
-exact sequence: 4h RSI(3)/BB divergence → adverse movement → 1h/30m/5m/1m divergences
+exact sequence: 4h RSI(3)/BB divergence → adverse movement → 1h/30m/15m/5m/1m divergences
 with this pivot/tolerance logic and the default 0.5% stop. That is a limit of this small review,
 not a claim that no related research exists. Do not import success percentages from
 other RSI periods, hidden-divergence rules, assets, horizons or discretionary examples.
@@ -72,7 +74,7 @@ does not end chasing; reaching the session's saved favorable percentage beyond t
 original 4h close still does (default 0.5%).
 Neither terminal event means entry or starts opposite-direction monitoring.
 
-The full ladder **4h → 1h → 30m → 5m → 1m** is a proposed experiment using all supplied
+The full ladder **4h → 1h → 30m → 15m → 5m → 1m** is a proposed experiment using all supplied
 files, not a silently settled requirement to visit every rung. Compare a small policy set:
 
 | Policy | Behavior | Purpose |
@@ -130,8 +132,10 @@ For the skip-capable experiment declare priority, such as the lowest eligible ti
 test it as a policy choice rather than selecting whichever child later performs best.
 
 The reference window for one transition is proposed as **one parent-frame duration after
-the parent event** in a continuous market. Thus 5m → 1m offers five minutes, whereas
-30m → 5m offers thirty minutes, usually six complete child bars when aligned. It is not
+the parent event** in a continuous market. With aligned boundaries, 30m → 15m offers
+thirty minutes and two child bars; 15m → 5m offers fifteen minutes and three child bars;
+5m → 1m offers five minutes and five child bars. A skip-capable 30m → 5m transition
+would instead offer thirty minutes and six child bars. It is not
 automatically “five candles” at every rung. For exchange sessions, choose and record
 wall time versus active trading time. Also report fixed 5/15/30/60-minute sensitivities
 where appropriate, without treating short unavailable windows as failed divergences.
@@ -163,12 +167,23 @@ Do not start monitoring all opposite timeframes implicitly.
 ## 4. TradingView CSV intake plan
 
 TradingView documents chart-data CSV export and notes that exported history depends on
-what has been loaded in the chart. Verify actual file ranges and do not assume five
+what has been loaded in the chart. Verify actual file ranges and do not assume six
 exports cover identical dates. [Official export instructions](https://www.tradingview.com/support/solutions/43000537255-how-to-export-chart-data/).
 
-Expected intake, once the user supplies files:
+User-provided file set (names recorded for intake; contents and coverage not yet audited):
 
-- One exact asset/feed per dataset, with 4h, 1h, 30m, 5m and 1m files, preferably covering
+| Timeframe | Source filename |
+| --- | --- |
+| 4h | `KRAKEN_NEARUSD, 240_f24a3.csv` |
+| 1h | `KRAKEN_NEARUSD, 60_6ef34.csv` |
+| 30m | `KRAKEN_NEARUSD, 30_a4865.csv` |
+| 15m | `KRAKEN_NEARUSD, 15_86ddd.csv` |
+| 5m | `KRAKEN_NEARUSD, 5_461e6.csv` |
+| 1m | `KRAKEN_NEARUSD, 1_74922.csv` |
+
+Intake checks for these files:
+
+- One exact asset/feed per dataset, with 4h, 1h, 30m, 15m, 5m and 1m files, preferably covering
   the same continuous period. Keep long prehistory for indicators and pivot references
   on **every** timeframe plus follow-up after the final eligible original. Aim for at
   least 250 warm-up candles per timeframe where available; detector minimum is separate.
@@ -200,7 +215,7 @@ different instrument is a separate proxy experiment. [Official volume limitation
 **Repository gap:** `scanner.Candle` and candle caches hold OHLC without volume;
 `scanner.read_csv`, Python `csv_backtests.parse` and JavaScript `parseCSV` do not retain
 volume. The CSV upload paths accept only 1h/4h/daily/weekly/monthly, with 20,000-row/2 MB
-limits. The 30m/5m/1m multi-file workflow therefore needs a future offline importer with
+limits. The 30m/15m/5m/1m multi-file workflow therefore needs a future offline importer with
 a volume-preserving research record, synchronized timeframe streams and file hashes.
 Do not alter production candle schemas or upload limits just to conduct this first study.
 
@@ -256,7 +271,7 @@ sample may support exploratory findings without a reliable percentage forecast.
 
 For each eligible parent event, measure
 `P(new same-direction child divergence within W and before chase stop | parent, adverse gate)`.
-Compute separate transition tables for 4h→1h, 1h→30m, 30m→5m and 5m→1m, plus the
+Compute separate transition tables for 4h→1h, 1h→30m, 30m→15m, 15m→5m and 5m→1m, plus the
 explicit skip/direct controls. Report numerator, at-risk parent count, available exposure,
 median waiting time, no-event proportion and uncertainty. Do not multiply transition
 probabilities as if stages or roots were independent.
@@ -343,7 +358,7 @@ data; reserve a fresh evaluation period before claiming validated improvement.
 | Price moves adversely without ever forming the next divergence | Remain on the selected rung only until a chosen stage/root timeout; timeout/fallback policy is open. Never invent a child event. |
 | Price recovers above original close but stays below the configured stop | Decide pause/resume versus continued descent; a return notification alone does not mark entry. |
 | Further adverse move after a 1m divergence | Search is already complete under the new rule. Decide whether an explicit new root/rearm is allowed; no automatic restart assumed. |
-| Final 1m signal appears immediately after 4h, before a 1h/30m/5m stage | Strict ladder ignores it as a transition; skip/direct policy may use it. Compare rather than choose retrospectively. |
+| Final 1m signal appears immediately after 4h, before a 1h/30m/15m/5m stage | Strict ladder ignores it as a transition; skip/direct policy may use it. Compare rather than choose retrospectively. |
 | A child P2 occurs before the parent, but its structural confirmation is later | Choose availability-only versus post-parent-P2 rule and label it; keep old confluence separate. |
 | Only opposite-direction lower-frame divergences appear before entry | Do not treat them as same-direction chase events or as proof the user entered. Decide whether a future conflict notice is useful. |
 | 1m completion, configured stop and I'm in occur in one minute | Persist known ordering; serialize live actions; show OHLC ambiguity bounds in research. Do not fabricate intraminute sequence. |
@@ -355,7 +370,7 @@ data; reserve a fresh evaluation period before claiming validated improvement.
 | Many roots/users share one lower-frame divergence | Preserve root/user isolation and evidence deduplication; report correlated observations and notification fan-out. |
 | Profitability changes across volume bins but sample size is small | Publish counts/intervals, avoid a live confidence claim, and seek additional holdout history. |
 
-## 9. Concrete next outputs, after files arrive
+## 9. Concrete next outputs for the supplied files
 
 1. File/coverage audit and normalized, volume-preserving dataset manifest, without runtime
    connections or external effects. Agree gate, ladder, child timing, windows and exits.
