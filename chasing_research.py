@@ -47,7 +47,8 @@ def read_series(path, frame, cutoff):
         conflicts=len(manifest.get('evidence',{}).get('overlap_conflicts',[]))
     ordered=sorted(bars.values(),key=lambda b:b.start)
     for i,b in enumerate(ordered):
-        if b.start in empty and (not i or ordered[i-1].end!=b.start or ordered[i-1].close!=b.close):
+        seed_ok=not i and empty and manifest.get('initial_close') is not None and float(manifest['initial_close'])==b.close and manifest.get('seed_at',b.start)>=0 and manifest.get('seed_at',b.start)<b.start
+        if b.start in empty and not seed_ok and (not i or ordered[i-1].end!=b.start or ordered[i-1].close!=b.close):
             raise ValueError('No-trade observation must carry an adjacent prior close')
     gaps = sum(max(0,(b.start-a.end)//DURATIONS[frame]) for a,b in zip(closed,closed[1:]))
     return closed, volumes, dict(file=Path(path).name, sha256=hashlib.sha256(raw).hexdigest(),
@@ -61,8 +62,9 @@ def detect_series(bars, volumes, rules, symbol, frame, empty=()):
     from scanner import detect
     signals, segment = [], []
     def flush():
+        positions={b.start:i for i,b in enumerate(segment)}
         for s in detect(segment,rules,symbol,frame,provisional=True):
-            i = next(i for i,b in enumerate(segment) if b.start==s['pivot2'])
+            i = positions[s['pivot2']]
             previous = [volumes[b.start] for b in segment[max(0,i-20):i]]
             v = volumes[s['pivot2']]
             denominator = statistics.mean(previous) if len(previous)==20 and all(x is not None for x in previous) else None
@@ -110,7 +112,7 @@ def outcome(minutes, starts, at, end, direction, cost_bps, empty=()):
                 mae_pct=mae,mfe_pct=mfe,gross_return_pct=gross,net_return_pct=gross-cost_bps/100)
 
 
-def run(paths, symbol, cutoff, stop_pct=.5, cost_bps=10., horizon=3):
+def run(paths, symbol, cutoff, stop_pct=.5, cost_bps=10., horizon=3, start_at=None, end_at=None):
     from platform_app import load_rules
     rules=load_rules();series={};volumes={};audit={};signals={}
     for frame in FRAMES:
@@ -139,7 +141,7 @@ def run(paths, symbol, cutoff, stop_pct=.5, cost_bps=10., horizon=3):
     roots=[];ledger=[]
     for root in signals['4h']:
         at=root['confirmed_at']
-        if not common_start<=at<common_end:continue
+        if not max(common_start,start_at or common_start)<=at<min(common_end,end_at or common_end):continue
         end=at+horizon*DURATIONS['4h']
         session=create('simulation',root,at,stop_pct,expires_at=end)
         events=[]
@@ -168,6 +170,7 @@ def run(paths, symbol, cutoff, stop_pct=.5, cost_bps=10., horizon=3):
             net_win_rate=sum(v['net_return_pct']>0 for v in values)/len(values) if values else None,
             per_original_root_mean_return_pct_with_unentered_cash_zero=sum(v['net_return_pct'] for v in values)/len(roots) if roots and not incomplete else None)
     config=dict(symbol=symbol,cutoff=cutoff,stop_pct=percentage(stop_pct),roundtrip_cost_bps=cost_bps,
+                start_at=start_at,end_at=end_at,
                 selection='first divergence, smallest timeframe first',horizon_4h_bars=horizon,rules=rules,
                 gate='adverse to original close',observation='closed minute close',
                 entry='first traded minute open strictly after event',exit='first traded minute open at or after common original horizon')

@@ -89,7 +89,10 @@ class Client:
         if result.get('error') or set(result.get('result',{}))!={self.pair,'last'}:raise ValueError('Wrong pair or invalid trade response')
         data=result['result'];rows=data[self.pair];cursor=int(data['last'])
         if not rows or cursor<=since:raise ValueError('Trade cursor did not advance')
-        if any(len(r)<7 or int(Decimal(str(r[2]))*10**9)<since for r in rows):raise ValueError('Trade history does not honor requested boundary')
+        # Cursor nanoseconds can be more precise than the displayed trade timestamp.
+        # Kraken can repeat the boundary trade rounded by <1 microsecond; trade IDs
+        # are deduplicated by callers. Older history outside that tolerance is rejected.
+        if any(len(r)<7 or int(Decimal(str(r[2]))*10**9)<since-1000 for r in rows):raise ValueError('Trade history does not honor requested boundary')
         if any(Decimal(str(a[2]))>Decimal(str(b[2])) for a,b in zip(rows,rows[1:])):raise ValueError('Trade timestamps are unordered')
         return rows,cursor,dict(file=p.name,sha256=hashlib.sha256(raw).hexdigest(),since=str(since),cursor=str(cursor))
 
