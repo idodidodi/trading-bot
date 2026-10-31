@@ -25,6 +25,20 @@ class AnnualTests(unittest.TestCase):
         self.assertEqual(result[0]['followup_source'],'strategy')
         self.assertEqual(result[0]['followup']['timeframe'],'4h')
 
+    def test_report_output_is_utf8_on_legacy_windows_locale(self):
+        native_open = Path.open
+        def windows_open(path, mode='r', buffering=-1, encoding=None, errors=None, newline=None):
+            if 'b' not in mode:
+                encoding = encoding or 'cp1252'
+            return native_open(path, mode, buffering, encoding, errors, newline)
+        report = dict(roots=[], events=[], report_hash='test')
+        with tempfile.TemporaryDirectory() as d, \
+             patch('chasing_research.read_series', return_value=([], {}, dict(verified_empty=[]))), \
+             patch('chasing_research.detect_series', return_value=[]), \
+             patch.object(Path, 'open', windows_open):
+            detail_report(Path(d), report, {f: Path(d) for f in ('1h','30m','15m','5m','1m')}, [], 600)
+            self.assertIn('→', (Path(d)/'report.md').read_text(encoding='utf-8'))
+
     def test_correlation_ranks_average_tied_volume_values(self):
         self.assertEqual(ranks([30,10,10,20]),[4,1.5,1.5,3])
 

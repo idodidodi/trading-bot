@@ -95,7 +95,7 @@ def dataset(out,minutes,start,end,seed,evidence):
     for frame in FRAMES:
         width=DURATIONS[frame]//1000
         path=out/f'{frame}.csv'
-        with path.open('w',newline='') as f:
+        with path.open('w',newline='',encoding='utf-8') as f:
             w=csv.writer(f);w.writerow(['time','open','high','low','close','Volume','source_status','n_trades'])
             for at in range(start,end,width):
                 if at+width>end:break
@@ -106,7 +106,7 @@ def dataset(out,minutes,start,end,seed,evidence):
         hashes[frame]=hashlib.sha256(path.read_bytes()).hexdigest()
     manifest=dict(pair='NEAR/USD',include_empty=True,initial_close=seed[1],seed_at=seed[0]*1000,
                   output_hashes=hashes,evidence=evidence,start=start,end=end)
-    (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+    (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n',encoding='utf-8')
     return grid
 
 
@@ -187,8 +187,8 @@ def descriptive_research(out,report,details):
         lines.append(f'| {label} | {len(values)} | {fmt(win)} | {fmt(mean)} |')
     lines.extend(['','The relative-volume split uses 1.0 (the preceding average), not a threshold fitted to maximize these outcomes. These descriptive subgroup percentages are not forecasts or a validated success-rate improvement.'])
     correlations['relative_volume_groups']=bins
-    (out/'research.md').write_text('\n'.join(lines)+'\n')
-    (out/'volume_summary.json').write_text(json.dumps(correlations,indent=2)+'\n')
+    (out/'research.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+    (out/'volume_summary.json').write_text(json.dumps(correlations,indent=2)+'\n',encoding='utf-8')
 
 
 def detail_report(out,report,paths,grid,cutoff,hours=12,failure_pct=2):
@@ -224,12 +224,12 @@ def detail_report(out,report,paths,grid,cutoff,hours=12,failure_pct=2):
                             followup=second,followup_at=second_at,followup_source='strategy' if follow else 'observation_only_after_stop' if second else 'none',
                             followup_observed_price=ref,before=before,after=after,
                             original_baseline_recovery=excursion(grid,starts,at,(second_at or at)+hours*3600,s['price2'],s['direction'],failure_pct).get('recovery_at')))
-    (out/'cases.json').write_text(json.dumps(details,indent=2)+'\n')
+    (out/'cases.json').write_text(json.dumps(details,indent=2)+'\n',encoding='utf-8')
     columns=['original_time_utc','direction','original_close','search_status','followup_time_utc','followup_frame','followup_source',
              'mae_before_pct','mae_before_time_utc','followup_reference_price','mae_after_pct','mae_after_time_utc','recovery_time_utc','first_favorable_close_time_utc',
              'mfe_after_pct','mfe_after_time_utc','mfe_after_recovery_pct','mfe_after_recovery_time_utc','failure_threshold_pct','failure_time_utc','post_window_status',
              'original_time_israel','followup_time_israel','recovery_time_israel']
-    with (out/'cases.csv').open('w',newline='') as f:
+    with (out/'cases.csv').open('w',newline='',encoding='utf-8') as f:
         w=csv.writer(f);w.writerow(columns)
         for r in details:
             after=r['after'] or {};before=r['before'];fmt=lambda t:stamp(t) if t else ''
@@ -265,7 +265,7 @@ def detail_report(out,report,paths,grid,cutoff,hours=12,failure_pct=2):
         followup_table.append(f"| {source} | {len(group)} | {sum(bool((r['after'] or {}).get('failure_threshold_at')) for r in group)} | {sum(bool((r['after'] or {}).get('recovery_at')) for r in group)} |")
     lines.append('\n'.join(followup_table))
     lines.extend(['','A recovery can occur before a later failure-threshold crossing. Recovery counts are not profitable-trade counts. See research.md for the separate fixed-horizon net-return comparison.'])
-    (out/'report.md').write_text('\n\n'.join(lines)+'\n')
+    (out/'report.md').write_text('\n\n'.join(lines)+'\n',encoding='utf-8')
     cases=['# Every four-hour divergence','', 'Times below are Israel time; full UTC values and exact prices are in cases.csv.','']
     pct=lambda v:'unavailable' if v is None else f'{v:.3f}%'
     local=lambda t:datetime.fromtimestamp(t,ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y %H:%M %z') if t else 'not observed'
@@ -280,9 +280,9 @@ def detail_report(out,report,paths,grid,cutoff,hours=12,failure_pct=2):
             f"Maximum favorable move: {pct(a.get('mfe_pct'))}, at {local(a.get('mfe_at'))}.",
             f"Maximum favorable move after recovery: {pct(a.get('mfe_after_recovery_pct'))}, at {local(a.get('mfe_after_recovery_at'))}.",
             f"Further {failure_pct}% adverse threshold: {local(a.get('failure_threshold_at'))}. Observation status: {a.get('status','no follow-up')}.",''])
-    (out/'cases.md').write_text('\n\n'.join(cases)+'\n')
+    (out/'cases.md').write_text('\n\n'.join(cases)+'\n',encoding='utf-8')
     (out/'report_parameters.json').write_text(json.dumps(dict(window_hours=hours,failure_pct=failure_pct,
-        source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),replay_hash=report['report_hash']),indent=2)+'\n')
+        source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),replay_hash=report['report_hash']),indent=2)+'\n',encoding='utf-8')
     descriptive_research(out,report,details)
     return details
 
@@ -302,7 +302,7 @@ def main():
     if args.candles:data=args.candles
     if args.refresh_report or args.candles:
         grid=[]
-        with (data/'1m.csv').open() as f:
+        with (data/'1m.csv').open(encoding='utf-8') as f:
             for r in csv.DictReader(f):grid.append((timestamp(r['time']),*(float(r[k]) for k in ('open','high','low','close','Volume')),int(r['n_trades'])))
     if args.refresh_report:
         report=json.loads((args.output/'replay.json').read_text())
@@ -312,7 +312,7 @@ def main():
         from chasing_research import run
         paths={f:data/f'{f}.csv' for f in FRAMES}
         report=run(paths,'KRAKEN:NEARUSD',cutoff*1000,start_at=start*1000,end_at=end*1000)
-        (args.output/'replay.json').write_text(json.dumps(report,indent=2)+'\n')
+        (args.output/'replay.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
         details=detail_report(args.output,report,paths,grid,cutoff,args.window_hours,args.failure_pct)
         print(json.dumps(dict(originals=len(details),summary=report['summary'],output=str(args.output)),indent=2),flush=True)
         return
@@ -329,7 +329,7 @@ def main():
     from chasing_research import run
     paths={f:data/f'{f}.csv' for f in FRAMES}
     report=run(paths,'KRAKEN:NEARUSD',cutoff*1000,start_at=start*1000,end_at=end*1000)
-    (args.output/'replay.json').write_text(json.dumps(report,indent=2)+'\n')
+    (args.output/'replay.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
     details=detail_report(args.output,report,paths,grid,cutoff,args.window_hours,args.failure_pct)
     print(json.dumps(dict(originals=len(details),summary=report['summary'],output=str(args.output)),indent=2),flush=True)
 
