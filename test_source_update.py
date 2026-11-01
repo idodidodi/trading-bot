@@ -24,6 +24,12 @@ class SourceTests(unittest.TestCase):
             date=after.astimezone(ZoneInfo('Asia/Jerusalem')).date().isoformat()
             self.assertFalse(update.due({'completed_date':date},after))
 
+    def test_postponed_or_failed_attempt_keeps_retrying_after_midnight(self):
+        early=datetime(2026,1,2,23,0,tzinfo=timezone.utc)  # 01:00 Israel next day
+        self.assertFalse(update.due({},early))
+        self.assertTrue(update.due({'outcome':'postponed: live position'},early))
+        self.assertTrue(update.due({'outcome':'failed'},early))
+
     def test_health_timeout_is_bounded_before_supervisor_deadline(self):
         service=update.Service(Path('.'),'unused')
         expected=update.source_manifest(Path('.'))

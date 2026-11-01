@@ -260,6 +260,8 @@ def due(state, now):
     local=now.astimezone(ZoneInfo('Asia/Jerusalem'))
     today=local.date().isoformat()
     if state.get('completed_date')==today:return False
+    # An outstanding scheduled attempt keeps retrying across midnight.
+    if state.get('outcome')=='failed' or state.get('outcome','').startswith('postponed:'):return True
     return (local.hour,local.minute)>=(2,39)
 
 
