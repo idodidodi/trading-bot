@@ -3,6 +3,7 @@ import json
 import os
 import time
 import threading
+from source_update import activity_connection
 from datetime import datetime, timezone
 from divergence_chasing import create, step, FRAMES, CHASE_FRAMES, DURATIONS
 
@@ -15,7 +16,7 @@ def enabled():
 
 
 def people(store):
-    with store.connect() as db:
+    with activity_connection(store) as db:
         if not db.execute("SELECT to_regprocedure('bot_runtime.chasing_recipients()')").fetchone()[0]:return []
         return db.execute('SELECT bot_runtime.chasing_recipients()').fetchone()[0]
 
@@ -46,7 +47,7 @@ def enroll(store,root,person):
     now=int(time.time()*1000)
     s=proposal(root,person,now)
     if s is None:return
-    with store.connect() as db:
+    with activity_connection(store) as db:
         created=db.execute('INSERT INTO chasing_sessions SELECT %s,installation,%s,%s FROM runtime_control WHERE id=1 AND bot_runtime.chasing_is_owner(installation,%s::uuid) ON CONFLICT DO NOTHING RETURNING id',
                           (s['id'],s['user'],json.dumps(s),s['user'])).fetchone()
         if created:enqueue(db,s,dict(kind='started',at=now,session=s['id']))
@@ -102,7 +103,7 @@ def history(root,now):
 def tick(store,now,fetch=market,clock=None,lookback_fetch=history):
     from postgres_store import assert_worker
     assert_worker(store)
-    with store.connect() as db:
+    with activity_connection(store) as db:
         rows=db.execute("SELECT id,state FROM chasing_sessions WHERE bot_runtime.chasing_is_owner(installation,user_id) AND (state->>'next_due')::bigint<=%s ORDER BY (state->>'next_due')::bigint LIMIT 100",(now,)).fetchall()
     cache={}
     for key,snapshot in rows:
@@ -120,7 +121,7 @@ def tick(store,now,fetch=market,clock=None,lookback_fetch=history):
             except (ValueError,OSError,KeyError,TypeError,IndexError):
                 result=dict(status='incomplete',reason='Provider history is unavailable; no missed-signal conclusion can be made',from_at=snapshot['root']['confirmed_at'],through_at=None)
             checked_now=clock() if clock else now
-            with store.connect() as db:
+            with activity_connection(store) as db:
                 row=db.execute('SELECT state FROM chasing_sessions WHERE id=%s FOR UPDATE',(key,)).fetchone()
                 if not row or row[0]['revision']!=snapshot['revision']:continue
                 state,event=finish(row[0],result,checked_now)
@@ -134,7 +135,7 @@ def tick(store,now,fetch=market,clock=None,lookback_fetch=history):
             checked_now=clock() if clock else now
         except (ValueError, OSError, KeyError, TypeError, IndexError):
             checked_now=clock() if clock else now
-            with store.connect() as db:
+            with activity_connection(store) as db:
                 row=db.execute('SELECT state FROM chasing_sessions WHERE id=%s FOR UPDATE',(key,)).fetchone()
                 if not row or row[0]['revision']!=snapshot['revision']:continue
                 state=row[0];state['next_due']=checked_now+60000
@@ -145,7 +146,7 @@ def tick(store,now,fetch=market,clock=None,lookback_fetch=history):
                 db.execute('UPDATE chasing_sessions SET state=%s WHERE id=%s',(json.dumps(state),key))
             store.log('Chasing data unavailable',f"{root['symbol']}: awaiting supported, fresh closed candles")
             continue
-        with store.connect() as db:
+        with activity_connection(store) as db:
             row=db.execute('SELECT state FROM chasing_sessions WHERE id=%s FOR UPDATE',(key,)).fetchone()
             if not row or row[0]['revision']!=snapshot['revision']:continue
             s,events=step(row[0],checked_now,price=price,price_at=price_at,signals=signals)
@@ -202,17 +203,17 @@ def deliver_pending(store,token):
     from telegram_personal import prepare_message, bind_message
     from telegram_checklist import api, bot_key
     recipients={str(p['user_id']):p for p in people(store)}
-    with store.connect() as db:
+    with activity_connection(store) as db:
         rows=db.execute("SELECT o.id,o.event,s.state FROM chasing_outbox o JOIN chasing_sessions s ON s.id=o.session_id WHERE o.status='pending' AND o.retry_at<=%s ORDER BY o.event->>'at' LIMIT 100",(int(time.time()*1000),)).fetchall()
     for key,event,s in rows:
         person=recipients.get(s['user']);route='live_positions' if event['kind'] in ('opposite','entered','position_reference','position_extended','position_trail','exit_signal','reported_exit','position_data_delayed','position_data_resumed') else 'chasing'
         stale=event['kind'] in ('started','return_to_close','chase') and s['status']!='chasing' and not(event['kind']=='chase' and s['status']=='complete_first')
         if route=='live_positions' and s.get('position',{}).get('status')=='closed' and event['kind']!='reported_exit':stale=True
         if not person or not person[route] or not person['routes'].get(route) or stale:
-            with store.connect() as db:db.execute("UPDATE chasing_outbox SET status='suppressed' WHERE id=%s",(key,))
+            with activity_connection(store) as db:db.execute("UPDATE chasing_outbox SET status='suppressed' WHERE id=%s",(key,))
             continue
         if event['kind']=='return_to_close':
-            with store.connect() as db:
+            with activity_connection(store) as db:
                 slot=db.execute('''INSERT INTO chasing_price_slots VALUES(%s,%s,extract(epoch FROM clock_timestamp()))
                   ON CONFLICT(user_id) DO UPDATE SET event_id=excluded.event_id,reserved_at=excluded.reserved_at
                   WHERE chasing_price_slots.event_id=excluded.event_id OR chasing_price_slots.reserved_at<=excluded.reserved_at-60
@@ -221,7 +222,7 @@ def deliver_pending(store,token):
             if not slot:continue
         assert_worker(store)
         chat=person['routes'][route]
-        with store.connect() as db:
+        with activity_connection(store) as db:
             db.execute('UPDATE chasing_outbox SET chat=coalesce(chat,%s),telegram_user_id=coalesce(telegram_user_id,%s),bot=coalesce(bot,%s) WHERE id=%s',(chat,person['telegram_user_id'],bot_key(token),key))
             chat,owner=db.execute('SELECT chat,telegram_user_id FROM chasing_outbox WHERE id=%s',(key,)).fetchone()
         def send(token,chat,text,**kwargs):
@@ -234,7 +235,7 @@ def deliver_pending(store,token):
                 item.extra_keyboard=[[dict(text="I've exited",callback_data='chase:exit:'+s['id'])]]
             message=api(token,'sendMessage',dict(chat_id=chat,text=text,reply_markup=item.keyboard(),disable_notification=kwargs.get('silent',False)))
             bind_message(store,item,message)
-            with store.connect() as db:
+            with activity_connection(store) as db:
                 db.execute('UPDATE chasing_outbox SET message_id=%s,dismissal_id=%s WHERE id=%s',(message['message_id'],item.key,key))
             return message['message_id']
         try:
@@ -242,10 +243,10 @@ def deliver_pending(store,token):
         except WorkerOwned:
             raise
         except RuntimeError:
-            with store.connect() as db:db.execute('UPDATE chasing_outbox SET retry_at=%s WHERE id=%s',(int(time.time()*1000)+60000,key))
+            with activity_connection(store) as db:db.execute('UPDATE chasing_outbox SET retry_at=%s WHERE id=%s',(int(time.time()*1000)+60000,key))
             store.log('Chasing delivery delayed','Personal delivery will retry; other recipients continue.')
             continue
-        with store.connect() as db:db.execute("UPDATE chasing_outbox SET status='sent' WHERE id=%s",(key,))
+        with activity_connection(store) as db:db.execute("UPDATE chasing_outbox SET status='sent' WHERE id=%s",(key,))
 
 
 def callback(store,token,query):
@@ -257,7 +258,7 @@ def callback(store,token,query):
     message=query.get('message') or {};user=query.get('from',{}).get('id')
     assert_worker(store)
     answer='Entry unavailable for this message.'
-    with store.connect() as db:
+    with activity_connection(store) as db:
         binding=db.execute('SELECT 1 FROM chasing_outbox o JOIN telegram_personal_messages m ON m.id=o.dismissal_id WHERE o.session_id=%s AND o.bot=%s AND o.chat=%s AND o.message_id=%s AND o.telegram_user_id=%s AND m.state::jsonb->>\'phase\'=\'active\'',
                            (key,bot_key(token),str(message.get('chat',{}).get('id')),message.get('message_id'),user)).fetchone()
         if not binding:

@@ -14,7 +14,7 @@ Install [requirements-runtime.txt](https://github.com/idodidodi/trading-bot/blob
 
 One worker owns the installation through a database advisory lock and durable ownership generation. `bot_runtime.runtime_control` separately controls routing and external effects. `DRY_RUN=true` simulates Telegram delivery; paper orders additionally require the paper-trading setting. Dry-run alerts are not automatically resent when real delivery is enabled.
 
-Automatic legacy executable updates are disabled. Linux and Windows builds remain tested, but Postgres artifacts do not publish to the old update channel. Deploy reviewed source deliberately and restart the existing service; do not launch another scanner against production.
+Automatic legacy executable updates remain disabled. Linux builds and frozen-app smoke tests run in CI; Windows builds are disabled. The Postgres source updater checks verified main commits daily at 02:39 Israel time and postpones while chasing, lookback or live positions are active. See [Linux source updates](docs/linux-source-updates.md). Never launch another scanner against production.
 
 ## Strategies and data
 

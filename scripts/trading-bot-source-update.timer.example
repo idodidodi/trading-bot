@@ -1,0 +1,11 @@
+[Unit]
+Description=Trading Bot update at 02:39 Israel time, retry while postponed
+
+[Timer]
+OnCalendar=*-*-* 02:39:00 Asia/Jerusalem
+OnUnitInactiveSec=5min
+Persistent=true
+Unit=trading-bot-source-update.service
+
+[Install]
+WantedBy=timers.target
