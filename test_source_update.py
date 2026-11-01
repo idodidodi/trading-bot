@@ -24,6 +24,15 @@ class SourceTests(unittest.TestCase):
             date=after.astimezone(ZoneInfo('Asia/Jerusalem')).date().isoformat()
             self.assertFalse(update.due({'completed_date':date},after))
 
+    def test_health_timeout_is_bounded_before_supervisor_deadline(self):
+        service=update.Service(Path('.'),'unused')
+        expected=update.source_manifest(Path('.'))
+        with patch.object(update.time,'monotonic',side_effect=[0,1,91]), \
+             patch.object(update.time,'sleep'), \
+             patch.object(update,'get_json',side_effect=TimeoutError) as fetch:
+            self.assertFalse(service.healthy(expected))
+            self.assertEqual(fetch.call_args.kwargs['timeout'],2)
+
     def test_source_version_is_read_from_new_source_after_update(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);(root/'app_version.py').write_text("VERSION = '8.2.0'\n")

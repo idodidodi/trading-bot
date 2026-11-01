@@ -62,10 +62,10 @@ def blockers(db):
     return sorted(reasons)
 
 
-def get_json(url):
+def get_json(url, timeout=20):
     request = urllib.request.Request(url, headers={'User-Agent': 'TradingBot-SourceUpdater',
         'Accept': 'application/vnd.github+json', 'Cache-Control': 'no-cache'})
-    with urllib.request.urlopen(request, timeout=20) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         raw = response.read(16*1024*1024+1)
     if len(raw)>16*1024*1024:raise UpdateRefused('Metadata too large')
     return json.loads(raw)
@@ -183,14 +183,15 @@ class Service:
         from version_info import build_manifest
         if source_manifest(self.root)!=expected:return False
         port=int(os.environ.get('PORT','8080'))
-        for _ in range(60):
+        deadline=time.monotonic()+90
+        while time.monotonic()<deadline:
             try:
-                health=get_json(f'http://127.0.0.1:{port}/health')
-                manifest=get_json(f'http://127.0.0.1:{port}/web/version.json')
+                health=get_json(f'http://127.0.0.1:{port}/health',timeout=2)
+                manifest=get_json(f'http://127.0.0.1:{port}/web/version.json',timeout=2)
                 if health.get('ok') and manifest==expected and self.control('is-active')=='active':
                     import psycopg
                     from postgres_store import settings
-                    with psycopg.connect(settings(),connect_timeout=5,autocommit=True) as db:
+                    with psycopg.connect(settings(),connect_timeout=5,autocommit=True,options='-c statement_timeout=5000') as db:
                         owners=db.execute("SELECT count(*) FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid WHERE a.application_name='trading-bot-owner' AND a.usename=current_user AND l.locktype='advisory' AND l.objid=714269002 AND l.granted").fetchone()[0]
                     if owners==1:return True
             except Exception:pass
