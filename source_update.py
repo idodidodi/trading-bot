@@ -230,7 +230,9 @@ def install(root, stage, target, files, db, service, bootstrap=False):
             replace_files(root,stage,old_files,files)
             atomic_json(root/STATE_FILE,dict(**target,files=files,manifest=source_manifest(root),backup=str(backup)))
     except Exception as error:failure=error
-    finally:db.execute('SELECT pg_advisory_unlock(%s)',(UPDATE_LOCK,))
+    finally:
+        try:db.execute('SELECT pg_advisory_unlock(%s)',(UPDATE_LOCK,))
+        except Exception as error:failure=failure or error
     if not stopped:
         if failure:raise failure
         return outcome

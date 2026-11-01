@@ -138,6 +138,20 @@ class DatabaseTests(PostgresTestCase):
                 self.assertEqual((root/'data/private').read_text(),'retain')
                 self.assertEqual(service.calls.count('stop'),2 if failure else 1)
 
+    def test_database_disconnect_after_stop_still_restores_and_restarts(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'install';stage=Path(d)/'stage';root.mkdir();stage.mkdir()
+            (root/'scanner.py').write_text('old = True\n');(stage/'scanner.py').write_text('new = True\n')
+            db=Mock();db.execute.return_value.fetchone.return_value=(True,)
+            def execute(query,*args):
+                if 'pg_advisory_unlock' in query:raise RuntimeError('database disconnected')
+                return Mock(fetchone=lambda:(True,))
+            db.execute.side_effect=execute;service=FakeService(root)
+            with patch.object(update,'blockers',return_value=[]),self.assertRaisesRegex(RuntimeError,'restored'):
+                update.install(root,stage,dict(commit='new',compatibility={}),['scanner.py'],db,service,bootstrap=True)
+            self.assertEqual((root/'scanner.py').read_text(),'old = True\n')
+            self.assertEqual(service.calls[-1],'start')
+
     def test_bootstrap_rechecks_activity_after_stopping_old_worker(self):
         with tempfile.TemporaryDirectory() as d, psycopg.connect(test_dsn(),autocommit=True) as db:
             root=Path(d);service=FakeService(root)
