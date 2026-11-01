@@ -9,7 +9,9 @@ from chasing_runtime import enroll, tick, deliver_pending, callback, market
 class MarketTests(unittest.TestCase):
     def setUp(self):
         from chasing_runtime import _market_cache
+        from shared_kraken import divergences
         _market_cache.clear()
+        divergences.clear()
     def test_minute_prices_are_fetched_without_minute_divergence_detection(self):
         from scanner import Candle
         from divergence_chasing import CHASE_FRAMES, DURATIONS

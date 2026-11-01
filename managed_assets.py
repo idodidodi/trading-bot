@@ -5,7 +5,8 @@ import re
 import time
 
 DEFAULTS = ['monthly', 'weekly', 'daily', '4h']
-SUPPORTED_TIMEFRAMES = DEFAULTS + ['1h']
+LOWER_TIMEFRAMES = ('5m', '15m', '30m')
+SUPPORTED_TIMEFRAMES = DEFAULTS + ['1h', *LOWER_TIMEFRAMES]
 LIMIT = 100
 PROVIDERS = ('csv', 'twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca', 'fmp', 'yahoo')
 SCAN_STRATEGIES = ['rsi', 'pin-bars', 'rsi-pb']
@@ -102,6 +103,8 @@ def validate_asset(asset):
         raise ValueError('Confirm the exact provider symbol before enabling')
     from kraken_feed import validate_feed
     for frame in frames:
+        if frame in LOWER_TIMEFRAMES and overrides.get(frame, asset['provider']) not in ('kraken', 'csv'):
+            raise ValueError('5m, 15m and 30m candles require Kraken or CSV')
         if asset.get('timeframe_providers', {}).get(frame, asset['provider']) == 'alpaca' and asset['enabled']:
             from alpaca_feed import supported
             if not supported(asset):

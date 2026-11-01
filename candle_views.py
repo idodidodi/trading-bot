@@ -68,7 +68,7 @@ def detail(store, root, source, key, target='pivot2'):
             feed=f"{a['provider']}:{a.get('exchange') or 'configured'}:{a.get('symbol') or a['id']}"
             if a['id']==asset_id or feed==asset_id:
                 mapping=a.get('tradingview_symbol','');break
-    interval={'monthly':'M','weekly':'W','daily':'D','4h':'240','1h':'60'}[tf]
+    interval={'monthly':'M','weekly':'W','daily':'D','4h':'240','1h':'60','30m':'30','15m':'15','5m':'5'}[tf]
     url='https://www.tradingview.com/chart/?'+urlencode(dict(symbol=mapping,interval=interval)) if mapping else None
     note='External TradingView is a comparison feed; exact historical date navigation is not guaranteed.'
     return dict(signal=signal,candles=rows,target=target,target_time=center,tradingview_url=url,note=note)

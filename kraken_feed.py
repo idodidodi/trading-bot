@@ -32,7 +32,9 @@ INTERVALS = {'1m': 1, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240, 'daily
 
 def validate_feed(asset, timeframe):
     if timeframe not in INTERVALS:
-        raise ValueError('Kraken has no calendar-month candles; select Twelve Data for monthly')
+        if timeframe == 'monthly':
+            raise ValueError('Kraken has no calendar-month candles; select Twelve Data for monthly')
+        raise ValueError('Unsupported Kraken candle timeframe')
     if not re.fullmatch(r'[A-Z0-9]+/[A-Z0-9]+', asset.get('symbol', '')):
         raise ValueError('Kraken requires an exact BASE/QUOTE spot pair')
     if asset.get('exchange') != 'Kraken' or asset.get('feed_confirmed') is not True:

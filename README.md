@@ -24,6 +24,8 @@ See the [RSI strategy specification](https://github.com/idodidodi/trading-bot/bl
 
 The dashboard uses Supabase Auth and owner/editor-scoped APIs. Browser roles cannot directly access worker tables. Hosted replay and uploaded-CSV research run independently of Linux. Telegram reservations retain accepted message IDs, but ambiguous network failures can still repeat a message. Reconcile ambiguous broker submissions before retrying them.
 
+Crypto RSI alerts support [automatic and manual descending Chase](docs/crypto-auto-chase.md): one active watch per asset, shared candle requests, follow-up alerts as lower timeframes appear, and completion at 5m or expiry. The automatic destination is separately registered and enabled in Settings.
+
 ## Local ad hoc scanner UI
 
 Open `adhoc/rsi_pb_scanner.py` in PyCharm, use the project's `.venv` interpreter, and run the file. The local Tkinter window provides timeframe selection, Run/Stop/Resume controls, live stock/pattern/coverage tables, filters, CSV export and saved-result loading. See [the ad hoc tools guide](adhoc/README.md) for setup and controls. No server is required.

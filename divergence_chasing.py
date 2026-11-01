@@ -27,25 +27,30 @@ def percentage(value):
     return float(number)
 
 
-def create(user, root, at, stop_pct=.5, expires_at=None):
+def create(user, root, at, stop_pct=.5, expires_at=None, watch_policy=None, watch_timeouts=None):
     if root['direction'] not in ('bullish', 'bearish') or root['price2'] <= 0:
         raise ValueError('Invalid root signal')
-    if root['timeframe'] not in ('1h','4h'):
+    from crypto_chase_policy import ORDER, POLICY, deadline
+    if root['timeframe'] not in (ORDER[:-3] if watch_policy == POLICY else ('1h','4h')):
         raise ValueError('Position-aware chasing starts from a 1h or 4h original')
     identity = [user, root['symbol'], root['timeframe'], root['direction'], root['pivot2'], VERSION]
-    return dict(id=hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:32],
+    state = dict(id=hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:32],
                 user=user, root=deepcopy(root), status='chasing', stage=root['timeframe'],
                 started_at=at, parent_at=at, checked_at=at, next_due=at+PRE_ENTRY_MS, stop_pct=percentage(stop_pct),
                 expires_at=expires_at, last_price_at=at,
                 last_signed=0., last_return_at=None, chain=[], entry_at=None,
                 revision=0, version=VERSION)
+    if watch_policy == POLICY:
+        state.update(watch_policy=POLICY, watch_timeouts=watch_timeouts,
+                     expires_at=deadline(root['timeframe'], at, expires_at, watch_timeouts), next_due=at+60000)
+    return state
 
 
 def step(session, now, *, price=None, price_at=None, signals=(), enter=False, leave=False):
     """Return a fresh state and logical events. Caller serializes/persists atomically.
 
-    Before entry inspect divergences every five minutes; after entry check each minute.
-    The first eligible event ends searching; its card remains entry-eligible.
+    Legacy pre-entry checks stop at their first event. Crypto watches descend to 5m
+    with minute checks. Reported positions continue their existing minute policy.
     Closed minute prices are the reproducible v1 stop/return observation source.
     """
     s = deepcopy(session)
@@ -56,14 +61,19 @@ def step(session, now, *, price=None, price_at=None, signals=(), enter=False, le
         s['position'].update(status='closed',closed_at=now)
         s.update(status='reported_exited',next_due=None)
         event('reported_exit')
-    elif enter and s['status'] in ('chasing', 'complete_first'):
+    elif (enter and s['status'] in ('chasing', 'complete_first')
+          and not (s.get('watch_policy') and s['status']=='chasing'
+                   and s.get('expires_at') is not None and now>=s['expires_at'])):
         from position_monitor import start
         if s.get('lookback',{}).get('status')=='pending':s['lookback'].update(status='cancelled',reason='Entry reported')
         s.update(status='opposite', entry_at=now, next_due=now,position=start(s['root']['timeframe'],now))
         if s['chain']:s['position']['additional_divergence']=deepcopy(s['chain'][0])
         event('entered')
     elif s['status'] == 'chasing':
-        if s.get('expires_at') is not None and now >= s['expires_at']:
+        from crypto_chase_policy import POLICY, advance
+        if s.get('watch_policy') == POLICY:
+            s, events = advance(s, now, signals)
+        elif s.get('expires_at') is not None and now >= s['expires_at']:
             s.update(status='expired', next_due=None)
             event('expired')
         elif price is not None and price_at is not None and s['last_price_at'] < price_at <= now and now-price_at <= 120000:

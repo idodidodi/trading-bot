@@ -31,3 +31,21 @@ test('invalid percentage is rejected before saving',async()=>{
  await descendants(panel).find(e=>e.tag==='button').onclick();
  assert.equal(calls.filter(c=>c.body).length,0);
 });
+test('automatic crypto Chase saves its own destination and revision',async()=>{
+ const {ctx,calls,panel}=setup();
+ ctx.request=async(path,body)=>{calls.push({path,body});return body?{revision:3,...body}:{revision:2,enabled:false,chat:'-10003'};};
+ await ctx.cryptoAutoChaseControls(panel,()=>true);
+ const controls=descendants(panel),enabled=controls.find(e=>e.tag==='input'&&e.type==='checkbox'),chat=controls.find(e=>e.tag==='input'&&e.type==='text');
+ enabled.checked=true;chat.value='-10005';
+ await controls.find(e=>e.tag==='button').onclick();
+ const saved=calls.find(c=>c.body);assert.equal(saved.path,'/api/crypto-auto-chase-settings');
+ assert.equal(saved.body.revision,2);assert.equal(saved.body.enabled,true);assert.equal(saved.body.chat,'-10005');assert.equal('user_id' in saved.body,false);
+});
+test('automatic crypto Chase validates enabled destination and discards stale responses',async()=>{
+ const {ctx,calls,panel}=setup();ctx.request=async()=>({revision:0,enabled:false,chat:''});
+ await ctx.cryptoAutoChaseControls(panel,()=>true);
+ const controls=descendants(panel);controls.find(e=>e.tag==='input'&&e.type==='checkbox').checked=true;
+ await controls.find(e=>e.tag==='button').onclick();assert.equal(calls.length,0);
+ const stale=new Element('section');await ctx.cryptoAutoChaseControls(stale,()=>false);
+ assert.equal(descendants(stale).filter(e=>e.tag==='input').length,0);
+});

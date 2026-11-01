@@ -40,6 +40,9 @@ def next_due(asset, timeframe, raw, candles, now, row):
     from scanner import interval_end
     delay=16*60*1000 if asset['provider']=='alpaca' and asset.get('alpaca_feed','sip')=='sip' else 0
     if row['status']=='unavailable':
+        if asset['provider']=='kraken' and timeframe in ('5m','15m','30m'):
+            # A one-hour retry can outlive an entire lower-timeframe watch.
+            return now+60000
         return next_market_time(asset,now+3600000)
     if asset['provider']=='yahoo' and getattr(raw,'next_close_at',None):
         return max(now+60000, raw.next_close_at)
@@ -70,6 +73,9 @@ def provider_lag(store,key,row,now,deadline,asset=None):
     if previous and previous[0]<=now and row.get('last_closed_at'):
         old=json.loads(previous[1])
         if old.get('last_closed_at')==row['last_closed_at'] and row['status']!='unavailable':
+            if (asset or {}).get('provider')=='kraken' and row['timeframe'] in ('5m','15m','30m'):
+                row['data_notes']='; '.join(filter(None,[row.get('data_notes'),'Awaiting the next completed provider candle; retry in one minute']))
+                return min(deadline,now+60000)
             row['data_notes']='; '.join(filter(None,[row.get('data_notes'),'Awaiting the next completed provider candle; retry in one hour']))
             return min(deadline,next_market_time(asset or {},now+3600000))
     return deadline

@@ -76,6 +76,25 @@ test('empty timeframe selection stays in modal and sends no mutation; cancel sen
  assert.equal(get('asset-dialog').open,false);assert.ok(!requests.some(r=>r.body));
 });
 
+test('Kraken lower timeframe selection survives saving without changing CSV backtest intervals',async()=>{
+ const lower={...asset,provider:'kraken',exchange:'Kraken',timeframes:['30m','15m','5m'],timeframe_providers:{}};
+ const {context,get,requests}=setup({...settings,config:{...settings.config,assets:[lower]}});
+ await vm.runInContext("openAssetManager({symbol:'kraken:Kraken:BTC/USD',timeframe:'5m'})",context);
+ const form=formFor(get),selected=descendants(form).filter(e=>e.tag==='input'&&['5m','15m','30m'].includes(e.value));
+ assert.deepEqual(selected.filter(e=>e.checked).map(e=>e.value),['30m','15m','5m']);
+ await submit(form);
+ assert.deepEqual(requests.find(r=>r.body?.action==='save').body.asset.timeframes,['30m','15m','5m']);
+ assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(frames)',context)),['monthly','weekly','daily','4h','1h']);
+});
+
+test('new intraday choices remain opt-in for legacy assets',async()=>{
+ const legacy={...asset};delete legacy.timeframes;
+ const {context,get}=setup({...settings,config:{assets:[legacy]}});
+ await vm.runInContext("openAssetManager({symbol:'BTCUSD'})",context);
+ const selected=descendants(formFor(get)).filter(e=>e.tag==='input'&&vm.runInContext('assetFrames',context).includes(e.value));
+ assert.deepEqual(selected.filter(e=>e.checked).map(e=>e.value),['monthly','weekly','daily','4h']);
+});
+
 test('strategy selections start from saved settings and save added and removed strategies with the timeframes',async()=>{
  const {context,get,requests}=setup(settings);
  await vm.runInContext("openAssetManager({symbol:'BTCUSD'})",context);
