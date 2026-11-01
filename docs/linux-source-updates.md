@@ -24,7 +24,10 @@ private siblings of the installation under `trading-source-backups`.
 
 ## Bootstrap and operations
 
-Use the existing worker's venv and dedicated database credentials. Place the two
+Use the existing worker's venv and dedicated database credentials. The worker role
+needs a connection limit of at least five: one owner session, three pooled worker
+connections and one updater connection. Health verification reuses the updater
+connection and checks the ownership lock, including behind Supavisor. Place the two
 `trading-bot-source-update` example units from `scripts/` under the existing user's
 systemd directory, replacing all absolute placeholders. Verify them with
 `systemd-analyze --user verify`, then reload systemd. Before enabling the timer,

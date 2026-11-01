@@ -176,7 +176,7 @@ def source_manifest(root):
 
 
 class Service:
-    def __init__(self, root, name):self.root=root;self.name=name
+    def __init__(self, root, name, db=None):self.root=root;self.name=name;self.db=db
     def control(self, action):
         return subprocess.check_output(['systemctl','--user',action,self.name],text=True,stderr=subprocess.DEVNULL,timeout=120).strip()
     def healthy(self, expected):
@@ -191,8 +191,14 @@ class Service:
                 if health.get('ok') and manifest==expected and self.control('is-active')=='active':
                     import psycopg
                     from postgres_store import settings
-                    with psycopg.connect(settings(),connect_timeout=5,autocommit=True,options='-c statement_timeout=5000') as db:
-                        owners=db.execute("SELECT count(*) FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid WHERE a.application_name='trading-bot-owner' AND a.usename=current_user AND l.locktype='advisory' AND l.objid=714269002 AND l.granted").fetchone()[0]
+                    query="SELECT count(*) FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid WHERE a.usename=current_user AND l.locktype='advisory' AND l.classid=0 AND l.objid=714269002 AND l.objsubid=1 AND l.granted"
+                    # Supavisor hides application_name. The ownership advisory lock
+                    # is authoritative, and reuse avoids consuming a sixth slot.
+                    if self.db is not None and not self.db.closed:
+                        owners=self.db.execute(query).fetchone()[0]
+                    else:
+                        with psycopg.connect(settings(),connect_timeout=5,autocommit=True,options='-c statement_timeout=5000') as db:
+                            owners=db.execute(query).fetchone()[0]
                     if owners==1:return True
             except Exception:pass
             time.sleep(1)
@@ -308,7 +314,7 @@ def main():
                     with tempfile.TemporaryDirectory(prefix='trading-source-') as temp:
                         temp=Path(temp);archive=temp/'source.tar';stage=temp/'source';stage.mkdir()
                         download(commit,archive);files=extract_verified(archive,stage,tree)
-                        outcome=install(root,stage,target,files,db,Service(root,args.service),args.bootstrap)
+                        outcome=install(root,stage,target,files,db,Service(root,args.service,db),args.bootstrap)
                 result=dict(checked_at=now.isoformat(),commit=commit,outcome=outcome)
                 if outcome in ('installed','unchanged'):
                     from zoneinfo import ZoneInfo

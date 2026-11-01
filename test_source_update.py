@@ -39,6 +39,17 @@ class SourceTests(unittest.TestCase):
             self.assertFalse(service.healthy(expected))
             self.assertEqual(fetch.call_args.kwargs['timeout'],2)
 
+    def test_health_reuses_control_connection_and_pooler_safe_ownership_lock(self):
+        expected=update.source_manifest(Path('.'));db=Mock(closed=False)
+        db.execute.return_value.fetchone.return_value=(1,)
+        service=update.Service(Path('.'),'unused',db)
+        with patch.object(update,'get_json',side_effect=[{'ok':True},expected]), \
+             patch.object(service,'control',return_value='active'), \
+             patch('psycopg.connect') as connect:
+            self.assertTrue(service.healthy(expected));connect.assert_not_called()
+        query=db.execute.call_args.args[0]
+        self.assertNotIn('application_name',query);self.assertIn('714269002',query)
+
     def test_source_version_is_read_from_new_source_after_update(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);(root/'app_version.py').write_text("VERSION = '8.2.0'\n")
