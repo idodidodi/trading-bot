@@ -41,6 +41,9 @@ def activity_connection(store):
 def blockers(db):
     """Fail closed on missing schema, malformed state, or unknown activity states."""
     reasons = set()
+    if db.execute("SELECT to_regclass('bot_runtime.demo_execution_trades')").fetchone()[0]:
+        if db.execute("SELECT 1 FROM bot_runtime.demo_execution_trades WHERE state NOT IN ('closed','unfilled','skipped') LIMIT 1").fetchone():
+            reasons.add('demo execution position or unresolved submission')
     for (state,) in db.execute('SELECT state FROM bot_runtime.chasing_sessions'):
         if not isinstance(state, dict):
             reasons.add('unknown session'); continue
