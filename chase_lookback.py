@@ -33,6 +33,7 @@ def request(session,now,request_id):
     """Queue once per Telegram callback, preserving terminal/position state."""
     state=deepcopy(session)
     if state['entry_at'] is not None:return state,'Entry already reported; lookback cannot change this position.'
+    if state['status']=='stopped_manual':return state,'You stopped this chase. It was not restarted.'
     old=state.get('lookback',{})
     if old.get('request_id')==request_id:return state,'This lookback request was already recorded.'
     if old.get('status')=='pending':return state,'Lookback is already queued.'

@@ -46,7 +46,7 @@ def create(user, root, at, stop_pct=.5, expires_at=None, watch_policy=None, watc
     return state
 
 
-def step(session, now, *, price=None, price_at=None, signals=(), enter=False, leave=False):
+def step(session, now, *, price=None, price_at=None, signals=(), enter=False, leave=False, stop=False):
     """Return a fresh state and logical events. Caller serializes/persists atomically.
 
     Legacy pre-entry checks stop at their first event. Crypto watches descend to 5m
@@ -57,6 +57,13 @@ def step(session, now, *, price=None, price_at=None, signals=(), enter=False, le
     events = []
     def event(kind, **values):
         events.append(dict(kind=kind, at=now, session=s['id'], **values))
+    if stop:
+        if s['status'] in ('chasing', 'complete_first') and s.get('entry_at') is None:
+            s.update(status='stopped_manual', next_due=None, stopped_at=now)
+            if s.get('lookback', {}).get('status') == 'pending':
+                s['lookback'].update(status='cancelled', reason='Stopped by owner')
+            s['revision'] += 1
+        return s, events
     if leave and s.get('position') and s['position']['status']!='closed':
         s['position'].update(status='closed',closed_at=now)
         s.update(status='reported_exited',next_due=None)

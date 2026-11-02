@@ -54,7 +54,8 @@ def proposal(root,person,now,automatic=False):
 
 def chase_buttons(key):
     return [[dict(text='Chase',callback_data='chase:start:'+key),
-             dict(text='Chase + look back',callback_data='chase:lookback:'+key)]]
+             dict(text='Chase + look back',callback_data='chase:lookback:'+key)],
+            [dict(text='Stop chasing',callback_data='chase:stop:'+key)]]
 
 
 def enroll(store,root,person,automatic=False):
@@ -375,10 +376,16 @@ def deliver_pending(store,token):
     with activity_connection(store) as db:
         rows=db.execute("SELECT o.id,o.event,s.state FROM chasing_outbox o JOIN chasing_sessions s ON s.id=o.session_id WHERE o.status='pending' AND o.retry_at<=%s ORDER BY o.event->>'at' LIMIT 100",(int(time.time()*1000),)).fetchall()
     for key,event,s in rows:
+        # A callback can cancel a watch after this delivery batch was loaded.
+        with activity_connection(store) as db:
+            current=db.execute("SELECT s.state FROM chasing_outbox o JOIN chasing_sessions s ON s.id=o.session_id WHERE o.id=%s AND o.status='pending'",(key,)).fetchone()
+        if not current:continue
+        s=current[0]
         person=recipients.get(s['user']);route=event.get('destination') or ('live_positions' if event['kind'] in ('opposite','entered','position_reference','position_extended','position_trail','exit_signal','reported_exit','position_data_delayed','position_data_resumed') else 'chasing')
         stale=event['kind'] in ('started','return_to_close','chase') and s['status']!='chasing' and not(event['kind']=='chase' and s['status']=='complete_first')
         if s.get('watch_policy') and route in ('chasing','crypto_auto_chase') and event['kind'] in ('started','chase','expired') and route not in s.get('destinations',[]):stale=True
         if route=='live_positions' and s.get('position',{}).get('status')=='closed' and event['kind']!='reported_exit':stale=True
+        if s['status']=='stopped_manual':stale=True
         if not person or not person.get(route) or not person['routes'].get(route) or stale:
             with activity_connection(store) as db:db.execute("UPDATE chasing_outbox SET status='suppressed' WHERE id=%s",(key,))
             continue
@@ -400,7 +407,12 @@ def deliver_pending(store,token):
             item=prepare_message(store,token,chat,text,[],owner)
             if route!='crypto_auto_chase' and s['status'] in ('chasing','complete_first') and s['root']['timeframe'] in ('1h','4h'):
                 item.extra_keyboard=[[dict(text="I'm in",callback_data='chase:enter:'+s['id'])]]
-                item.extra_keyboard+=chase_buttons(s['id'])
+                if s['status']=='chasing':
+                    item.extra_keyboard+=[[dict(text='Stop chasing',callback_data='chase:stop:'+s['id'])]]
+                else:
+                    item.extra_keyboard+=chase_buttons(s['id'])
+            elif s['status']=='chasing':
+                item.extra_keyboard=[[dict(text='Stop chasing',callback_data='chase:stop:'+s['id'])]]
             elif s.get('position') and s['position']['status']!='closed':
                 item.extra_keyboard=[[dict(text="I've exited",callback_data='chase:exit:'+s['id'])]]
             message=api(token,'sendMessage',dict(chat_id=chat,text=text,reply_markup=item.keyboard(),disable_notification=kwargs.get('silent',False)))
@@ -423,7 +435,7 @@ def callback(store,token,query):
     from telegram_checklist import api,bot_key
     from postgres_store import assert_worker
     data=query.get('data','');parts=data.split(':',2)
-    if len(parts)!=3 or parts[0]!='chase' or parts[1] not in ('enter','exit','start','lookback'):return
+    if len(parts)!=3 or parts[0]!='chase' or parts[1] not in ('enter','exit','start','lookback','stop'):return
     action=parts[1];key=parts[2];leaving=action=='exit'
     message=query.get('message') or {};user=query.get('from',{}).get('id')
     assert_worker(store)
@@ -465,7 +477,13 @@ def callback(store,token,query):
                         else 'Entry was already recorded. Use the existing position card.')
                 api(token,'answerCallbackQuery',dict(callback_query_id=query['id'],text=answer))
                 return
-            if action=='lookback':
+            if action=='stop':
+                s,events=step(s,now,stop=True)
+                if s['status']=='stopped_manual':
+                    db.execute("UPDATE chasing_outbox SET status='suppressed' WHERE session_id=%s AND status='pending'",(key,))
+                    answer='Chasing stopped for this watch.'
+                else:answer='This chase is no longer active. Position monitoring is unchanged.'
+            elif action=='lookback':
                 from chase_lookback import request
                 import hashlib
                 request_id=hashlib.sha256(query['id'].encode()).hexdigest()[:16]
