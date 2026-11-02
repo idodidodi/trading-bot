@@ -341,6 +341,10 @@ def current_price(s):
 
 
 def text_for(s,event):
+    if event['kind']=='demo_exit':
+        return (f"EXIT ALERT · opposing {event['signal']['timeframe']} RSI divergence\n"
+                f"{event['signal']['symbol']} · original {s['root']['timeframe']} {s['root']['direction']}\n"
+                f"Bybit demo {event['symbol']}: reduce-only close queued. Submission and fill are not yet confirmed; the worker will reconcile the result.")
     root=s['root'];head=f"{root['symbol']} · original {root['timeframe']} {root['direction']}\nOriginal close: {root['price2']:g}\n"
     if 'current_price' in event:
         quote=event['current_price']

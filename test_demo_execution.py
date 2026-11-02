@@ -203,3 +203,121 @@ class DurableTests(PostgresTestCase):
         d.cycle(self.store,self.broker,self.now)
         self.assertEqual(self.records()[0]['strategy'],'chase-4h-5m')
         self.assertEqual(self.broker.entry.call_count,1)
+
+
+class DivergenceExitTests(PostgresTestCase):
+    setUp = DurableTests.setUp
+    add_pb = DurableTests.add_pb
+    records = DurableTests.records
+
+    def add_divergence(self, at, **changes):
+        value=dict(symbol='kraken:Kraken:NEAR/USD',timeframe='4h',direction='bearish',
+                   confirmed_at=at,pivot2=at-60000,pivot1=at-120000,signal_status='provisional')|changes
+        with self.store.connect() as db:
+            db.execute('INSERT INTO signals(id,payload,received,status) VALUES(%s,%s,%s,%s)',
+                       (str(at)+json.dumps(changes,sort_keys=True),json.dumps(value),at/1000,'sent'))
+        return value
+
+    def filled(self, strategy='rsi-pb', side='Buy'):
+        d.cycle(self.store,self.broker,self.now)
+        t=self.records()[0]
+        if strategy=='chase-4h-5m':
+            t.update(strategy=strategy,root=t['signal']|dict(symbol='kraken:Kraken:NEAR/USD'),
+                     signal=t['signal']|dict(timeframe='5m'))
+        t['side']=side
+        d.save(self.store,t,'submitted')
+        self.broker.order.return_value=dict(orderStatus='Filled',cumExecQty=t['plan']['qty'],avgPrice='10',updatedTime=str(self.now+1000))
+        levels=d.protection('10',side,'.01')
+        self.broker.positions.return_value=[dict(symbol='NEARUSDT',size=t['plan']['qty'],side=side,positionIdx=0,avgPrice='10',**levels)]
+        d.cycle(self.store,self.broker,self.now+1000)
+        return self.records()[0]
+
+    def test_wrong_frame_asset_direction_preentry_and_future_do_not_close(self):
+        self.filled('chase-4h-5m')
+        self.add_divergence(self.now+2000,timeframe='5m')
+        self.add_divergence(self.now+2000,symbol='kraken:Kraken:SOL/USD')
+        self.add_divergence(self.now+2000,direction='bullish')
+        self.add_divergence(self.now+1000)
+        self.add_divergence(self.now+4000)
+        d.cycle(self.store,self.broker,self.now+3000)
+        self.broker.flatten.assert_not_called()
+        self.assertEqual(self.records()[0]['state'],'protected')
+        self.add_divergence(self.now+3000)
+        d.cycle(self.store,self.broker,self.now+3000)
+        self.broker.flatten.assert_called_once()
+        self.assertEqual(self.records()[0]['exit_divergence']['timeframe'],'4h')
+
+    def test_short_pb_closes_remaining_owned_size_and_disabled_entries_still_exit(self):
+        self.filled(side='Sell')
+        self.broker.positions.return_value[0]['size']='50'
+        self.add_divergence(self.now+2000,direction='bullish')
+        with self.store.connect() as db:db.execute('UPDATE demo_execution_policy SET enabled=false')
+        d.cycle(self.store,self.broker,self.now+3000)
+        self.assertEqual(self.broker.flatten.call_args.args[1],Decimal('50'))
+        self.assertEqual(self.records()[0]['exit_reason'],'opposite_divergence')
+
+    def test_close_intent_and_alert_commit_before_timeout_and_never_resubmit(self):
+        self.filled()
+        person=dict(user_id='00000000-0000-0000-0000-000000000001',telegram_user_id=72,
+                    live_positions=True,routes={'live_positions':'-10002'})
+        # Register the real opt-in route used by the SQL recipient function.
+        with self.store.connect() as db:
+            db.execute('INSERT INTO public.telegram_recipients(installation,user_id,telegram_user_id,routes) VALUES(%s,%s,72,%s)',
+                       ('00000000-0000-0000-0000-000000000002',person['user_id'],json.dumps(person['routes'])))
+            db.execute('INSERT INTO public.chasing_preferences(installation,user_id,live_positions) VALUES(%s,%s,true)',
+                       ('00000000-0000-0000-0000-000000000002',person['user_id']))
+        self.add_divergence(self.now+2000)
+        def timeout(t,size):
+            self.assertEqual(self.records()[0]['state'],'closing')
+            with self.store.connect() as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM chasing_outbox WHERE event->>'kind'='demo_exit'").fetchone()[0],1)
+            raise d.SubmissionUnknown('timeout')
+        self.broker.flatten.side_effect=timeout
+        with self.assertRaises(d.SubmissionUnknown):d.cycle(self.store,self.broker,self.now+3000)
+        self.broker.order.side_effect=lambda t,close=False: None if close else dict(orderStatus='Filled',cumExecQty='99.9',avgPrice='10',updatedTime=str(self.now+1000))
+        d.cycle(self.store,self.broker,self.now+4000)
+        self.assertEqual(self.broker.flatten.call_count,1)
+        self.assertEqual(self.records()[0]['state'],'closing')
+        # A transient empty position / missing entry lookup must not clear intent.
+        position=self.broker.positions.return_value
+        self.broker.positions.return_value=[]
+        d.cycle(self.store,self.broker,self.now+4500)
+        self.broker.positions.return_value=position
+        d.cycle(self.store,self.broker,self.now+4600)
+        self.assertEqual(self.broker.flatten.call_count,1)
+        from chasing_runtime import deliver_pending
+        with patch('chasing_runtime.people',return_value=[person]),patch('telegram_checklist.api',return_value=dict(chat=dict(id=-10002),message_id=99)) as api:
+            deliver_pending(self.store,'fake')
+        message=next(c.args[2] for c in api.call_args_list if c.args[1]=='sendMessage')
+        self.assertIn('reduce-only close queued',message['text'])
+        self.assertNotIn("I've exited",str(message['reply_markup']))
+        self.broker.positions.return_value=[]
+        d.cycle(self.store,self.broker,self.now+5000)
+        d.cycle(self.store,self.broker,self.now+35000)
+        self.assertEqual(self.records()[0]['state'],'closed')
+        from source_update import blockers
+        with self.store.connect() as db:
+            self.assertNotIn('unknown session',blockers(db))
+            self.assertEqual(db.execute('SELECT count(*) FROM chasing_outbox').fetchone()[0],1)
+
+    def test_modified_or_reversed_position_is_not_closed(self):
+        self.filled()
+        self.add_divergence(self.now+2000)
+        for changes in (dict(size='1000'),dict(avgPrice='11'),dict(side='Sell'),dict(positionIdx=1)):
+            original=self.broker.positions.return_value[0].copy()
+            self.broker.positions.return_value[0].update(changes)
+            d.cycle(self.store,self.broker,self.now+3000)
+            self.broker.flatten.assert_not_called()
+            self.broker.positions.return_value=[original]
+
+    def test_pb_only_uses_original_cached_candles(self):
+        t=self.filled()
+        t['signal']['rules']={'rsi':{'rsi_period':3}}
+        with self.store.connect() as db:
+            db.execute('INSERT INTO candle_cache VALUES(%s,%s,%s,%s,%s,10,10,10,10)',
+                       ('kraken:Kraken:NEAR/USD','NEARUSD','4h',self.now-1000,self.now+2000))
+        found=dict(direction='bearish',confirmed_at=self.now+2000,timeframe='4h')
+        with patch('shared_kraken.detect',return_value=[found]) as detect:
+            self.assertEqual(d.opposing_divergence(self.store,t,self.now+3000),found)
+            self.assertEqual(detect.call_args.args[2:4],('kraken:Kraken:NEAR/USD','4h'))
+            self.assertEqual(detect.call_args.args[1],{'rsi_period':3})

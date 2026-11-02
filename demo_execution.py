@@ -187,10 +187,66 @@ class Broker(BybitDemo):
 
 def save(store, trade, state, **values):
     from source_update import activity_connection
+    if state=='closing':trade['close_requested']=True
     trade.update(values, state=state, updated_at=int(time.time()*1000))
     with activity_connection(store) as db:
         db.execute('UPDATE demo_execution_trades SET state=%s,payload=%s,updated_at=%s WHERE id=%s',
                    (state,json.dumps(trade),trade['updated_at'],trade['id']))
+
+
+def opposing_divergence(store, trade, now):
+    """Consume the sole scanner's live RSI findings on the original source/frame."""
+    original=trade['root'] if trade['strategy']=='chase-4h-5m' else trade['signal']
+    source=original['symbol'] if trade['strategy']=='chase-4h-5m' else original['source']
+    direction='bearish' if trade['side']=='Buy' else 'bullish'
+    with store.connect() as db:
+        row=db.execute("""SELECT payload FROM signals
+            WHERE payload::jsonb->>'symbol'=%s AND payload::jsonb->>'timeframe'=%s
+            AND payload::jsonb->>'direction'=%s AND payload::jsonb->>'signal_status'='provisional'
+            AND (payload::jsonb->>'confirmed_at')::bigint>%s
+            AND (payload::jsonb->>'confirmed_at')::bigint<=%s
+            AND status NOT IN ('summarized','baseline')
+            ORDER BY (payload::jsonb->>'confirmed_at')::bigint,id LIMIT 1""",
+            (source,original['timeframe'],direction,trade['entry_terminal_at'],now)).fetchone()
+    if row:return json.loads(row[0])
+    # RSI+PB-only assets still populate the sole scanner's closed-candle cache.
+    # Evaluate RSI evidence there without another scanner or provider request.
+    with store.connect() as db:
+        rows=db.execute('SELECT start,"end",open,high,low,close FROM candle_cache WHERE feed=%s AND timeframe=%s AND "end"<=%s ORDER BY start DESC LIMIT 720',
+                        (source,original['timeframe'],now)).fetchall()
+    if not rows:return None
+    from scanner import Candle, check_candles
+    from shared_kraken import detect
+    rules=original.get('rules',{})
+    if trade['strategy']=='rsi-pb':rules=rules.get('rsi',{})
+    if not rules:return None
+    findings=detect(check_candles([Candle(*r) for r in reversed(rows)],now),rules,source,original['timeframe'],now)
+    eligible=[s for s in findings if s['direction']==direction
+              and trade['entry_terminal_at']<s['confirmed_at']<=now]
+    return min(eligible,key=lambda s:s['confirmed_at']) if eligible else None
+
+
+def divergence_close(store, trade, signal, now):
+    """Persist close intent and opted-in Live positions alerts before the broker write."""
+    from source_update import activity_connection
+    from chasing_runtime import enqueue
+    trade.update(state='closing',close_requested=True,updated_at=now,exit_reason='opposite_divergence',
+                 exit_divergence=signal,reason='Opposing RSI divergence on original timeframe')
+    with activity_connection(store) as db:
+        db.execute('UPDATE demo_execution_trades SET state=%s,payload=%s,updated_at=%s WHERE id=%s',
+                   ('closing',json.dumps(trade),now,trade['id']))
+        recipients=db.execute('SELECT bot_runtime.chasing_recipients()').fetchone()[0]
+        installation=db.execute('SELECT installation FROM runtime_control WHERE id=1').fetchone()[0]
+        original=trade['root'] if trade['strategy']=='chase-4h-5m' else trade['signal']
+        root=original|dict(symbol=signal['symbol'])
+        for person in recipients:
+            if not person.get('live_positions') or not person['routes'].get('live_positions'):continue
+            key=hashlib.sha256((trade['id']+':exit:'+str(person['user_id'])).encode()).hexdigest()[:32]
+            state=dict(id=key,user=str(person['user_id']),root=root,status='demo_exit',next_due=None)
+            db.execute('INSERT INTO chasing_sessions VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING',
+                       (key,installation,person['user_id'],json.dumps(state)))
+            enqueue(db,state,dict(kind='demo_exit',at=now,session=key,destination='live_positions',
+                                 signal=signal,symbol=trade['symbol']))
 
 
 def reconcile(store, broker, trade, now):
@@ -209,6 +265,12 @@ def reconcile(store, broker, trade, now):
         save(store,trade,'unfilled',reason='Entry terminated without a fill')
         return
     price = number(order['avgPrice'])
+    if 'entry_terminal_at' not in trade:
+        # Terminal update is a conservative boundary for partial fills/cancellations.
+        try:terminal_at=int(order.get('updatedTime') or now)
+        except (ValueError,TypeError):terminal_at=now
+        trade['entry_terminal_at']=terminal_at if trade['created_at']<=terminal_at<=now else now
+    trade.update(filled_qty=str(filled),fill_price=str(price))
     positions = [p for p in broker.positions(trade['symbol']) if decimal(p['size'])>0]
     if not positions:
         # Avoid interpreting a just-filled order's lagging position snapshot as flat.
@@ -225,9 +287,15 @@ def reconcile(store, broker, trade, now):
     if size>filled or number(position['avgPrice'])!=price:
         save(store,trade,'blocked',reason='Position was modified outside this entry')
         return
-    if trade['state']=='closing':
+    if trade['state']=='closing' or trade.get('close_requested'):
         close=broker.order(trade,close=True)
         save(store,trade,'closing',reason='Awaiting verified flat position; no close retry',close_status=close.get('orderStatus') if close else None)
+        return
+    opposite=opposing_divergence(store,trade,now)
+    if opposite:
+        divergence_close(store,trade,opposite,now)
+        assert_worker(store)
+        broker.flatten(trade,size)
         return
     levels=protection(price,trade['side'],trade['plan']['tick'],trade['policy']['exit_distance'])
     matches=all(decimal(position.get(k) or 0)==number(v) for k,v in levels.items())

@@ -63,3 +63,26 @@ after verifying the deployed source, owner, account connectivity and credentials
 Validation uses mocked broker responses plus disposable Postgres. Do not create
 test orders on a running installation. Production activation waits for a fresh
 qualifying strategy signal; no qualifying signal means no order is expected.
+
+## Original-timeframe RSI exit
+
+An opposing RSI divergence after the terminal entry-fill boundary also triggers a
+reduce-only market close of the owned remaining quantity. A 4h-to-5m Chase entry
+requires an opposing **4h** divergence; RSI+PB uses its original signal timeframe
+and source feed. Other symbols, timeframes, same-direction findings and future or
+pre-entry candles cannot trigger the close. Existing fill-relative SL/TP remain.
+
+The worker reads live stored RSI findings and, for RSI+PB-only assets, evaluates
+RSI from the existing scanner's closed-candle cache. No additional scanner or
+provider polling is started. Cache freshness/coverage therefore depends on the
+existing scanner continuing to collect that original feed and timeframe.
+The broker terminal order update timestamp is the conservative entry boundary;
+if absent or invalid, the first observed terminal fill time is saved instead.
+
+Close intent, divergence evidence and opted-in Live positions outbox alerts commit
+before submission. Alerts say a demo close is queued, not filled. Timeouts, missing
+order lookups, rejected closes and partial closes remain under reconciliation;
+no automatic duplicate close is submitted. Existing protections remain in place.
+A flat position must still pass the existing two-observation verification.
+
+The close reuses Bybit's documented [reduce-only order API](https://bybit-exchange.github.io/docs/v5/order/create-order).
