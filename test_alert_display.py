@@ -52,6 +52,30 @@ class AlertDisplayTests(unittest.TestCase):
         self.assertEqual(public_text('Alert\nnew:venue:TEST · 1d'),
                          'Alert\nTEST · 1d\n--------------------\nProvider: new')
 
+    def test_chase_header_at_send_boundary(self):
+        raw = ('yahoo:NYB:DX-Y.NYB · original 4h bullish\n'
+               'Original close: 101.521\n'
+               'Chasing started. Only I’m in confirms your entry.')
+        with patch('platform_app.urllib.request.urlopen', return_value=io.StringIO(
+                '{"ok":true,"result":{"message_id":42}}')) as request:
+            send_telegram('test-token', '123', raw)
+        text = json.loads(request.call_args.args[0].data)['text']
+        self.assertIn('U.S. Dollar Index · original 4h bullish', text)
+        self.assertIn('Original close: 101.521', text)
+        self.assertIn('Chasing started. Only I’m in confirms your entry.', text)
+        self.assertNotIn('yahoo:NYB:', text)
+        self.assertTrue(text.endswith('Provider: Yahoo'))
+        self.assertEqual(public_text(public_text(raw)), public_text(raw))
+
+    def test_descriptive_headers_and_non_symbol_lines(self):
+        self.assertEqual(public_text('DOLLAR_INDEX · original 4h bearish'),
+                         'U.S. Dollar Index · original 4h bearish')
+        self.assertEqual(public_text('kraken:Kraken:BTC/USD · 5m'),
+                         'BTC/USD · 5m\n--------------------\nProvider: Kraken')
+        for line in ('Detected: 11:26:12 · today',
+                     'BULLISH RSI divergence · candle closed'):
+            self.assertEqual(public_text(line), line)
+
 
 if __name__ == '__main__':
     unittest.main()
