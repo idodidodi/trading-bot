@@ -183,6 +183,8 @@ class SharedDataTests(unittest.TestCase):
 class RuntimeTests(PostgresTestCase):
     def setUp(self):
         self.store=TestStore()
+        quote=patch('chasing_runtime.current_price',return_value=dict(price=123.45,at=1200000))
+        quote.start();self.addCleanup(quote.stop)
         self.person=dict(user_id=USER,telegram_user_id=72,chasing=True,live_positions=True,crypto_auto_chase=True,
                          routes={'chasing':'-10001','live_positions':'-10002','crypto_auto_chase':'-10003'},
                          stop_pct=.5,revision=1,created_at=0,auto_created_at=0)
@@ -250,6 +252,7 @@ class RuntimeTests(PostgresTestCase):
                 tick(self.store,at,lambda *a:(None,None,[crypto(frame,at)]))
                 deliver_pending(self.store,'fake');deliver_pending(self.store,'fake')
             tick(self.store,START+10*MINUTE,lambda *a:self.fail('Completed watch must not fetch'))
+        self.assertTrue(all('Current price: 123.45' in c['text'] for c in calls))
         self.assertEqual(len(calls),10)
         self.assertEqual(sum(str(c['chat_id'])=='-10003' for c in calls),5)
         self.assertEqual(self.active(),[])

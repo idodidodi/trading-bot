@@ -51,6 +51,8 @@ INST='00000000-0000-0000-0000-000000000002'
 class RuntimeTests(PostgresTestCase):
     def setUp(self):
         self.store=TestStore()
+        quote=patch('chasing_runtime.current_price',return_value=dict(price=123.45,at=1200000))
+        quote.start();self.addCleanup(quote.stop)
 
     def test_slow_fetch_is_checked_against_completion_time(self):
         from divergence_chasing import create,step
@@ -163,7 +165,8 @@ class RuntimeTests(PostgresTestCase):
             deliver_pending(self.store,'123:fake')
             tick(self.store,2600000,lambda *a:self.fail('No checks after reported exit'))
         sent=[body for method,body in calls if method=='sendMessage']
-        self.assertEqual([str(b['chat_id']) for b in sent],['-10001']+['-10002']*5)
+        self.assertEqual([str(b['chat_id']) for b in sent],['-10001']+['-10002']*4)
+        self.assertIn('Current price: 123.45',sent[0]['text'])
         self.assertEqual(sent[0]['reply_markup']['inline_keyboard'][1][0]['text'],"I'm in")
         with self.store.connect() as db:self.assertEqual(db.execute('SELECT state FROM chasing_sessions').fetchone()[0]['status'],'reported_exited')
 

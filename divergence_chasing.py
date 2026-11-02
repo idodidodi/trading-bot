@@ -114,8 +114,10 @@ def step(session, now, *, price=None, price_at=None, signals=(), enter=False, le
             s['next_due'] = now+PRE_ENTRY_MS
     elif s.get('position') and s['position']['status']!='closed' and now>=s['next_due']:
         from position_monitor import update
-        s['position'],updates=update(s['position'],now,price,price_at,s['root']['direction'],signals,s['root']['symbol'])
+        s['position'],updates=update(s['position'],now,price,price_at,s['root']['direction'],list(signals)+([s['opposite']] if s.get('opposite') else []),s['root']['symbol'])
         for change in updates:
+            if change.get('reason')=='opposite_divergence' and s['position'].get('opposite_alerted'):
+                continue
             event(change['kind'],**{k:v for k,v in change.items() if k!='kind'})
         s['next_due']=now+POSITION_MS
         if s['status']=='opposite':
@@ -124,7 +126,9 @@ def step(session, now, *, price=None, price_at=None, signals=(), enter=False, le
             if candidates:
                 chosen=min(candidates,key=lambda c:(c['confirmed_at'],c['pivot2'],c['pivot1']))
                 s.update(status='opposite_found',opposite=deepcopy(chosen))
-                event('opposite',signal=deepcopy(chosen))
+                if s['position']['status']!='exit_alerted':
+                    s['position']['opposite_alerted']=True
+                    event('opposite',signal=deepcopy(chosen))
     elif s['status'] == 'opposite' and now >= s['next_due']:
         candidates = [c for c in signals if c['symbol'] == s['root']['symbol']
                       and c['timeframe'] == s['root']['timeframe']

@@ -44,6 +44,13 @@ def update(position,now,price,price_at,direction,signals=(),symbol=None):
     if p['trail_stop'] is not None and d*(value-number(p['trail_stop']))<=0:reason='trailing_stop'
     elif p['trail_stop'] is None and move<=-Decimal(str(p['stop_pct'])):reason='loss_stop'
     elif p['additional_divergence'] is None and move>=Decimal(str(p['target_pct'])):reason='profit_target'
+    opposite=[s for s in signals if s.get('symbol')==symbol
+              and s.get('direction')==('bearish' if direction=='bullish' else 'bullish')
+              and s.get('timeframe')==p['frame']
+              and p['requested_at']<s['confirmed_at']<=price_at]
+    if reason is None and opposite:
+        reason='opposite_divergence'
+        p['exit_divergence']=deepcopy(min(opposite,key=lambda s:s['confirmed_at']))
     if reason:
         p.update(status='exit_alerted',exit_reason=reason,exit_price=float(value),exit_price_at=price_at)
         events.append(dict(kind='exit_signal',reason=reason,price=float(value),price_at=price_at,

@@ -46,8 +46,18 @@ the owner clicks **“I've exited.”** That acknowledgement stops monitoring. D
 remains message dismissal only. Buttons remain bound to bot, group, message and owner.
 Pending obsolete position alerts are suppressed after reported exit.
 
-Opposite divergence on the original timeframe still generates its informational Live
-positions alert and stops only that opposite search. Minute exit monitoring continues.
+An opposing RSI divergence after reported entry triggers an EXIT ALERT only on the
+original divergence timeframe (1h requires 1h; 4h requires 4h), regardless of the
+chase entry timeframe. Another asset, same-direction, pre-entry or future finding
+does not trigger this exit. Existing price exits take priority on the same observation.
+The divergence is retained through a minute-price outage, and triggers the position
+exit state when a fresh price returns. Monitoring continues until reported exit.
+
+Chasing and RSI + 5Min RSI messages include a delivery-time current price: the latest
+completed one-minute Kraken close, explicitly timestamped in UTC. Observations older
+than two minutes, future bars and provider failures display price unavailable; the
+original divergence close is never used as a current-price fallback. The shared
+provider cache also serves these observations.
 
 ## Provider budget and failure handling
 

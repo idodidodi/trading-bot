@@ -322,11 +322,35 @@ def tick(store,now,fetch=market,clock=None,lookback_fetch=history):
             for event in events:enqueue(db,s,event)
 
 
+def current_price(s):
+    """Delivery-time closed-minute observation, shared with the existing feed cache."""
+    from math import isfinite
+    from scanner import check_candles
+    from shared_kraken import fetch
+    symbol=s.get('chase_symbol',s['root']['symbol'])
+    if not symbol.startswith('kraken:Kraken:'):return None
+    now=int(time.time()*1000)
+    try:
+        bars=check_candles(fetch(dict(symbol=symbol.split(':',2)[2],exchange='Kraken',feed_confirmed=True),'1m',now),now)
+        checked=int(time.time()*1000)
+        if bars and 0<=checked-bars[-1].end<=120000 and isfinite(bars[-1].close) and bars[-1].close>0:
+            return dict(price=bars[-1].close,at=bars[-1].end)
+    except (ValueError,OSError,KeyError,TypeError,IndexError):
+        pass
+    return None
+
+
 def text_for(s,event):
     root=s['root'];head=f"{root['symbol']} · original {root['timeframe']} {root['direction']}\nOriginal close: {root['price2']:g}\n"
+    if 'current_price' in event:
+        quote=event['current_price']
+        if quote:
+            at=datetime.fromtimestamp(quote['at']/1000,timezone.utc).strftime('%d %b %Y %H:%M UTC')
+            head+=f"Current price: {quote['price']:g} (latest closed minute, {at})\n"
+        else:head+='Current price: unavailable (fresh minute price unavailable)\n'
     kind=event['kind']
     if kind=='favorable_stop':return head+f"Favorable move reached {s['stop_pct']:g}% (observed {event['price']:g}). Chasing stopped."
-    if kind=='opposite':return head+f"Opposite {event['signal']['direction']} {root['timeframe']} divergence found. Opposite search stopped. Minute position monitoring continues until you report exiting."
+    if kind=='opposite':return head+f"EXIT ALERT · Opposite {event['signal']['direction']} {root['timeframe']} RSI divergence. Please review and exit manually. No order was sent. Opposite search stopped. Minute position monitoring continues until you report exiting."
     if kind=='chase':
         if s.get('watch_policy'):
             final=event['signal']['timeframe']=='5m'
@@ -409,6 +433,8 @@ def deliver_pending(store,token):
                 db.execute('UPDATE chasing_outbox SET message_id=%s,dismissal_id=%s WHERE id=%s',(message['message_id'],item.key,key))
             return message['message_id']
         try:
+            if route in ('chasing','crypto_auto_chase'):
+                event=event|dict(current_price=current_price(s))
             deliver(store,token,chat,text_for(s,event),key,send)
         except WorkerOwned:
             raise
