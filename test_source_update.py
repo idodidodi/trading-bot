@@ -117,6 +117,11 @@ class DatabaseTests(PostgresTestCase):
         self.add({'status':'reported_exited','entry_at':10,'position':{'status':'closed'}})
         with self.store.connect() as db:self.assertEqual(update.blockers(db),[])
 
+    def test_manual_stop_does_not_block_future_updates(self):
+        self.add({'status':'stopped_manual','entry_at':None,'next_due':None,
+                  'lookback':{'status':'cancelled'}})
+        with self.store.connect() as db:self.assertEqual(update.blockers(db),[])
+
     def test_real_shared_gate_prevents_exclusive_update(self):
         with update.activity_connection(self.store), psycopg.connect(test_dsn(),autocommit=True) as db:
             self.assertFalse(db.execute('SELECT pg_try_advisory_lock(%s)',(update.UPDATE_LOCK,)).fetchone()[0])

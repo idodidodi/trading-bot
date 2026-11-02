@@ -22,6 +22,8 @@ this document. Existing detailed design documents may describe older versions.
   completed-but-unentered watches `stopped_manual`, clears the polling deadline,
   cancels pending lookback and increments the revision. An in-flight market/history
   result cannot overwrite that revision. Repeat clicks are idempotent.
+- The source updater recognizes manually stopped watches as terminal; they do not
+  block a later idle update. Other active watches and positions still block it.
 - Pending outbox events for that watch are suppressed. Stopped watches are also
   excluded from later delivery. A Telegram send already in progress may still arrive;
   cancellation cannot retract a message already sent.
@@ -39,4 +41,4 @@ this document. Existing detailed design documents may describe older versions.
 
 Sources: `chasing_runtime.py` (`chase_buttons`, `deliver_pending`, `callback`,
 `tick`, `_enroll_crypto`), `divergence_chasing.py` (`step`), `chase_lookback.py`
-(`request`), and `telegram_dismissal.py` (`DismissibleMessage`).
+(`request`), `source_update.py` (`TERMINAL`, `blockers`), and `telegram_dismissal.py` (`DismissibleMessage`).
