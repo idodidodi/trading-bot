@@ -263,6 +263,23 @@ function inferredAssetCategory(ticker){
  if(/^(BTC|ETH|XBT)\/?(USD|USDT|USDC|EUR|GBP)$/.test(symbol))return 'crypto';
  return '';
 }
+// Bundled lookup snapshot: stock_universe.json (2026-10-08), common ETFs and currency/spot pairs.
+// Suggestions are instrument identities, not a claim of provider access or current index membership.
+const cachedStockSymbols="A AA AAL AAON AAPL ABBV ABNB ABT ACGL ACI ACM ACN ADBE ADC ADI ADM ADP ADSK AEE AEIS AEP AES AFG AFL AGCO AGNC AHR AIG AIT AIZ AJG AKAM ALB ALGM ALGN ALK ALL ALLE ALLY ALSN ALV AM AMAT AMCR AMD AME AMG AMGN AMH AMKR AMP AMT AMZN AN ANET ANF AON AOS APA APD APG APH APO APP APPF APTV AR ARE ARES ARKK ARMK ARW ARWR ASB ASH ATI ATO ATR AVAV AVGO AVNT AVT AVTR AVY AWK AXON AXP AXTA AYI AZO BA BAC BAH BALL BAX BBWI BBY BC BCO BDC BDX BE BEN BF.B BG BHF BIIB BILL BIO BJ BKH BKNG BKR BLK BMRN BMY BNY BR BRK.B BRKR BRO BROS BRX BSX BSY BTSG BURL BWA BWXT BX BXP BYD C CACI CAH CAR CARR CART CASY CAT CAVA CB CBOE CBRE CBSH CBT CCI CCK CCL CDE CDNS CDP CDW CEG CELH CF CFG CFR CG CGNX CHD CHDN CHE CHH CHRD CHRW CHTR CHWY CI CIEN CINF CL CLF CLH CLX CMC CMCSA CME CMG CMI CMS CNC CNH CNM CNO CNP CNX COF COHR COIN COKE COLB COLM COO COP COR CORT COST CPAY CPRT CPT CR CRBG CRH CRL CRM CROX CRS CRUS CRWD CSCO CSGP CSL CSX CTAS CTRE CTSH CUBE CUZ CVLT CVNA CVS CVX CW CXT CYTK D DAL DAR DASH DBX DCI DD DDOG DE DECK DELL DG DGX DHI DHR DIA DINO DIS DKS DLB DLR DLTR DOC DOCN DOCS DOCU DOV DOW DPZ DRI DT DTE DTM DUK DUOL DVA DVN DXCM DY EAT EBAY ECHO ECL ED EEFT EFX EG EGP EHC EIX EL ELAN ELF ELS ELV EME EMR ENS ENSG ENTG EOG EPR EQH EQIX EQT ERIE ES ESAB ESNT ESS ETN ETR EVR EVRG EW EWBC EXC EXE EXEL EXLS EXP EXPD EXPE EXPO EXR F FAF FANG FAST FBIN FCFS FCN FCX FDS FDX FDXF FE FERG FFIN FFIV FHI FHN FICO FIS FISV FITB FIVE FIX FLEX FLG FLR FLS FN FNB FND FNF FOUR FOX FOXA FR FRT FSLR FTI FTNT FTV G GAP GATX GBCI GD GDDY GE GEF GEHC GEN GEV GGG GHC GILD GIS GL GLD GLPI GLW GM GME GMED GNRC GNTX GOOG GOOGL GPC GPK GPN GRMN GS GWRE GWW GXO H HAE HAL HALO HAS HBAN HCA HD HGV HIG HII HIMS HL HLI HLNE HLT HOG HOMB HON HONA HOOD HPE HPQ HQY HR HRB HRL HSIC HST HSY HUBB HUBS HUM HWC HWM HXL IBKR IBM IBOC ICE IDA IDCC IDXX IESC IEX IFF ILMN INCY INGR INTC INTU INVH IP IPGP IQV IR IRM IRT ISRG IT ITT ITW IVZ IWM J JAZZ JBHT JBL JCI JEF JKHY JLL JNJ JPM KBH KBR KD KDP KEX KEY KEYS KHC KIM KKR KLAC KMB KMI KNF KNSL KNX KO KR KRC KRG KRYS KTOS KVUE L LAD LAMR LDOS LEA LECO LEN LFUS LH LHX LII LIN LITE LIVN LLY LMT LNT LNTH LOPE LOW LPX LRCX LSCC LSTR LULU LUV LVS LYB LYV M MA MAA MANH MAR MAS MAT MCD MCHP MCK MCO MDLZ MDT MEDP MET META MGM MIDD MKC MKSI MLI MLM MMM MMS MNST MO MOG.A MOH MORN MOS MP MPC MPWR MRK MRNA MRSH MRVL MS MSA MSCI MSFT MSI MSM MTB MTD MTDR MTG MTN MTSI MTZ MU MUR MUSA MZTI NBIX NCLH NDAQ NDSN NEE NEM NEU NFG NFLX NI NJR NKE NLY NNN NOC NOV NOVT NOW NRG NSC NTAP NTNX NTRS NUE NVDA NVR NVST NVT NWE NWS NWSA NXPI NXST NXT NYT O OC ODFL OGE OGS OHI OKE OKTA OLED OLLI OLN OMC ON ONB ONTO OPCH ORA ORCL ORI ORLY OSK OTIS OVV OXY OZK P PAG PANW PATH PAYX PB PBF PCAR PCG PCTY PEG PEGA PEN PEP PFE PFG PFGC PG PGR PH PHM PII PINS PK PKG PLD PLNT PLTR PM PNC PNFP PNR PNW PODD POR POST PPC PPG PPL PR PRI PRU PSA PSN PSX PTC PVH PWR PYPL Q QCOM QLYS QQQ R RBA RBC RCL RDDT REG REGN REXR RF RGA RGEN RGLD RH RJF RL RLI RMBS RMD RNR ROIV ROK ROKU ROL ROP ROST RPM RRC RRX RS RSG RTX RVTY RYAN RYN SAIA SAIC SANM SARO SBAC SBRA SBUX SCHW SCI SEIC SF SFM SGI SHC SHW SIGI SIRI SITM SJM SKYD SLAB SLB SLGN SLM SLV SMCI SMG SMTC SN SNA SNDK SNPS SNX SO SOLS SOLV SON SPG SPGI SPXC SPY SR SRE SSB SSD ST STAG STE STLD STRL STT STWD STX STZ SUI SW SWK SWKS SWX SYF SYK SYNA SYY T TCBI TDG TDY TECH TEL TER TEX TFC TGT THC THG THO TJX TKO TKR TLN TLT TMO TMUS TNL TOL TOST TPL TPR TREX TRGP TRMB TROW TRU TRV TSCO TSLA TSN TT TTC TTEK TTMI TTWO TWLO TXN TXNM TXRH TXT TYL UAL UBER UBSI UDR UFPI UGI UHS ULS ULTA UMBF UNH UNM UNP UPS URI USB USFD UTHR V VAL VC VEEV VFC VIAV VICI VICR VLO VLTO VLY VMC VMI VMRK VNO VNOM VNT VOO VOYA VRSK VRSN VRT VRTX VST VTI VTR VTRS VVV VYLR VZ WAB WAL WAT WCC WDAY WDC WEC WELL WEX WFC WFRD WH WHR WING WLK WM WMB WMG WMS WMT WPC WRB WSM WSO WST WTFC WTRG WTS WTW WWD WY WYNN XEL XOM XPO XRAY XYL XYZ YETI YUM ZBH ZBRA ZION ZTS".split(' ');
+const cachedStockNames={"MU": "Micron Technology", "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "AMZN": "Amazon", "GOOGL": "Alphabet Class A", "GOOG": "Alphabet Class C", "META": "Meta Platforms", "TSLA": "Tesla", "AMD": "Advanced Micro Devices", "INTC": "Intel", "NFLX": "Netflix", "SPY": "SPDR S&P 500 ETF", "QQQ": "Invesco QQQ ETF", "IWM": "iShares Russell 2000 ETF", "DIA": "SPDR Dow Jones ETF", "VTI": "Vanguard Total Stock Market ETF", "VOO": "Vanguard S&P 500 ETF", "GLD": "SPDR Gold Shares ETF", "SLV": "iShares Silver Trust ETF", "TLT": "iShares 20+ Year Treasury Bond ETF", "ARKK": "ARK Innovation ETF"};
+const cachedAssetCatalogue=[
+ ...cachedStockSymbols.map(symbol=>({symbol,name:cachedStockNames[symbol]||symbol,category:'stock'})),
+ ...["EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "AUD/USD", "USD/CAD", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "EUR/CHF", "EUR/AUD", "EUR/CAD", "EUR/NZD", "GBP/CHF", "GBP/AUD", "GBP/CAD", "GBP/NZD", "AUD/JPY", "AUD/NZD", "AUD/CAD", "AUD/CHF", "CAD/JPY", "CAD/CHF", "CHF/JPY", "NZD/JPY", "NZD/CAD", "NZD/CHF", "USD/CNY", "USD/SGD", "USD/HKD", "USD/MXN", "USD/ZAR"].map(symbol=>({symbol,name:symbol.replace('/',' / '),category:'forex'})),
+ ...[["BTC", "Bitcoin"], ["ETH", "Ethereum"], ["SOL", "Solana"], ["DOGE", "Dogecoin"], ["NEAR", "NEAR Protocol"], ["FET", "Fetch.ai"], ["XRP", "XRP"], ["ADA", "Cardano"], ["AVAX", "Avalanche"], ["LINK", "Chainlink"], ["DOT", "Polkadot"], ["LTC", "Litecoin"]].flatMap(([base,name])=>['USD','USDT'].map(quote=>({symbol:base+'/'+quote,name:name+' / '+quote,category:'crypto'}))),
+ ...otherAssetInstruments.map(a=>({...a,category:'other'})),
+];
+function assetSuggestions(query,category,assets=[]){
+ const normalize=value=>String(value||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+ const wanted=normalize(query),owned=new Set(assets.flatMap(a=>[normalize(a.id),normalize(a.symbol)]).filter(Boolean));
+ return cachedAssetCatalogue.filter(a=>(!category||a.category===category)&&(!wanted||normalize(a.symbol).includes(wanted)||normalize(a.name).includes(wanted)))
+  .sort((a,b)=>(normalize(b.symbol)===wanted)-(normalize(a.symbol)===wanted)||Number(normalize(b.symbol).startsWith(wanted))-Number(normalize(a.symbol).startsWith(wanted))||a.symbol.localeCompare(b.symbol))
+  .slice(0,20).map(a=>({...a,alreadyAdded:owned.has(normalize(a.symbol))}));
+}
 const assetStrategyNames={'rsi':'RSI divergence','pin-bars':'Pin-Bars','bb-pin-bars':'BB Pin-Bars','rsi-pb':'RSI + PB'};
 const assetLibrary={category:'all',query:'',view:'portfolio'};
 let assetPageGeneration=0;
@@ -298,24 +315,47 @@ async function openAssetSetup(ticker='',existingId=null){
   const existing=existingId?settings.config.assets.find(a=>a.id===existingId):null;
   if(existingId&&!existing)throw Error('This asset was removed. Refresh the page.');
   let draft=existing?{...existing,timeframes:[...(existing.timeframes||defaultAssetFrames)],scan_strategies:[...(existing.scan_strategies||['rsi','pin-bars','rsi-pb'])]}:null;
-  let step=existing&&!(existing.provider==='csv'&&!existing.enabled&&!existing.feed_confirmed)?2:1,category=inferredAssetCategory(ticker),symbol=ticker.trim().toUpperCase(),instrument='',addedDraft=false,busy=false,converted=false;
+  let step=existing&&!(existing.provider==='csv'&&!existing.enabled&&!existing.feed_confirmed)?2:1,category=inferredAssetCategory(ticker),symbol=ticker.trim().toUpperCase(),instrument='',addedDraft=false,busy=false,converted=false,categoryChosen=false;
   function render(){
    const form=node('form');form.className='library-form';const error=node('p');error.className='error';error.setAttribute('role','alert');
    const progress=node('p',existing?'ASSET SETTINGS':step===1?'STEP 1 OF 2 · IDENTIFY':'STEP 2 OF 2 · SCANNING');progress.className='library-kicker';form.append(progress);
    const controls=[];let selected,strategyInputs,enabled,symbolInput,other;
    if(step===1){
-    form.append(node('h3','What would you like to follow?'),node('p','Enter a symbol. We’ll handle the data connection.'));
-    const label=node('label','Symbol');label.className='library-input-label';symbolInput=node('input');symbolInput.value=symbol;symbolInput.placeholder='e.g. MU, EUR/USD, BTC/USD';symbolInput.maxLength=100;symbolInput.required=true;symbolInput.setAttribute('aria-label','Asset symbol');label.append(symbolInput);form.append(label);controls.push(symbolInput);
+    form.append(node('h3','Find an asset to add'),node('p','Choose a category, then search the cached list by symbol or name.'));
     const categories=node('fieldset');categories.className='library-categories';categories.append(node('legend','Asset category'));
     const categoryButtons=[];
     for(const [value,title,subtitle] of [['stock','Stock / ETF','US-listed'],['crypto','Crypto','Spot pairs'],['forex','Forex','Currency pairs'],['other','Other','Indices, futures & commodities']]){
-     const choice=button('',()=>{category=value;refreshCategory();});choice.append(node('strong',title),node('small',subtitle));choice.setAttribute('aria-label',title);choice.dataset.category=value;categories.append(choice);categoryButtons.push(choice);controls.push(choice);
+     const choice=button('',()=>{category=value;categoryChosen=true;instrument='';other.value='';refreshCategory();showSuggestions();});choice.append(node('strong',title),node('small',subtitle));choice.setAttribute('aria-label',title);choice.dataset.category=value;categories.append(choice);categoryButtons.push(choice);controls.push(choice);
     }
-    const hint=node('p');hint.className='library-help';form.append(categories,hint);
-    const otherLabel=node('label','Exact instrument');otherLabel.className='library-input-label';other=node('select');other.setAttribute('aria-label','Exact instrument');const blank=node('option','Select an instrument');blank.value='';other.append(blank);
-    for(const a of otherAssetInstruments){const option=node('option',a.name+' · '+a.symbol);option.value=a.symbol;other.append(option);}other.value=instrument||otherAssetInstruments.find(a=>a.symbol===symbol)?.symbol||'';otherLabel.append(other);form.append(otherLabel);controls.push(other);
-    function refreshCategory(){for(const choice of categoryButtons)choice.setAttribute('aria-pressed',String(choice.dataset.category===category));otherLabel.hidden=category!=='other';hint.textContent=category?'Category selected. You can change it before continuing.':'We’re not sure yet. Choose the category for this symbol.';error.textContent='';}
-    symbolInput.oninput=()=>{symbol=symbolInput.value.trim().toUpperCase();category=inferredAssetCategory(symbol);other.value=otherAssetInstruments.find(a=>a.symbol===symbol)?.symbol||'';refreshCategory();};refreshCategory();
+    form.append(categories);
+    const label=node('label','Search assets to add');label.className='library-input-label';symbolInput=node('input');symbolInput.value=symbol;symbolInput.placeholder='Type a symbol or name…';symbolInput.maxLength=100;symbolInput.required=true;symbolInput.autocomplete='off';symbolInput.setAttribute('aria-label','Asset symbol');symbolInput.setAttribute('role','combobox');symbolInput.setAttribute('aria-autocomplete','list');symbolInput.setAttribute('aria-controls','asset-suggestions');symbolInput.setAttribute('aria-expanded','false');label.append(symbolInput);
+    const lookup=node('div');lookup.className='asset-lookup';const suggestions=node('div');suggestions.id='asset-suggestions';suggestions.className='asset-suggestions';suggestions.setAttribute('role','listbox');suggestions.setAttribute('aria-label','Cached asset suggestions');suggestions.hidden=true;lookup.append(label,suggestions);form.append(lookup);controls.push(symbolInput);
+    const hint=node('p');hint.className='library-help';hint.setAttribute('aria-live','polite');form.append(hint);
+    other={value:instrument||otherAssetInstruments.find(a=>a.symbol===symbol)?.symbol||''};let matches=[],activeIndex=-1;
+    function closeSuggestions(){suggestions.hidden=true;symbolInput.setAttribute('aria-expanded','false');symbolInput.removeAttribute?.('aria-activedescendant');activeIndex=-1;}
+    function selectSuggestion(item){
+     if(item.alreadyAdded){error.textContent='Already in your assets. Use the management section below to edit it.';return;}
+     symbol=item.symbol;symbolInput.value=symbol;category=item.category;categoryChosen=true;instrument=category==='other'?item.symbol:'';other.value=instrument;refreshCategory();closeSuggestions();symbolInput.focus?.();closeSuggestions();
+    }
+    function showSuggestions(){
+     matches=assetSuggestions(symbolInput.value,category,settings.config.assets.filter(a=>a.id!==existingId));activeIndex=-1;suggestions.replaceChildren();symbolInput.removeAttribute?.('aria-activedescendant');
+     matches.forEach((item,index)=>{const option=button('',()=>selectSuggestion(item));option.id='asset-suggestion-'+index;option.setAttribute('role','option');option.setAttribute('aria-selected','false');option.setAttribute('aria-disabled',String(item.alreadyAdded));option.tabIndex=-1;option.onmousedown=e=>e.preventDefault();option.append(node('strong',item.symbol),node('span',item.name),node('small',item.alreadyAdded?'Already added':({stock:'Stock / ETF',crypto:'Crypto',forex:'Forex',other:'Other'})[item.category]));suggestions.append(option);});
+     if(!matches.length)suggestions.append(node('p','No cached matches. You can enter an exact symbol and choose its category.'));
+     suggestions.hidden=false;symbolInput.setAttribute('aria-expanded','true');
+    }
+    function refreshCategory(){for(const choice of categoryButtons)choice.setAttribute('aria-pressed',String(choice.dataset.category===category));hint.textContent=category?'Suggestions stay within this category. Data availability is checked after saving.':'Search all categories, or choose one to narrow the list.';error.textContent='';}
+    symbolInput.oninput=()=>{symbol=symbolInput.value.trim();instrument='';other.value='';if(!categoryChosen)category=inferredAssetCategory(symbol);refreshCategory();showSuggestions();};
+    symbolInput.onfocus=showSuggestions;symbolInput.onblur=event=>{if(!suggestions.contains(event.relatedTarget))closeSuggestions();};
+    symbolInput.onkeydown=event=>{
+     if(event.key==='Escape'&&!suggestions.hidden){event.preventDefault();event.stopPropagation();closeSuggestions();return;}
+     if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+      event.preventDefault();if(suggestions.hidden)showSuggestions();const enabled=matches.map((a,i)=>a.alreadyAdded?-1:i).filter(i=>i>=0);if(!enabled.length)return;
+      const position=enabled.indexOf(activeIndex),next=event.key==='ArrowDown'?(position+1)%enabled.length:(position<0?enabled.length-1:(position-1+enabled.length)%enabled.length);activeIndex=enabled[next];
+      [...suggestions.children].forEach((option,index)=>option.setAttribute('aria-selected',String(index===activeIndex)));symbolInput.setAttribute('aria-activedescendant','asset-suggestion-'+activeIndex);suggestions.children[activeIndex]?.scrollIntoView?.({block:'nearest'});return;
+     }
+     if(event.key==='Enter'&&!suggestions.hidden&&activeIndex>=0){event.preventDefault();selectSuggestion(matches[activeIndex]);}
+    };refreshCategory();
+
    }else{
     const title=node('div');title.className='library-instrument';title.append(node('h3',draft.symbol||draft.id),assetBadge(marketCategory(draft)));form.append(title);
     form.append(node('p','Choose when to scan and what to look for.'));
@@ -373,7 +413,7 @@ async function loadAssets(){
 function renderAssetLibrary(settings){
  const assets=settings.config.assets,page=node('section');page.className='asset-library';
  const header=node('div');header.className='library-heading';const intro=node('div');intro.append(node('span','YOUR MARKET WATCHLIST'),node('h2','Assets'),node('p','One place for everything you follow.'));
- const add=button('+ Add asset',()=>openAssetSetup());add.className='library-primary';header.append(intro,add);page.append(header);
+ const add=button('+ Add asset',()=>openAssetSetup());add.className='library-primary';header.append(intro);page.append(header);const addSection=node('section');addSection.className='library-add-section';const addCopy=node('div');addCopy.append(node('h3','Add a new asset'),node('p','Find a symbol in the cached list and set up scanning.'));addSection.append(addCopy,add);page.append(addSection,node('h3','Manage existing assets'));
  const summary=node('div');summary.className='library-summary';
  for(const [value,label] of [[assets.length,'assets'],[assets.filter(a=>a.enabled!==false).length,'scan enabled'],[assets.filter(a=>['attention'].includes(assetHealth(a,settings).tone)).length,'need attention']]){const stat=node('div');stat.append(node('strong',String(value)),node('span',label));summary.append(stat);}page.append(summary);
  const views=node('div');views.className='library-views';views.setAttribute('role','group');views.setAttribute('aria-label','Asset collections');const body=node('div');body.className='library-body';let viewGeneration=0;

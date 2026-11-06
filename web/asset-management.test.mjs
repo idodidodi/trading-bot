@@ -240,7 +240,7 @@ test('missing quote and duplicate assets cannot advance; exact Other mapping is 
  const {context,get,requests}=setup(settings);await vm.runInContext("openAssetSetup('BTC/USD')",context);await submit(formFor(get));assert.match(text(formFor(get)),/Already in your assets/);assert.ok(!requests.some(r=>r.body));
  const other=setup(emptyLibrary);await vm.runInContext("openAssetSetup('SOL')",other.context);chooseCategory(other.get,'Crypto');await submit(formFor(other.get));assert.match(text(formFor(other.get)),/quote currency/);
  chooseCategory(other.get,'Other');await submit(formFor(other.get));assert.match(text(formFor(other.get)),/exact supported instrument/);
- const select=descendants(formFor(other.get)).find(e=>e.attrs['aria-label']==='Exact instrument');select.value='CL=F';await submit(formFor(other.get));assert.match(text(formFor(other.get)),/CL=F/);await submit(formFor(other.get));assert.equal(other.requests.find(r=>r.body?.action==='save').body.asset.market,'futures');
+ const input=descendants(formFor(other.get)).find(e=>e.attrs['aria-label']==='Asset symbol');input.value='CL=F';input.oninput();descendants(formFor(other.get)).find(e=>e.attrs.role==='option'&&text(e).includes('CL=F')).onclick();await submit(formFor(other.get));assert.match(text(formFor(other.get)),/CL=F/);await submit(formFor(other.get));assert.equal(other.requests.find(r=>r.body?.action==='save').body.asset.market,'futures');
 });
 
 test('failed final save leaves paused draft and retries without duplicate creation',async()=>{
@@ -258,7 +258,7 @@ test('remove requires explicit confirmation; cancelling retains the asset',async
 
 test('existing CSV draft starts at identification and retains paused state and strategies',async()=>{
  const draft={id:'MU',provider:'csv',enabled:false,timeframes:['daily'],scan_strategies:['bb-pin-bars']};const {context,get,requests}=setup({...emptyLibrary,config:{assets:[draft]}});
- await vm.runInContext("openAssetSetup('MU','MU')",context);assert.match(text(formFor(get)),/What would you like/);chooseCategory(get,'Stock / ETF');await submit(formFor(get));await submit(formFor(get));
+ await vm.runInContext("openAssetSetup('MU','MU')",context);assert.match(text(formFor(get)),/Find an asset to add/);chooseCategory(get,'Stock / ETF');await submit(formFor(get));await submit(formFor(get));
  assert.ok(!requests.some(r=>r.body?.action==='bulk'));const saved=requests.find(r=>r.body?.action==='save').body.asset;assert.equal(saved.enabled,false);assert.deepEqual(saved.scan_strategies,['bb-pin-bars']);assert.deepEqual(saved.timeframes,['daily']);
 });
 
@@ -268,4 +268,32 @@ test('empty scanning selection blocks save and stale coverage cannot imply data 
  await submit(formFor(get));assert.match(text(formFor(get)),/at least one timeframe and one strategy/);assert.ok(!requests.some(r=>r.body));
  context.sample={...asset,timeframe_providers:{},timeframes:['daily']};context.snapshot={revision:2,applied_revision:1,coverage:[{asset:asset.id,symbol:asset.symbol,provider:asset.provider,timeframe:'daily',status:'ready',last_closed_at:123}]};
  assert.equal(vm.runInContext('assetHealth(sample,snapshot).label',context),'Checking data');context.snapshot.applied_revision=2;assert.equal(vm.runInContext('assetHealth(sample,snapshot).label',context),'Data received');
+});
+
+test('cached dropdown searches symbols and names within the selected category without requests',async()=>{
+ const {context,get,requests}=setup(emptyLibrary);await vm.runInContext("openAssetSetup()",context);
+ chooseCategory(get,'Stock / ETF');const input=descendants(formFor(get)).find(e=>e.attrs.role==='combobox');const before=requests.length;
+ input.value='Micron';input.oninput();let options=descendants(formFor(get)).filter(e=>e.attrs.role==='option');assert.equal(options.length,1);assert.match(text(options[0]),/MU.*Micron/);
+ assert.equal(descendants(formFor(get)).find(e=>e.attrs['aria-label']==='Stock / ETF').attrs['aria-pressed'],'true');assert.equal(requests.length,before);
+ options[0].onclick();assert.equal(input.value,'MU');assert.equal(input.attrs['aria-expanded'],'false');await submit(formFor(get));assert.match(text(formFor(get)),/Alpaca/);
+});
+
+test('changing category filters the cached dropdown and never silently resets while typing',async()=>{
+ const {context,get}=setup(emptyLibrary);await vm.runInContext('openAssetSetup()',context);chooseCategory(get,'Crypto');const input=descendants(formFor(get)).find(e=>e.attrs.role==='combobox');input.value='USD';input.oninput();
+ let options=descendants(formFor(get)).filter(e=>e.attrs.role==='option');assert.ok(options.length);assert.ok(options.every(e=>text(e).includes('Crypto')));
+ chooseCategory(get,'Forex');options=descendants(formFor(get)).filter(e=>e.attrs.role==='option');assert.ok(options.length);assert.ok(options.every(e=>text(e).includes('Forex')));
+ input.value='Bitcoin';input.oninput();assert.match(text(formFor(get)),/No cached matches/);assert.equal(descendants(formFor(get)).find(e=>e.attrs['aria-label']==='Forex').attrs['aria-pressed'],'true');
+});
+
+test('keyboard selection skips existing assets and Escape closes the dropdown without leaving setup',async()=>{
+ const {context,get,requests}=setup(settings);await vm.runInContext("openAssetSetup('BTC')",context);chooseCategory(get,'Crypto');const input=descendants(formFor(get)).find(e=>e.attrs.role==='combobox');input.onfocus();
+ const options=descendants(formFor(get)).filter(e=>e.attrs.role==='option');const owned=options.find(e=>text(e).includes('BTC/USD '));assert.equal(owned.attrs['aria-disabled'],'true');owned.onclick();assert.match(text(formFor(get)),/management section/);assert.ok(!requests.some(r=>r.body));
+ const key=key=>({key,preventDefault(){},stopPropagation(){}});input.onkeydown(key('ArrowDown'));assert.ok(input.attrs['aria-activedescendant']);input.onkeydown(key('Enter'));assert.equal(input.value,'BTC/USDT');assert.equal(input.attrs['aria-expanded'],'false');
+ input.onfocus();input.onkeydown(key('Escape'));assert.equal(input.attrs['aria-expanded'],'false');assert.equal(get('asset-dialog').open,true);
+});
+
+test('add-new and management sections are distinct while saved cards stay unchanged',async()=>{
+ const {context,get}=setup(settings);await vm.runInContext('loadAssets()',context);const all=descendants(get('content'));
+ assert.ok(all.some(e=>e.tag==='h3'&&e.textContent==='Add a new asset'));assert.ok(all.some(e=>e.tag==='h3'&&e.textContent==='Manage existing assets'));
+ assert.equal(all.filter(e=>e.tag==='article').length,1);assert.equal(all.filter(e=>e.attrs['aria-label']==='Search assets').length,1);assert.equal(all.filter(e=>e.attrs.role==='combobox').length,0);
 });
