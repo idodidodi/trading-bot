@@ -14,3 +14,11 @@ Useful commands: `gh run list --commit "$SHA"`, `gh run view RUN_ID`, `gh run vi
 ## Production boundaries
 
 Legacy executable publication is deliberately disabled in `.github/workflows/standalone-release.yml`. Do not enable it to make a skipped publish job green. Production source deployment and the Postgres cutover follow `POSTGRES_MIGRATION.md`. Never start another scanner against production or send test alerts/orders while checking a deployment. Use a disposable database for tests.
+
+## Colmex source reference
+
+The exporter and strict UTC reader are maintained in the separate private repository
+https://github.com/idodidodi/colmex-mt4-exporter at
+`/Users/ido1/Dev - not synced/trading-bot/mt4`. Read that repository's AGENTS.md and
+`docs/INTEGRATION.md` for exporter work. This repository owns scanner integration,
+Postgres request authorization and UI; see `docs/colmex-integration.md`.

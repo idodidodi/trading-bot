@@ -60,7 +60,7 @@ test('Pin-Bars strategy selection renders independent evidence, coverage and pag
  assert.match(text(get('content')),/Daily SMA 50\/200 crosses signals/);
  assert.match(text(get('content')),/Golden cross · SMA50: 109 → 111/);
  assert.doesNotMatch(text(get('content')),/Fast EMA:|wick >|waiting setups/);
- assert.ok(requested.includes('/api/ma-cross?view=signals&page=0'));
+ assert.ok(requested.includes('/api/ma-cross?page=0'));
  assert.equal(vm.runInContext("strategySelector('backtest').children[0].children.some(n=>n.value==='ma-cross')",context),false);
  strategy.value='rsi';
  // A stale Pin-Bars response must not overwrite another strategy's view.

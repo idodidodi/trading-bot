@@ -1,4 +1,13 @@
+# Signal/execution separation notice — 2026-11-06
+
+For this release, follow [SIGNAL_SERVICE_MIGRATION.md](SIGNAL_SERVICE_MIGRATION.md) before the historical Postgres guide below. Its paper-trading activation steps are superseded: the signal service cannot execute trades. Do not re-enable legacy execution. Telegram gates and routing remain owned here.
+
 # Postgres installation guide
+
+For the descending crypto Chase release, apply `cloud/kraken-intraday.sql` and then
+`cloud/crypto-auto-chase.sql` after the existing `divergence-chasing.sql` setup.
+Follow [the crypto Chase cutover notes](docs/crypto-auto-chase.md); automatic groups
+remain disabled until the owner registers and enables their verified destination.
 
 This guide has two parts: work you can do on your **Mac**, using your online-provider credentials, and work that must execute on the **remote Linux machine**. You can run the Linux commands over SSH from the Mac; physical access is not required.
 
@@ -40,6 +49,8 @@ From the Mac, using the SQL editor or an administrator connection, apply these f
 3. [postgres-worker-role.sql](https://github.com/idodidodi/trading-bot/blob/main/cloud/postgres-worker-role.sql)
 
 These files can be reapplied. Do not subsequently apply older dashboard migrations over them. Keep runtime activation disabled during import.
+
+For Kraken 5m/15m/30m support, apply `cloud/kraken-intraday.sql` after the dashboard migrations above, including when upgrading an existing Postgres runtime. It can be reapplied and enables validation of these intervals without changing asset selections or alert baselines. Deploy the matching worker and dashboard source together. Other API providers retain their existing intervals; CSV fixtures may use the new intervals. This prerequisite does not install automatic or manual Chase watch coordination.
 
 The worker-role script creates `trading_worker` without login access. In **psql on the Mac** (the `\password` command is not SQL-editor syntax), enable login and set its private password interactively:
 

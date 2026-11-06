@@ -15,12 +15,12 @@ class SettingsTests(PostgresTestCase):
     def test_development_never_places_paper_orders(self):
         with patch.dict(os.environ,TRADING_BOT_ENV='dev'):
             with self.assertRaises(ValueError):settings.save(self.store,{'paper_trading_enabled':True})
-            self.assertFalse(settings.paper_trading_enabled(self.store))
+            self.assertNotIn('paper_trading_enabled',settings.read(self.store))
     def test_production_rejects_development_delivery_overrides(self):
         with patch.dict(os.environ,TRADING_BOT_ENV='prod'):
             with self.assertRaises(ValueError):settings.save(self.store,{'telegram_enabled':False})
             self.assertTrue(settings.delivery_dry_run(self.store,True))
     def test_paper_settings_require_credentials_and_survive_restart(self):
         with patch.dict(os.environ,TRADING_BOT_ENV='prod',ALPACA_API_KEY='test',ALPACA_SECRET_KEY='test'):
-            settings.save(self.store,{'paper_trading_enabled':True})
-            self.assertTrue(settings.paper_trading_enabled(Store()))
+            with self.assertRaises(ValueError):settings.save(self.store,{'paper_trading_enabled':True})
+            self.assertNotIn('paper_trading_enabled',settings.read(Store()))

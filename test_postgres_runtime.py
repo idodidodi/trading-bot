@@ -208,14 +208,6 @@ class PostgresTests(unittest.TestCase):
         self.assertEqual(deliver(self.store,'123:test','1','hello','event',send),'sent')
         self.assertEqual(deliver(self.store,'123:test','1','hello','event',send),'suppressed')
         self.assertEqual(send.call_count,1)
-    def test_paper_ambiguous_submission_reconciles_without_second_post(self):
-        from test_paper_trading import FakeBroker,signal,NOW
-        import paper_trading
-        broker=FakeBroker();broker.fail_after_post=True
-        with patch.dict(os.environ,TRADING_BOT_ENV='prod',PAPER_TRADING_ENABLED='true'),patch('momentum.view',return_value=dict(signals=[signal()])):
-            paper_trading.tick(self.store,broker,NOW)
-            paper_trading.tick(self.store,broker,NOW+1000)
-        self.assertEqual(broker.post_count,1)
     def test_schema_worker_has_no_ddl_or_activation_right(self):
         with psycopg.connect(test_dsn()) as db:
             db.execute('SET LOCAL ROLE trading_worker')
@@ -306,21 +298,6 @@ class PostgresTests(unittest.TestCase):
         self.assertEqual(self.api('/api/findings?source=backtest')['findings'][0]['feedback']['rating'],4)
         with self.store.connect() as db:
             self.assertEqual(db.execute('SELECT status FROM backtest_jobs WHERE id=%s',(job['id'],)).fetchone()[0],'completed')
-
-    def test_momentum_sql_matches_python_outcomes(self):
-        from momentum import outcome
-        from scanner import Candle
-        from psycopg.types.json import Jsonb
-        from dataclasses import asdict
-        signal=dict(market='crypto',direction='buy',confirmed_at=1,entry_min=95,entry_max=105,stop=90,target=125,rules=dict(max_hold=2,cost_bps=10))
-        for bars in ([],[Candle(10,20,100,126,89,110)],[Candle(10,20,100,110,95,105),Candle(20,30,105,110,96,106)]):
-            expected=outcome(signal,bars)
-            with self.store.connect() as db:
-                actual=db.execute('SELECT bot_runtime.momentum_outcome(%s,%s)',(Jsonb(signal),Jsonb([asdict(b) for b in bars]))).fetchone()[0]
-            self.assertEqual(actual.keys(),expected.keys())
-            for key in actual:
-                if isinstance(actual[key],float):self.assertAlmostEqual(actual[key],expected[key])
-                else:self.assertEqual(actual[key],expected[key])
 
     def test_hosted_followup_csv_and_legacy_fences(self):
         from finding_feedback import finding_id

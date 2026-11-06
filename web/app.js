@@ -1,6 +1,8 @@
 const config=window.DASHBOARD_CONFIG||{}, online=Boolean(config.supabaseUrl);
 const $=id=>document.getElementById(id),content=$('content'),status=$('status');
 const frames=['monthly','weekly','daily','4h','1h'];
+const assetFrames=[...frames,'30m','15m','5m'];
+const defaultAssetFrames=['monthly','weekly','daily','4h'];
 const selectedFindings={live:sessionStorage.getItem('selected_live'),backtest:sessionStorage.getItem('selected_backtest')};
 function selectFinding(source,id){selectedFindings[source]=id;sessionStorage.setItem?.('selected_'+source,id);for(const tr of document.querySelectorAll?.('.finding-row')||[]){const active=tr.dataset.findingId===id;tr.classList.toggle('selected-row',active);tr.setAttribute('aria-selected',String(active));}}
 function marketCategory(a){if(a.market==='crypto')return 'Crypto';if(a.market==='forex')return 'Forex';if(a.market==='futures')return 'Futures';if(['stock','etf','equity'].includes(a.market)||['NASDAQ','NYSE','AMEX','NYSE ARCA'].includes(a.exchange))return 'Stocks & ETFs';return 'Other assets';}
@@ -74,7 +76,7 @@ function manageAssetButton(signal){
 function assetMatches(signal,assets){
  const exact=assets.filter(a=>a.id===signal.symbol);if(exact.length)return exact;
  const identities=[signal.symbol,signal.source].filter(Boolean);
- const feeds=assets.filter(a=>frames.some(f=>{
+ const feeds=assets.filter(a=>assetFrames.some(f=>{
   const provider=a.timeframe_providers?.[f]||a.provider;
   const exchange=provider==='kraken'?'Kraken':provider==='tiingo'?'Tiingo-UTC':a.exchange||'configured';
   const identity=`${provider}:${exchange}:${a.symbol||a.id}`;
@@ -125,7 +127,7 @@ async function openAssetManager(signal){
    const enableLabel=node('label','Enabled in scanner');enableLabel.append(enabled);
    form.append(node('p',`${asset.id} · ${asset.provider} · ${asset.symbol||asset.id}`),enableLabel);
    const field=node('fieldset');field.append(node('legend','Scanner timeframes'));
-   const selected={};for(const f of frames){const label=node('label',({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'1 hour'})[f]),input=node('input');input.type='checkbox';input.value=f;input.checked=(asset.timeframes||settings.config.timeframes||frames.filter(f=>f!=='1h')).includes(f);selected[f]=input;label.append(input);field.append(label);}
+   const selected={};for(const f of assetFrames){const label=node('label',({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'1 hour','30m':'30 minutes','15m':'15 minutes','5m':'5 minutes'})[f]),input=node('input');input.type='checkbox';input.value=f;input.checked=(asset.timeframes||settings.config.timeframes||defaultAssetFrames).includes(f);selected[f]=input;label.append(input);field.append(label);}
    form.append(field,node('p','Select one or more timeframes. Uncheck a timeframe to remove it, or replace it by selecting another. These settings apply to RSI and pin-bar strategies. SMA crosses and Momentum use daily candles.'));
    const strategyField=node('fieldset');strategyField.append(node('legend','Scan strategies'));
    const strategyInputs={},strategyOptions=[['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB'],['ma-cross','Daily SMA 50/200 crosses']];
@@ -136,7 +138,7 @@ async function openAssetManager(signal){
    const save=node('button','Save changes');save.type='submit';
    const actions=node('div');actions.className='asset-modal-actions';actions.append(save,button('Cancel',()=>dialog.close()));form.append(error,actions);target.append(form);
    form.onsubmit=async event=>{
-    event.preventDefault();const timeframes=frames.filter(f=>selected[f].checked);
+    event.preventDefault();const timeframes=assetFrames.filter(f=>selected[f].checked);
     if(!timeframes.length){error.textContent='Choose at least one timeframe. To pause all scanning, turn off Enabled in scanner.';return;}
     const scan_strategies=strategyOptions.map(([key])=>key).filter(key=>strategyInputs[key].checked);
     if(!scan_strategies.length){error.textContent='Choose at least one scan strategy. To pause all scanning, turn off Enabled in scanner.';return;}
@@ -157,11 +159,38 @@ async function openAssetManager(signal){
 }
 $('close-asset').onclick=()=>$('asset-dialog').close();
 $('asset-dialog').addEventListener('close',()=>{assetManagerGeneration++;});
+async function loadColmexRequests(parent){
+ const section=node('section');section.className='colmex-requests';parent.append(section);
+ section.append(node('h3','Colmex MT4 · requested forex pairs'));
+ if(!online){section.append(node('p','Sign in to the hosted dashboard to manage your personal Colmex requests.'));return;}
+ try{
+  const value=await request('/api/colmex'),feed=value.feed||{},age=Date.now()/1000-Number(feed.updated_at||0);
+  const fresh=feed.status==='collecting'&&age>=-5&&age<=120;
+  section.append(node('p',fresh?'Terminal connected · catalogue available':'Feed unavailable or stale · '+(feed.reason||'waiting for terminal update')),
+   node('p','Choose up to 10 exact broker pairs. Requests are shared across subscribers; collection does not mean candles are ready to scan. Removing your request keeps pairs needed by others.'),
+   node('p',value.note||''));
+  const names=[...new Set([...(value.symbols||[]),...(fresh?(feed.catalogue||[]).filter(s=>s.export_supported&&s.forex===true).map(s=>s.symbol):[])])].sort();
+  const form=node('form'),inputs={},feedback=node('p');
+  for(const name of names){const label=node('label',name),input=node('input');input.type='checkbox';input.checked=(value.symbols||[]).includes(name);inputs[name]=input;label.append(input);form.append(label);}
+  const save=node('button','Save my requested pairs');form.append(save,feedback);
+  form.onsubmit=async event=>{event.preventDefault();const symbols=Object.keys(inputs).filter(s=>inputs[s].checked);if(symbols.length>10){feedback.textContent='Choose at most 10 pairs.';return;}save.disabled=true;
+   try{const result=await request('/api/colmex',{action:'set',revision:value.revision,symbols});value.revision=result.revision;feedback.textContent='Saved. Collection and scanning will update when the worker validates the feed.';}
+   catch(error){feedback.textContent=error.message+' Reload before retrying.';}finally{save.disabled=false;}
+  };section.append(form);
+  if(feed.owner_disabled_symbols?.length)section.append(node('p','Disabled by the installation owner: '+feed.owner_disabled_symbols.join(', ')));
+  const assets=feed.terminal?.assets||[];
+  if(assets.length)section.append(table(['Broker symbol','Collection'],assets.map(a=>[a.symbol,a.status])));
+  const coverage=(value.coverage||[]).filter(r=>r.provider==='colmex');
+  if(coverage.length)section.append(table(['Symbol','Timeframe','Scanner status','Details'],coverage.map(r=>[r.symbol||r.asset,r.timeframe,r.status,r.reason||r.data_notes||''])));
+  else section.append(node('p','Scanner readiness has not been checked yet.'));
+ }catch(error){section.append(node('p','Colmex requests unavailable: '+error.message));}
+}
 async function loadAssets(){state=await request('/api/assets');content.replaceChildren();
  content.append(node('h2','Live assets'),node('p',`Configuration ${state.revision}; scanner applied ${state.applied_revision}. New tickers are disabled drafts until you configure their data feed.`));
  const form=node('form'),input=node('input');input.name='tickers';input.placeholder='NVDA, EURUSD, BTCUSD';input.required=true;input.maxLength=10000;form.append(input,node('button','Add tickers'));form.onsubmit=async e=>{e.preventDefault();await mutate({action:'bulk',tickers:input.value});};if(state.sync?.error)content.append(node('p','Sync: '+state.sync.error));
  if(!online&&state.configuration_conflict)content.append(button('Use online configuration',()=>mutate({action:'accept_online'})));
  if(!online&&state.conflicts)content.append(node('p',`${state.conflicts} sync conflicts retained for review. Pending local edits are preserved.`));
+ await loadColmexRequests(content);
  content.append(form,node('p',`Candle timeframes are independent per asset. Polling interval: ${state.config.poll_seconds/3600} hours.`));
  if(state.config.weekly_stock_screen?.enabled){
   const stocks=state.weekly_stock_selection;
@@ -171,16 +200,17 @@ async function loadAssets(){state=await request('/api/assets');content.replaceCh
  }
  content.append(node('h3','Permanent portfolio'));
  const groups=new Map();for(const a of state.config.assets){const category=marketCategory(a);if(!groups.has(category)){const section=node('section');section.className='asset-group';section.append(node('h4',category));groups.set(category,section);}}for(const category of ['Stocks & ETFs','Forex','Futures','Crypto','Other assets'])if(groups.has(category))content.append(groups.get(category));
- for(const asset of state.config.assets){const scanStrategies=asset.scan_strategies||['rsi','pin-bars','rsi-pb','ma-cross'],strategyName=scanStrategies.map(s=>({'rsi':'RSI','pin-bars':'Pin-Bars','bb-pin-bars':'BB Pin-Bars','rsi-pb':'RSI + PB','ma-cross':'SMA crosses'})[s]).join(' + ');const warning=coverageWarning(asset),row=node('details'),summary=node('summary',`${asset.id}${asset.name?' · '+asset.name:''} · ${asset.enabled?'Enabled':'Disabled'} · ${strategyName} · ${(asset.timeframes||frames.filter(f=>f!=='1h')).join(', ')}${warning?' · Data unavailable':''}`);row.className='asset-row'+(warning?' asset-unavailable':'');row.append(summary);summary.title=warning;row.ontoggle=()=>row.classList.toggle('selected-row',row.open);const field=node('fieldset');if(warning){const note=node('p',warning);note.className='error';field.append(note);}
+ for(const asset of state.config.assets){const scanStrategies=asset.scan_strategies||['rsi','pin-bars','rsi-pb','ma-cross'],strategyName=scanStrategies.map(s=>({'rsi':'RSI','pin-bars':'Pin-Bars','bb-pin-bars':'BB Pin-Bars','rsi-pb':'RSI + PB','ma-cross':'SMA crosses'})[s]).join(' + ');const warning=coverageWarning(asset),row=node('details'),summary=node('summary',`${asset.id}${asset.name?' · '+asset.name:''} · ${asset.enabled?'Enabled':'Disabled'} · ${strategyName} · ${(asset.timeframes||defaultAssetFrames).join(', ')}${warning?' · Data unavailable':''}`);row.className='asset-row'+(warning?' asset-unavailable':'');row.append(summary);summary.title=warning;row.ontoggle=()=>row.classList.toggle('selected-row',row.open);const field=node('fieldset');if(warning){const note=node('p',warning);note.className='error';field.append(note);}
  const enabled=node('input');enabled.type='checkbox';enabled.checked=asset.enabled;const enablelabel=node('label','Scan enabled');enablelabel.append(enabled);field.append(enablelabel);
- const strategies={},strategyField=node('fieldset');strategyField.append(node('legend','Scan strategies'));for(const [key,title] of [['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB'],['ma-cross','Daily SMA 50/200 crosses']]){const input=node('input');input.type='checkbox';input.value=key;input.checked=scanStrategies.includes(key);input.setAttribute('aria-label',asset.id+' '+title);strategies[key]=input;const label=node('label',title);label.append(input);strategyField.append(label);}field.append(strategyField,node('p','Applies to all selected candle timeframes for this asset. Save asset to apply.'));
- const provider=node('select');for(const p of ['csv','twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo']){const o=node('option',p==='csv'?'Candle CSV files':p==='kraken'?'Kraken spot':p==='oanda'?'OANDA forex':p==='tiingo'?'Tiingo FX / commodities':p==='alpaca'?'Alpaca US equities':p==='fmp'?'FMP cash indices':p==='yahoo'?'Yahoo indices / futures (delayed)':'Twelve Data');o.value=p;provider.append(o);}provider.value=asset.provider;field.append(provider);
+ const strategies={},strategyField=node('fieldset');strategyField.append(node('legend','Scan strategies'));for(const [key,title] of [['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB'],['ma-cross','Daily SMA 50/200 crosses']]){const input=node('input');input.type='checkbox';input.value=key;input.checked=scanStrategies.includes(key);input.setAttribute('aria-label',asset.id+' '+title);strategies[key]=input;const label=node('label',title);label.append(input);strategyField.append(label);}field.append(strategyField,node('p','RSI and pin bars use the selected timeframes. SMA crosses always use daily candles. Save asset to apply.'));
+ const provider=node('select');for(const p of ['csv','twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo','colmex']){const o=node('option',p==='csv'?'Candle CSV files':p==='kraken'?'Kraken spot':p==='oanda'?'OANDA forex':p==='tiingo'?'Tiingo FX / commodities':p==='alpaca'?'Alpaca US equities':p==='fmp'?'FMP cash indices':p==='colmex'?'Colmex MT4':p==='yahoo'?'Yahoo indices / futures (delayed)':'Twelve Data');o.value=p;provider.append(o);}provider.value=asset.provider;field.append(provider);
  const inputs={};for(const [key,title] of [['symbol','Provider symbol'],['exchange','Provider exchange'],['tradingview_symbol','TradingView exchange:ticker']]){const l=node('label',title),i=node('input');i.value=asset[key]||'';i.maxLength=100;inputs[key]=i;l.append(i);field.append(l);}
  const confirmed=node('input');confirmed.type='checkbox';confirmed.checked=asset.feed_confirmed===true;const cl=node('label','I verified this provider feed');cl.append(confirmed);field.append(cl);
- const selected={},sources={};for(const f of frames){const l=node('label',f),i=node('input');i.type='checkbox';i.checked=(asset.timeframes||frames.filter(f=>f!=='1h')).includes(f);selected[f]=i;l.append(i);field.append(l);const source=node('select');source.setAttribute('aria-label',f+' candle provider');for(const [value,label] of [['','Primary provider'],['twelvedata','Twelve Data'],['oanda','OANDA forex'],['tiingo','Tiingo FX / commodities'],['alpaca','Alpaca US equities'],['fmp','FMP cash indices'],['yahoo','Yahoo indices / futures (delayed)'],...(f==='monthly'?[]:[['kraken','Kraken spot']])]){const o=node('option',label);o.value=value;source.append(o);}source.value=asset.timeframe_providers?.[f]||'';sources[f]=source;field.append(source);}
+ const selected={},sources={};for(const f of assetFrames){const l=node('label',f),i=node('input');i.type='checkbox';i.checked=(asset.timeframes||defaultAssetFrames).includes(f);selected[f]=i;l.append(i);field.append(l);const source=node('select');source.setAttribute('aria-label',f+' candle provider');for(const [value,label] of [['','Primary provider'],['twelvedata','Twelve Data'],['oanda','OANDA forex'],['tiingo','Tiingo FX / commodities'],['alpaca','Alpaca US equities'],['fmp','FMP cash indices'],['yahoo','Yahoo indices / futures (delayed)'],...(f==='monthly'?[]:[['kraken','Kraken spot']])]){const o=node('option',label);o.value=value;source.append(o);}source.value=asset.timeframe_providers?.[f]||'';sources[f]=source;field.append(source);}
  field.append(node('p',asset.provider==='csv'?`CSV: ${asset.path||'data/candles/{asset}-{timeframe}.csv'}`:'Provider entitlement and native intervals must be verified.'));
- field.append(node('p','OANDA supports forex on all five timeframes; its token and account ID stay in the local .env. Kraken supports crypto 1h, 4h, daily and weekly; monthly crypto stays on Twelve Data. Changing the venue starts a new alert baseline. Hourly is optional.'));
- field.append(button('Save asset',()=>mutate({action:'save',asset:{id:asset.id,market:asset.market,provider:provider.value,enabled:enabled.checked,scan_strategies:Object.keys(strategies).filter(key=>strategies[key].checked),timeframes:frames.filter(f=>selected[f].checked),feed_confirmed:confirmed.checked,timeframe_providers:Object.fromEntries(frames.filter(f=>sources[f].value).map(f=>[f,sources[f].value])),...Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value.trim()]))}})),button('Disable',()=>mutate({action:'save',asset:{...asset,enabled:false}})),button('Remove asset',()=>mutate({action:'remove',ticker:asset.id})));row.append(field);groups.get(marketCategory(asset)).append(row);
+ field.append(node('p','OANDA supports forex on all five timeframes; its token and account ID stay in the local .env. Kraken supports crypto 5m, 15m, 30m, 1h, 4h, daily and weekly; monthly crypto stays on Twelve Data. Changing the venue starts a new alert baseline. Intraday timeframes are optional; 5m, 15m and 30m require Kraken or CSV.'));
+ field.append(node('p','Colmex uses exact broker symbols (including #), exchange Colmex-MT4, and 1h, 4h or daily UTC candles. Use a dedicated primary provider without TradingView mapping.'));
+ field.append(button('Save asset',()=>mutate({action:'save',asset:{id:asset.id,market:asset.market,provider:provider.value,enabled:enabled.checked,scan_strategies:Object.keys(strategies).filter(key=>strategies[key].checked),timeframes:assetFrames.filter(f=>selected[f].checked),feed_confirmed:confirmed.checked,timeframe_providers:Object.fromEntries(assetFrames.filter(f=>sources[f].value).map(f=>[f,sources[f].value])),...Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value.trim()]))}})),button('Disable',()=>mutate({action:'save',asset:{...asset,enabled:false}})),button('Remove asset',()=>mutate({action:'remove',ticker:asset.id})));row.append(field);groups.get(marketCategory(asset)).append(row);
  }
 }
 async function mutate(body){try{message('Saving…');const result=await request('/api/assets',{...body,revision:state.revision});await loadAssets();message(result.results.map(r=>r.ticker+': '+r.status).join('; ')+(online?' — pending local scanner':' — saved locally'));}catch(e){message(e.message,true);}}
@@ -246,7 +276,7 @@ function feedback(source,r){const wrap=node('div');wrap.className='feedback';let
  async function save(){if(saving)return;saving=true;const submitted={rating,comment:comment.value};dirty=false;try{const value=await request('/api/feedback',{source,finding_id:r.id,revision,...submitted});revision=value.revision;progress.textContent=online?'Saved online':'Saved locally';}catch(e){dirty=true;progress.textContent=e.message;}finally{saving=false;if(dirty&&progress.textContent==='Saving…')timer=setTimeout(save,0);}}
  comment.oninput=()=>changed(600);comment.onblur=()=>{if(dirty&&!saving)save();};return wrap;
 }
-async function openCandle(source,id,target='pivot2'){selectFinding(source,id);const dialog=$('candle-dialog');if(!dialog.open)dialog.showModal();$('candle-title').textContent='Signal candles';$('candle-note').textContent='Loading candles…';$('candle-legend').textContent='';$('candle-actions').replaceChildren();$('candle-table').replaceChildren();if(chart){chart.remove();chart=null;}$('chart').replaceChildren();try{const data=await request('/api/candles?'+new URLSearchParams({source,finding:id,target}));$('candle-title').textContent=`${data.signal.symbol} · ${({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'Hourly','60':'Hourly','240':'4 hours','D':'Daily','W':'Weekly','M':'Monthly'})[data.signal.timeframe]||data.signal.timeframe} candles${data.signal.direction?' · '+data.signal.direction.toUpperCase():''}`;const rules=data.signal.rules;$('candle-legend').textContent=`Bollinger Bands (${rules.bb_period}, ${rules.bb_multiplier}σ) · RSI (${rules.rsi_period}, Wilder).`; const slope=data.signal.band_slope_pct;if(Number.isFinite(slope)){const angle=Math.atan(slope/100)*180/Math.PI;$('candle-legend').textContent+=` ${data.signal.direction==='bullish'?'Lower':'Upper'} touching BB slope: ${slope>=0?'+':''}${slope.toFixed(3)}%/candle · normalized angle ${angle>=0?'+':''}${angle.toFixed(3)}° (${rules.band_slope_period||3} candles).`;}else $('candle-legend').textContent+=' Band slope is not used as a filter.'; $('candle-legend').title='Normalized angle = atan(slope % / 100), with one candle horizontally and a 100% price change vertically; independent of chart zoom. Indicators are recalculated from the displayed candles and may differ slightly from the values saved with the signal.'; $('candle-note').textContent='';if(online&&!data.tradingview_url){const settings=await request('/api/assets');const a=settings.config.assets.map(a=>{const p=a.timeframe_providers?.[data.signal.timeframe]||a.provider;return p==='kraken'?{...a,provider:p,exchange:'Kraken',tradingview_symbol:a.provider==='kraken'?a.tradingview_symbol:''}:p==='oanda'?{...a,provider:p,exchange:data.signal.symbol.split(':')[1],tradingview_symbol:a.provider==='oanda'?a.tradingview_symbol:''}:p==='tiingo'?{...a,provider:p,exchange:'Tiingo-UTC',tradingview_symbol:a.provider==='tiingo'?a.tradingview_symbol:''}:p==='alpaca'?{...a,provider:p,exchange:data.signal.symbol.split(':')[1],tradingview_symbol:a.provider==='alpaca'?a.tradingview_symbol:''}:a;}).find(a=>a.id===data.signal.symbol||`${a.provider}:${a.exchange||'configured'}:${a.symbol||a.id}`===data.signal.symbol);if(a?.tradingview_symbol){const interval={monthly:'M',weekly:'W',daily:'D','4h':'240','1h':'60'}[data.signal.timeframe];data.tradingview_url='https://www.tradingview.com/chart/?'+new URLSearchParams({symbol:a.tradingview_symbol,interval});}}const actions=$('candle-actions');actions.replaceChildren();for(const [key,label] of [['pivot1','First pivot'],['pivot2','Second pivot'],['confirmation',data.signal.signal_status==='provisional'?'Signal candle close':'Confirmation']])actions.append(button(label,()=>openCandle(source,id,key)));
+async function openCandle(source,id,target='pivot2'){selectFinding(source,id);const dialog=$('candle-dialog');if(!dialog.open)dialog.showModal();$('candle-title').textContent='Signal candles';$('candle-note').textContent='Loading candles…';$('candle-legend').textContent='';$('candle-actions').replaceChildren();$('candle-table').replaceChildren();if(chart){chart.remove();chart=null;}$('chart').replaceChildren();try{const data=await request('/api/candles?'+new URLSearchParams({source,finding:id,target}));$('candle-title').textContent=`${data.signal.symbol} · ${({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'Hourly','30m':'30 minutes','15m':'15 minutes','5m':'5 minutes','60':'Hourly','240':'4 hours','D':'Daily','W':'Weekly','M':'Monthly'})[data.signal.timeframe]||data.signal.timeframe} candles${data.signal.direction?' · '+data.signal.direction.toUpperCase():''}`;const rules=data.signal.rules;$('candle-legend').textContent=`Bollinger Bands (${rules.bb_period}, ${rules.bb_multiplier}σ) · RSI (${rules.rsi_period}, Wilder).`; const slope=data.signal.band_slope_pct;if(Number.isFinite(slope)){const angle=Math.atan(slope/100)*180/Math.PI;$('candle-legend').textContent+=` ${data.signal.direction==='bullish'?'Lower':'Upper'} touching BB slope: ${slope>=0?'+':''}${slope.toFixed(3)}%/candle · normalized angle ${angle>=0?'+':''}${angle.toFixed(3)}° (${rules.band_slope_period||3} candles).`;}else $('candle-legend').textContent+=' Band slope is not used as a filter.'; $('candle-legend').title='Normalized angle = atan(slope % / 100), with one candle horizontally and a 100% price change vertically; independent of chart zoom. Indicators are recalculated from the displayed candles and may differ slightly from the values saved with the signal.'; $('candle-note').textContent='';if(online&&!data.tradingview_url){const settings=await request('/api/assets');const a=settings.config.assets.map(a=>{const p=a.timeframe_providers?.[data.signal.timeframe]||a.provider;return p==='kraken'?{...a,provider:p,exchange:'Kraken',tradingview_symbol:a.provider==='kraken'?a.tradingview_symbol:''}:p==='oanda'?{...a,provider:p,exchange:data.signal.symbol.split(':')[1],tradingview_symbol:a.provider==='oanda'?a.tradingview_symbol:''}:p==='tiingo'?{...a,provider:p,exchange:'Tiingo-UTC',tradingview_symbol:a.provider==='tiingo'?a.tradingview_symbol:''}:p==='alpaca'?{...a,provider:p,exchange:data.signal.symbol.split(':')[1],tradingview_symbol:a.provider==='alpaca'?a.tradingview_symbol:''}:a;}).find(a=>a.id===data.signal.symbol||`${a.provider}:${a.exchange||'configured'}:${a.symbol||a.id}`===data.signal.symbol);if(a?.tradingview_symbol){const interval={monthly:'M',weekly:'W',daily:'D','4h':'240','1h':'60','30m':'30','15m':'15','5m':'5'}[data.signal.timeframe];data.tradingview_url='https://www.tradingview.com/chart/?'+new URLSearchParams({symbol:a.tradingview_symbol,interval});}}const actions=$('candle-actions');actions.replaceChildren();for(const [key,label] of [['pivot1','First pivot'],['pivot2','Second pivot'],['confirmation',data.signal.signal_status==='provisional'?'Signal candle close':'Confirmation']])actions.append(button(label,()=>openCandle(source,id,key)));
  if(data.tradingview_url){const a=node('a','Open TradingView');a.href=data.tradingview_url;a.target='_blank';a.rel='noopener';a.title='Opens the configured comparison feed in TradingView.';actions.append(a);}
  const candles=data.candles;if(chart){chart.remove();chart=null;}$('chart').replaceChildren();$('candle-table').replaceChildren();
  if(candles.length){const library=await import('/web/chart.js');chart=await library.draw($('chart'),candles,data.signal,target);$('candle-table').replaceChildren(table(['Candle (Israel)','Open','High','Low','Close'],candles.filter(c=>c.start===data.signal.pivot1||c.start===data.signal.pivot2||c.end===data.signal.confirmed_at).map(c=>[displayTime(c.start),c.open,c.high,c.low,c.close])));}else{$('candle-note').textContent+=' No stored source candles are available for this finding.';}
@@ -321,19 +351,7 @@ async function developmentSettingsControls(panel,isCurrent){
  const section=node('section'),result=node('p');section.className='development-settings';
  try{
   const value=await request('/api/local-settings');if(!isCurrent())return;
-  const paper=node('section'),paperResult=node('p'),paperRow=node('label'),paperInput=node('input');paper.className='development-settings';paperInput.type='checkbox';paperInput.checked=value.paper_trading_enabled;paperInput.disabled=!value.paper_trading_editable;
-  paperRow.append(paperInput,document.createTextNode(' Enable Alpaca paper trading'));
-  paper.append(node('h3','Paper trading'),paperRow,node('p',value.paper_trading_editable?'Saved for this installation and applied without restarting. Disabling stops local automation; existing simulated orders and positions remain at Alpaca. An in-progress cycle may finish.':'Paper trading is disabled in development. Configure this setting in the local production app.'));
-  if(value.paper_trading_editable){
-   const savePaper=button('Save paper trading setting',async()=>{
-    savePaper.disabled=true;paperResult.textContent='Saving…';paperResult.className='';
-    try{await request('/api/local-settings',{paper_trading_enabled:paperInput.checked});await openVersions();}
-    catch(e){paperResult.className='error';paperResult.textContent=e.message;}
-    finally{savePaper.disabled=false;}
-   });
-   paperResult.setAttribute('role','status');paper.append(savePaper,paperResult);
-  }
-  panel.append(paper);if(!value.editable)return;panel.append(section);
+  if(!value.editable)return;panel.append(section);
   section.append(node('h3','Development overrides'),node('p','Use while production is stopped. Saved for this installation and applied to new deliveries without restarting. An in-progress request may finish.'));
   const inputs={};
   for(const [key,label] of [['telegram_enabled','Send Telegram alerts from development']]){
@@ -394,6 +412,69 @@ async function telegramRoutingControls(panel,isCurrent){
   section.append(status);
  }catch(e){if(isCurrent())section.append(node('p','Telegram routing unavailable. Only the installation owner can access online routing; the cloud migration must be installed.'));}
 }
+async function chasingControls(panel,isCurrent){
+ if(!online)return;
+ panel.append(node('p','Chasing is suspended. Chasing Telegram groups are inactive; historical settings are retained.'));
+}
+// Preserved for a future reviewed reactivation; not called by settings.
+async function archivedChasingControls(panel,isCurrent){
+ if(!online)return;
+ const section=node('section');section.append(node('h3','Chasing'));panel.append(section);
+ try{
+  let value=await request('/api/chasing-settings');if(!isCurrent())return;
+  if(!value.groups?.chasing||!value.groups?.live_positions)section.append(node('p','Your personal chase chats have not been connected yet. You can save your preferences now.'));
+  const row=node('label','Stop chasing after favorable move (%) '),pct=node('input');
+  pct.type='number';pct.min='0';pct.max='100';pct.step='any';pct.value=value.stop_pct;
+  pct.setAttribute('aria-label','Stop chasing after favorable move (%)');row.append(pct);section.append(row);
+  section.append(node('p','Measured from the original signal close for non-crypto chases. Crypto RSI watches end at 5m or expiry; price moves do not cancel them.'));
+  const inputs={};
+  for(const [key,label] of [['chasing','Receive chasing notifications'],['live_positions','Receive live-position notifications']]){
+   const line=node('label'),input=node('input');input.type='checkbox';input.checked=value[key]===true;
+   input.setAttribute('aria-label',label);line.append(input,document.createTextNode(' '+label));section.append(line);inputs[key]=input;
+  }
+  const status=node('p');status.setAttribute('role','status');
+  section.append(button('Save chasing settings',async()=>{
+   const stop_pct=Number(pct.value);
+   if(!pct.value.trim()||!Number.isFinite(stop_pct)||stop_pct<=0||stop_pct>=100){status.textContent='Enter a percentage greater than zero and below 100.';return;}
+   try{value=await request('/api/chasing-settings',{action:'save',revision:value.revision,stop_pct,chasing:inputs.chasing.checked,live_positions:inputs.live_positions.checked});status.textContent='Saved for new chases.';}catch(e){status.textContent=e.message;}
+  }),status);
+  for(const s of value.sessions||[]){section.append(node('p',`${s.root.symbol} · ${s.root.direction} · ${s.status} · stop ${s.stop_pct}%`));}
+ }catch(e){section.append(node('p','Chasing settings unavailable: '+e.message));}
+ try{
+  const data=await request('/api/chasing-registration');if(!isCurrent())return;
+  const admin=node('section'),member=node('select'),chase=node('input'),live=node('input'),status=node('p');
+  admin.append(node('h3','Personal chase chats'),node('p','Owner-only rollout: create two private groups containing only the installation owner and the bot. Verify membership and identity before registering.'));
+  for(const m of data.members||[]){const option=node('option',m.label);option.value=m.user_id;member.append(option);}
+  function selectMember(){const m=(data.members||[]).find(m=>m.user_id===member.value);chase.value=m?.routes?.chasing||'';live.value=m?.routes?.live_positions||'';}
+  member.onchange=selectMember;selectMember();
+  for(const [label,input] of [['User',member],['Chasing chat ID',chase],['Live positions chat ID',live]]){const row=node('label',label+' ');row.append(input);admin.append(row);}
+  admin.append(button('Register verified chats',async()=>{try{await request('/api/chasing-registration',{user_id:member.value,chasing:chase.value.trim(),live_positions:live.value.trim()});status.textContent='Registered. Personal notification choices remain separate.';}catch(e){status.textContent=e.message;}}),status);section.append(admin);
+ }catch{/* Registration is owner-only. Personal settings remain available. */}
+}
+async function cryptoAutoChaseControls(panel,isCurrent){
+ if(!online)return;
+ panel.append(node('p','Automatic RSI + 5m RSI chasing is suspended.'));
+}
+// Preserved for a future reviewed reactivation; not called by settings.
+async function archivedCryptoAutoChaseControls(panel,isCurrent){
+ if(!online)return;
+ const section=node('section');section.append(node('h3','Automatic crypto Chase'));panel.append(section);
+ try{
+  let value=await request('/api/crypto-auto-chase-settings');if(!isCurrent())return;
+  const enabled=node('input'),chat=node('input'),status=node('p');enabled.type='checkbox';enabled.checked=value.enabled===true;
+  enabled.setAttribute('aria-label','Receive automatic crypto Chase alerts');
+  chat.type='text';chat.value=value.chat||'';chat.setAttribute('aria-label','Automatic crypto Chase chat ID');
+  const choice=node('label','Receive automatic crypto Chase alerts ');choice.append(enabled);
+  const destination=node('label','Verified group chat ID ');destination.append(chat);
+  section.append(choice,destination,node('p','One watch per asset, shared with manual Chase. Lower timeframes take priority; alerts continue down to 5m or expiry. A 1h watch expires after 55 minutes.'));
+  status.setAttribute('role','status');
+  section.append(button('Save automatic crypto Chase',async()=>{
+   const group=chat.value.trim();
+   if((enabled.checked&&!group)||(group&&!/^-[1-9][0-9]{0,18}$/.test(group))){status.textContent='Enter a numeric group chat ID.';return;}
+   try{value=await request('/api/crypto-auto-chase-settings',{action:'save',revision:value.revision,enabled:enabled.checked,chat:group});status.textContent='Saved. Applies to new crypto RSI alerts.';}catch(e){status.textContent=e.message;}
+  }),status);
+ }catch(e){if(isCurrent())section.append(node('p','Automatic crypto Chase settings unavailable: '+e.message));}
+}
 function settingsLoading(label){
  const status=node('p');status.className='settings-loading';status.setAttribute('role','status');
  const spinner=node('span');spinner.className='loading-spinner';spinner.setAttribute('aria-hidden','true');
@@ -402,9 +483,9 @@ function settingsLoading(label){
 async function openVersions(){
  const dialog=$('settings-dialog'),panel=$('version-content'),id=++versionRequest;
  const isCurrent=()=>id===versionRequest&&dialog.open;
- const personal=node('div'),routing=node('div'),development=node('div'),versions=node('section');
+ const personal=node('div'),routing=node('div'),development=node('div'),chasing=node('div'),automatic=node('div'),versions=node('section');
  versions.append(node('h3','Versions'),settingsLoading('Checking versions…'));
- panel.replaceChildren(personal,routing,development,versions);
+ panel.replaceChildren(personal,chasing,automatic,routing,development,versions);
  if(!dialog.open)dialog.showModal();
  async function loadSettings(target,label,load){
   const loading=settingsLoading(label);target.append(loading);
@@ -412,6 +493,8 @@ async function openVersions(){
  }
  await Promise.all([
   loadSettings(personal,'Loading personal alerts…',personalTelegramControls),
+  loadSettings(chasing,'Loading chasing settings…',chasingControls),
+  loadSettings(automatic,'Loading automatic crypto Chase…',cryptoAutoChaseControls),
   loadSettings(routing,'Loading Telegram groups…',telegramRoutingControls),
   loadSettings(development,'Loading local settings…',developmentSettingsControls),
   loadVersionDetails(versions,isCurrent),
@@ -452,7 +535,6 @@ async function momentumFindings(source){
  const data=await request('/api/momentum?source='+source);if(strategyViews[source]!=='momentum')return;
  content.replaceChildren(node('h2',source==='live'?'Daily momentum signals':'Momentum backtests'),strategySelector(source));
  content.append(node('p',data.note||''));
- if(source==='live'&&data.paper){const p=data.paper,st=p.status||{};content.append(node('p',`Paper trading: ${p.enabled?'enabled':'disabled'} · ${p.broker} · ${p.risk_pct}% risk · $${p.max_notional.toLocaleString()} position cap · equity ${st.equity==null?'—':'$'+st.equity.toLocaleString()} · checked ${st.checked_at?displayTime(st.checked_at):'pending'}`));}
  const latest=data.latest;
  if(source==='live'&&latest){
   content.append(node('p',`Scan: ${displayTime(latest.scanned_at)} · ${latest.status} · ${latest.version}`));
@@ -461,7 +543,7 @@ async function momentumFindings(source){
  }
  if(source==='backtest'){
   const m=data.metrics||{};
-  content.append(node('p',`${m.candidates??0} candidates · ${m.closed_trades??0} closed trades · win rate ${m.win_rate_pct==null?'—':m.win_rate_pct.toFixed(1)+'%'} · average net return ${m.average_net_pct==null?'—':m.average_net_pct.toFixed(2)+'%'}`));
+  content.append(node('p',`${m.candidates??0} detected candidates. Trade simulation is available in the trading project.`));
   if(data.generated_at)content.append(node('p','Last replay: '+displayTime(data.generated_at)));
   content.append(node('p','Momentum backtests refresh from daily scan history. The RSI replay controls apply to the RSI view.'));
   content.append(exportCSVButton('momentum-backtest-results',async()=>data.signals||[]));
@@ -470,11 +552,8 @@ async function momentumFindings(source){
  for(const [key,name] of [['all','Stocks and crypto'],['stock','US stocks'],['crypto','Crypto']]){const o=node('option',name);o.value=key;market.append(o);}
  const panel=node('section');content.append(market,panel);
  const price=v=>Number(v.toPrecision(7));
- function render(){panel.replaceChildren(table(['Market / asset','Direction / confirmation','Entry range','Stop / target','Evidence','Outcome','Actions'],signals.filter(s=>market.value==='all'||s.market===market.value).map(s=>{
-  const f=s.outcome||{},out=node('div');out.append(node('strong',f.status||'Awaiting evaluation'));if(f.net_pct!=null)out.append(node('p',`Net ${f.net_pct.toFixed(2)}%`));
-  if(s.paper){const p=s.paper;out.append(node('p','Alpaca paper: '+p.state));if(p.reason)out.append(node('small',p.reason));if(p.gross_return_pct!=null)out.append(node('small',`Paper gross ${p.gross_return_pct.toFixed(2)}% · P/L $${p.gross_pnl.toFixed(2)} before fees`));if(p.order?.filled_avg_price)out.append(node('small',`Filled ${p.order.filled_qty} at ${p.order.filled_avg_price}`));if(p.sizing)out.append(node('small',`Planned risk $${p.sizing.risk_dollars.toFixed(2)} · value $${p.sizing.notional.toFixed(2)}`));}
-  const entry=node('div');entry.append(node('strong',`${price(s.entry_min)} – ${price(s.entry_max)}`),node('small','Next session open only; skip outside range or below 1.5 reward/risk.'));if(s.entry_open_at)entry.append(node('small','Entry session: '+displayTime(s.entry_open_at)+' · expires '+displayTime(s.expires_at)));
-  return [s.market+' · '+s.symbol,s.direction.toUpperCase()+' · '+displayTime(s.confirmed_at),entry,`${price(s.stop)} / ${price(s.target)}`,`ROC ${s.roc_pct.toFixed(2)}% · efficiency ${s.efficiency.toFixed(2)} · extension ${s.extension_atr.toFixed(2)} ATR · ${s.version}`,out,manageAssetButton(s)];
+ function render(){panel.replaceChildren(table(['Market / asset','Direction / confirmation','Reference close','Evidence','Actions'],signals.filter(s=>market.value==='all'||s.market===market.value).map(s=>{
+  return [s.market+' · '+s.symbol,s.direction.toUpperCase()+' · '+displayTime(s.confirmed_at),price(s.price2??s.entry),`ROC ${s.roc_pct.toFixed(2)}% · efficiency ${s.efficiency.toFixed(2)} · extension ${s.extension_atr.toFixed(2)} ATR · ${s.version}`,manageAssetButton(s)];
  })));if(!signals.length)panel.append(node('p','No momentum signals available. Review the daily result and coverage.'));}
  market.onchange=render;render();
  if(source==='live'&&latest){const details=node('details');details.append(node('summary','Momentum scan coverage'),table(['Market','Asset','Status','Details'],latest.coverage.map(r=>[r.market,r.symbol||'Broad universe',r.status,r.reason||(r.eligible!=null?`${r.eligible} eligible histories`:r.candles?`${r.candles} closed daily candles`:'')])));content.append(details);}

@@ -39,18 +39,10 @@ class MomentumTests(PostgresTestCase):
         future=bars+[Candle(80*DAY,81*DAY,130,140,100,135)]
         self.assertEqual(s,momentum.candidate(future,'X','stock',79))
 
-    def test_next_open_gap_and_stop_before_target(self):
-        s=momentum.candidate(trend(),'X','crypto');entry=s['entry']
-        both=Candle(80*DAY,81*DAY,entry,s['target']+1,s['stop']-1,entry)
-        f=momentum.outcome(s,[both]);self.assertEqual(f['status'],'stop');self.assertLess(f['net_pct'],0)
-        gap=Candle(80*DAY,81*DAY,s['entry_max']+1,s['entry_max']+2,s['entry_max'],s['entry_max']+1)
-        self.assertEqual(momentum.outcome(s,[gap])['status'],'skipped gap')
-        self.assertEqual(momentum.outcome(s|dict(published_at=80*DAY+1),[both])['status'],'awaiting entry')
-
     def test_one_winner_per_market_close(self):
         bars=trend();r=momentum.replay({('stock','A'):bars,('stock','B'):bars,('crypto','C'):bars})
         self.assertEqual([(s['market'],s['symbol']) for s in r['signals']],[('crypto','C'),('stock','A')])
-        self.assertEqual(r['metrics']['closed_trades'],0)
+        self.assertEqual(r['metrics']['candidates'],2)
 
     def test_confirmation_not_reissued_after_version_hash_changes(self):
         pick=dict(symbol='PCTY',confirmed_at=123,version='momentum-v2')
@@ -58,22 +50,6 @@ class MomentumTests(PostgresTestCase):
         self.assertTrue(momentum.same_confirmation(pick,prior))
         self.assertFalse(momentum.same_confirmation(pick,[dict(symbol='PCTY',confirmed_at=124,version='momentum-v1')]))
         self.assertFalse(momentum.same_confirmation(pick,[dict(symbol='ABC',confirmed_at=123,version='momentum-v1')]))
-
-    def test_stock_entry_uses_session_open_not_midnight_bar_timestamp(self):
-        from scanner import timestamp
-        s=momentum.candidate(trend(),'X','stock')
-        s.update(confirmed_at=timestamp('2026-10-09T20:00:00Z'),published_at=timestamp('2026-10-12T05:00:00Z'))
-        opening=timestamp('2026-10-12T13:30:00Z')
-        s.update(momentum.entry_session('stock',s['published_at']))
-        self.assertEqual(s['entry_open_at'],opening)
-        b=Candle(timestamp('2026-10-12T04:00:00Z'),timestamp('2026-10-12T20:00:00Z'),s['entry'],s['entry']+.1,s['entry']-.1,s['entry'])
-        self.assertEqual(momentum.outcome(s,[b])['entry_at'],opening)
-
-    def test_missing_entry_session_never_substitutes_later_candle(self):
-        s=momentum.candidate(trend(),'X','crypto')
-        s['entry_open_at']=80*DAY
-        b=Candle(81*DAY,82*DAY,s['entry'],s['entry']+.1,s['entry']-.1,s['entry'])
-        self.assertEqual(momentum.outcome(s,[b])['status'],'unavailable')
 
     def test_partial_stock_symbol_coverage_retries_hourly(self):
         stock_gap=[dict(market='stock',symbol='HONA',status='unavailable')]

@@ -9,6 +9,10 @@ import time
 import uuid
 
 
+class MessageCannotBeDeleted(RuntimeError):
+    """Telegram explicitly rejected deletion of this message."""
+
+
 @dataclass
 class DismissibleMessage:
     chat_id: int
@@ -18,13 +22,15 @@ class DismissibleMessage:
     key: str = field(default_factory=lambda: uuid.uuid4().hex)
     phase: str = 'active'
     delete_at: float | None = None
+    extra_keyboard: list = field(default_factory=list)
+    retry_at: float | None = None
 
     def keyboard(self, undo=False):
         action = 'undo' if undo else 'done'
         return {'inline_keyboard': [[{
             'text': '↩ Undo' if undo else '✓ Done',
             'callback_data': f'dismiss:{action}:{self.key}',
-        }]]}
+        }]] + ([] if undo else deepcopy(self.extra_keyboard))}
 
     def snapshot(self):
         """JSON-safe state, including original text/entities and pending deadline."""
@@ -49,12 +55,11 @@ class DismissibleMessage:
         if data not in (f'dismiss:done:{self.key}', f'dismiss:undo:{self.key}'):
             return False
         answer = {'callback_query_id': query['id']}
-        if self.phase == 'deleted':
-            call('answerCallbackQuery', dict(answer, text='Already deleted'))
+        if self.phase in ('deleted', 'completed'):
+            call('answerCallbackQuery', dict(answer, text='Already completed'))
             return True
         # Late Undo cannot resurrect a message after the grace period.
         if self.phase == 'pending' and clock() >= self.delete_at:
-            self.expire(call, clock)
             call('answerCallbackQuery', dict(answer, text='Undo window ended'))
             return True
         if data == f'dismiss:done:{self.key}' and self.phase == 'active':
@@ -67,14 +72,24 @@ class DismissibleMessage:
                 message_id=self.message_id, reply_markup=self.keyboard()))
             self.phase = 'active'
             self.delete_at = None
+            self.retry_at = None
         call('answerCallbackQuery', answer)
         return True
 
     def expire(self, call, clock=time.time):
         """Delete when due. Failures leave the state pending for a later retry."""
-        if self.phase != 'pending' or clock() < self.delete_at:
+        if (self.phase != 'pending' or clock() < self.delete_at
+                or (self.retry_at is not None and clock() < self.retry_at)):
             return False
-        call('deleteMessage', dict(chat_id=self.chat_id, message_id=self.message_id))
-        self.phase = 'deleted'
+        try:
+            call('deleteMessage', dict(chat_id=self.chat_id, message_id=self.message_id))
+        except MessageCannotBeDeleted:
+            call('editMessageText', dict(chat_id=self.chat_id, message_id=self.message_id,
+                text='✓ Completed — Telegram could not delete this message. You can delete it manually.',
+                entities=[], reply_markup={'inline_keyboard': []}))
+            self.phase = 'completed'
+        else:
+            self.phase = 'deleted'
         self.delete_at = None
+        self.retry_at = None
         return True

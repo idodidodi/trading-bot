@@ -4,25 +4,6 @@ on:
   push:
     branches: ['**']
     tags: ['v*']
-    paths:
-      - '*.py'
-      - 'web/**'
-      - 'skills/**'
-      - 'scanner.json'
-      - 'stock_universe.json'
-      - 'alert-symbol-map.xml'
-      - 'tradingview_template.pine'
-      - '.env.example'
-      - '*requirements*.txt'
-      - 'pyproject.toml'
-      - 'poetry.lock'
-      - 'uv.lock'
-      - 'scripts/build-*.sh'
-      - 'scripts/build-*.ps1'
-      - 'scripts/*-manifest.py'
-      - 'scripts/release-version.py'
-      - 'scripts/smoke-*.py'
-      - '.github/workflows/**'
 permissions:
   contents: read
 # Serialize releases so version allocation and publication cannot overtake one another.

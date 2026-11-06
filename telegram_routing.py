@@ -110,5 +110,8 @@ def deliver_routed(store, token, general, text, event, send, silent=False, paylo
         outcome = deliver(store, token, fallback, text, event, group_send, silent=silent)
     from telegram_personal import deliver_personal
     if not (notification_key or '').startswith('telegram-demo:'):
+        if payload:
+            from chasing_runtime import enroll_automatic
+            enroll_automatic(store,payload)
         deliver_personal(store, token, text, event, send, silent=silent, payload=payload)
     return outcome

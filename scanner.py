@@ -20,7 +20,7 @@ import urllib.error
 
 from platform_app import ROOT, Store, database_busy, load_env, load_rules, validate_signal, rsi_divergence_matches
 
-TIMEFRAMES = {'1h': '1h', '4h': '4h', 'daily': '1day', 'weekly': '1week', 'monthly': '1month'}
+TIMEFRAMES = {'5m': '5min', '15m': '15min', '30m': '30min', '1h': '1h', '4h': '4h', 'daily': '1day', 'weekly': '1week', 'monthly': '1month'}
 
 
 def minimum_history(rules):
@@ -207,7 +207,8 @@ def interval_end(start, timeframe):
         month = start.month % 12 + 1
         year = start.year + (start.month == 12)
         return start.replace(year=year, month=month, day=min(start.day, calendar.monthrange(year, month)[1]))
-    return start + {'1h': timedelta(hours=1), '4h': timedelta(hours=4), 'daily': timedelta(days=1), 'weekly': timedelta(days=7)}[timeframe]
+    return start + {'5m': timedelta(minutes=5), '15m': timedelta(minutes=15), '30m': timedelta(minutes=30),
+                    '1h': timedelta(hours=1), '4h': timedelta(hours=4), 'daily': timedelta(days=1), 'weekly': timedelta(days=7)}[timeframe]
 
 
 class TwelveDataRateLimit(ValueError):
@@ -268,13 +269,18 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     cross_rules = ma_cross.load_rules()
     bb_rules = bb_pin_bars.load_rules()
     combined_rules = rsi_pb.load_rules(rules)
-    from kraken_feed import fetch_kraken
+    from shared_kraken import fetch as shared_kraken_fetch
+    def fetch_kraken(asset, timeframe):
+        return shared_kraken_fetch(asset, timeframe, now)
     from oanda_feed import fetch_oanda
     from fmp_feed import fetch_fmp
     from yahoo_feed import fetch_yahoo
+    from colmex_feed import fetch_colmex
     from tiingo_feed import fetch_tiingo
     from alpaca_feed import fetch_alpaca
     config, config_revision = effective(store, config)
+    from colmex_runtime import refresh as refresh_colmex
+    config = refresh_colmex(store, config)
     configured = config
     now = int(time.time() * 1000) if now is None else now
     from weekly_stock_screen import resolve as resolve_weekly_stocks
@@ -379,7 +385,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                         return coverage
                     last_requests[provider] = time.monotonic()
                 try:
-                    raw = {'csv': read_csv, 'twelvedata': fetch_twelve_data, 'kraken': fetch_kraken, 'oanda': fetch_oanda, 'tiingo': fetch_tiingo, 'alpaca': fetch_alpaca, 'fmp': fetch_fmp, 'yahoo': fetch_yahoo}[provider](asset, timeframe)
+                    raw = {'csv': read_csv, 'twelvedata': fetch_twelve_data, 'kraken': fetch_kraken, 'oanda': fetch_oanda, 'tiingo': fetch_tiingo, 'alpaca': fetch_alpaca, 'fmp': fetch_fmp, 'yahoo': fetch_yahoo, 'colmex': fetch_colmex}[provider](asset, timeframe)
                 except TwelveDataRateLimit:
                     from alpaca_feed import supported, fallback_asset, fetch_alpaca
                     if not config.get('alpaca_rate_limit_fallback', True) or not supported(asset):
@@ -408,9 +414,9 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 future_closes = [c.end for c in raw if c.end > now]
                 if future_closes:
                     row['next_close_at'] = min(future_closes)
-                elif candles and timeframe in ('1h', '4h'):
+                elif candles and timeframe in ('5m', '15m', '30m', '1h', '4h'):
                     # Preserve the feed's native intraday alignment.
-                    period = (1 if timeframe == '1h' else 4) * 60 * 60 * 1000
+                    period = {'5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240}[timeframe] * 60000
                     row['next_close_at'] = candles[-1].end + ((now - candles[-1].end) // period + 1) * period
                 cache_candles(store, asset, timeframe, candles)
                 if candles:row['last_closed_at']=candles[-1].end
@@ -454,6 +460,16 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 if is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
                     row.update(status='excluded',candles=len(candles),reason='Stock below $5 minimum; no signals generated')
                 elif 'rsi' not in strategies:
+                    # Publish opposing evidence for PB consumers from the sole
+                    # scanner's existing candles; this creates no Telegram alert.
+                    if 'rsi-pb' in strategies and not catchup:
+                        from shared_kraken import detect as cached_detect
+                        from signal_service import publish,reconcile_provisional
+                        with store.connect() as db:
+                            source=f"{asset['provider']}:{asset.get('exchange') or 'configured'}:{asset.get('symbol') or asset['id']}"
+                            for finding in cached_detect(candles,rules,source,timeframe,now):
+                                publish(db,'rsi',finding | dict(market=asset.get('market','unknown')))
+                            reconcile_provisional(db,source,timeframe,candles,rules)
                     # Top-level counts belong to RSI; Pin-Bars counts stay nested.
                     primary = row['pin_bars'] if 'pin-bars' in strategies else row['bb_pin_bars'] if 'bb-pin-bars' in strategies else row['rsi_pb'] if 'rsi-pb' in strategies else row['ma_cross']
                     row.update({k: v for k, v in primary.items() if k not in ('new_signals', 'historical_matches')})
@@ -489,6 +505,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     pending = sorted((s for s in matches if s['confirmed_at'] > cutoff), key=lambda s:(s['confirmed_at'],s.get('signal_status')!='provisional'))
                     new = sum(store.insert(validate_signal(s, rules) | {'market': asset.get('market') or 'unknown', 'detected_at': now}, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
                     with store.connect() as db:
+                        from signal_service import reconcile_provisional
+                        reconcile_provisional(db,source_id,timeframe,candles,rules)
                         db.execute('INSERT INTO scan_state AS saved(asset,timeframe,last_end) VALUES(%s,%s,%s) ON CONFLICT(asset,timeframe) DO UPDATE SET last_end=GREATEST(saved.last_end,excluded.last_end)',
                                    (state_id, timeframe, candles[-1].end))
                     row.update(status='scanned' if state else 'baseline set', candles=len(candles), last_closed_at=candles[-1].end,
@@ -647,6 +665,8 @@ def _scanner_worker(store, config, rules, stop):
         from momentum import seconds_to_scan
         delay = min(delay, seconds_to_scan(store))
         closes = [r['next_close_at'] / 1000 for r in (coverage or []) if r.get('next_close_at')]
+        if os.environ.get('COLMEX_FILES_DIR'):
+            delay = min(delay, 30)
         if closes:
             delay = min(delay, max(30, min(closes) + 15 - time.time()))
         policy = current.get('daily_universe', {})

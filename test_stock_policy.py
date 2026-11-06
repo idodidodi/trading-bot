@@ -10,8 +10,6 @@ from test_momentum import trend
 import momentum
 from stock_policy import scan_day,next_scan
 from weekly_stock_screen import resolve,POLICY
-from paper_trading import plan
-from test_paper_trading import signal,ASSET,ACCOUNT,QUOTE,NOW
 
 
 def instant(day):return int(datetime.fromisoformat(day).replace(tzinfo=ZoneInfo('Asia/Jerusalem')).timestamp()*1000)
@@ -45,9 +43,4 @@ class StockPolicyTests(PostgresTestCase):
             with patch('alpaca_feed.fetch_alpaca') as fetch:
                 rows=scan_once(store,config,load_rules(),instant('2026-10-11T09:00:00'))
             fetch.assert_not_called();self.assertEqual(rows[0]['status'],'weekday only')
-    def test_execution_rejects_stock_price_under_five(self):
-        s=signal()|dict(entry_min=4,entry_max=4.9,stop=3.5,target=6)
-        with self.assertRaisesRegex(ValueError,'below .5'):
-            plan(s,ACCOUNT,ASSET,QUOTE|dict(bp=4.5,ap=4.51),NOW)
-
 if __name__=='__main__':unittest.main()

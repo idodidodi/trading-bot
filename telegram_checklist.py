@@ -37,6 +37,9 @@ def api(token, method, body):
             return None
         if method == 'deleteMessage' and 'message to delete not found' in result.get('description', '').lower():
             return True
+        if method == 'deleteMessage' and "message can't be deleted" in result.get('description', '').lower():
+            from telegram_dismissal import MessageCannotBeDeleted
+            raise MessageCannotBeDeleted('Telegram cannot delete this message') from None
         raise RuntimeError(f'Telegram checklist HTTP {exc.code}') from None
     except (urllib.error.URLError, TimeoutError):
         raise RuntimeError('Telegram checklist connection failed') from None
@@ -133,7 +136,10 @@ def _worker(store, token, dry_run, stop):
         for update in updates:
             query = update.get('callback_query')
             if query:
-                if query.get('data', '').startswith('dismiss:'):
+                if query.get('data', '').startswith(('chase:enter:','chase:exit:','chase:start:','chase:lookback:')):
+                    from chasing_runtime import enabled as chasing_enabled, callback
+                    if chasing_enabled():callback(store,token,query)
+                elif query.get('data', '').startswith('dismiss:'):
                     if modern:
                         process(store, token, query)
                         due = next_deadline(store, token)

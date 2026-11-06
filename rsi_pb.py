@@ -172,6 +172,9 @@ def scan(store, asset, timeframe, candles, rules, now, selection_start=None, cat
                 signal.update(detected_at=now)
                 inserted = db.execute('INSERT INTO rsi_pb_signals VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',(key,bar.end,json.dumps(signal))).rowcount
                 new += inserted
+                if inserted:
+                    from signal_service import publish
+                    publish(db, STRATEGY, signal, origin='replay' if catchup else 'live')
                 if inserted and not catchup:
                     remember(db,'notification:rsi-pb:'+key,asset.get('market') or 'unknown',STRATEGY)
                     db.execute('INSERT INTO notification_queue(id,text) VALUES(%s,%s) ON CONFLICT DO NOTHING',('rsi-pb:'+key,message(signal)))

@@ -16,10 +16,10 @@ class Element {
 }
 const descendants=e=>[e,...e.children.filter(c=>c instanceof Element).flatMap(descendants)];
 const text=e=>[e.textContent,...e.children.map(c=>c instanceof Element?text(c):String(c))].join(' ');
-function setup(settings,saveError=null){
+function setup(settings,saveError=null,hosted=false){
  const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
  const requests=[];
- const context=vm.createContext({window:{},document:{getElementById:get,createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},sessionStorage:{getItem:()=>null},location:{pathname:'/logs'},fetch:async(url,options)=>{
+ const context=vm.createContext({window:hosted?{DASHBOARD_CONFIG:{supabaseUrl:'https://test.invalid'}}:{},document:{getElementById:get,createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},sessionStorage:{getItem:()=>null},location:{pathname:'/logs'},fetch:async(url,options)=>{
   const body=options.body?JSON.parse(options.body):null;requests.push({url,body});
   if(url==='/api/assets'){
    if(body?.action==='bulk'){settings={...settings,revision:settings.revision+1,config:{...settings.config,assets:[...settings.config.assets,{id:body.tickers,provider:'csv',enabled:false,timeframes:['daily']}]}};}
@@ -74,6 +74,25 @@ test('empty timeframe selection stays in modal and sends no mutation; cancel sen
  assert.equal(get('asset-dialog').open,true);assert.ok(!requests.some(r=>r.body));
  descendants(form).find(e=>e.textContent==='Cancel').onclick();
  assert.equal(get('asset-dialog').open,false);assert.ok(!requests.some(r=>r.body));
+});
+
+test('Kraken lower timeframe selection survives saving without changing CSV backtest intervals',async()=>{
+ const lower={...asset,provider:'kraken',exchange:'Kraken',timeframes:['30m','15m','5m'],timeframe_providers:{}};
+ const {context,get,requests}=setup({...settings,config:{...settings.config,assets:[lower]}});
+ await vm.runInContext("openAssetManager({symbol:'kraken:Kraken:BTC/USD',timeframe:'5m'})",context);
+ const form=formFor(get),selected=descendants(form).filter(e=>e.tag==='input'&&['5m','15m','30m'].includes(e.value));
+ assert.deepEqual(selected.filter(e=>e.checked).map(e=>e.value),['30m','15m','5m']);
+ await submit(form);
+ assert.deepEqual(requests.find(r=>r.body?.action==='save').body.asset.timeframes,['30m','15m','5m']);
+ assert.deepEqual(JSON.parse(vm.runInContext('JSON.stringify(frames)',context)),['monthly','weekly','daily','4h','1h']);
+});
+
+test('new intraday choices remain opt-in for legacy assets',async()=>{
+ const legacy={...asset};delete legacy.timeframes;
+ const {context,get}=setup({...settings,config:{assets:[legacy]}});
+ await vm.runInContext("openAssetManager({symbol:'BTCUSD'})",context);
+ const selected=descendants(formFor(get)).filter(e=>e.tag==='input'&&vm.runInContext('assetFrames',context).includes(e.value));
+ assert.deepEqual(selected.filter(e=>e.checked).map(e=>e.value),['monthly','weekly','daily','4h']);
 });
 
 test('strategy selections start from saved settings and save added and removed strategies with the timeframes',async()=>{
@@ -144,4 +163,27 @@ test('rendered rows across all strategies and historical results open the asset 
   assert.equal(controls.length,1,call);await controls[0].onclick();
   assert.equal(get('asset-dialog').open,true,call);assert.ok(formFor(get),call);get('asset-dialog').close();
  }
+});
+
+test('subscriber can request a catalogue forex pair without changing an asset or owner identity',async()=>{
+ const {context,get}=setup(settings,null,true);
+ context.colmexValue={revision:3,symbols:['EURUSD'],feed:{status:'collecting',updated_at:Date.now()/1000,catalogue:[{symbol:'EURUSD',export_supported:true,forex:true},{symbol:'GBPUSD',export_supported:true,forex:true},{symbol:'SPX500#',export_supported:true}],terminal:{assets:[]}},coverage:[]};
+ context.savedRequests=[];
+ vm.runInContext("request=async(path,body)=>{if(body)savedRequests.push({path,body});return colmexValue}",context);
+ await vm.runInContext("loadColmexRequests(document.getElementById('content'))",context);
+ const all=descendants(get('content')),form=all.find(e=>e.tag==='form'),inputs=all.filter(e=>e.tag==='input');
+ assert.equal(inputs.length,2);inputs[1].checked=true;
+ await submit(form);
+ const saved=context.savedRequests[0];assert.equal(saved.path,'/api/colmex');
+ assert.deepEqual(JSON.parse(JSON.stringify(saved.body)),{action:'set',revision:3,symbols:['EURUSD','GBPUSD']});
+ assert.match(text(get('content')),/does not mean candles are ready/);
+});
+
+test('stale Colmex catalogue allows existing pair removal but hides new pair choices',async()=>{
+ const {context,get}=setup(settings,null,true);
+ context.colmexValue={revision:1,symbols:['EURUSD'],feed:{status:'collecting',updated_at:0,catalogue:[{symbol:'GBPUSD',export_supported:true,forex:true}]}};
+ vm.runInContext('request=async()=>colmexValue',context);
+ await vm.runInContext("loadColmexRequests(document.getElementById('content'))",context);
+ assert.equal(descendants(get('content')).filter(e=>e.tag==='input').length,1);
+ assert.match(text(get('content')),/unavailable or stale/);
 });

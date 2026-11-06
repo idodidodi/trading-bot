@@ -13,6 +13,19 @@ def identity(asset, timeframe, rules):
     fields={k:asset.get(k) for k in ('id','provider','symbol','exchange','path','max_data_age_seconds','continuous')}
     fields.update(timeframe=timeframe,skill=rules['skill_hash'])
     fields['scan_strategies'] = sorted(asset.get('scan_strategies', ['rsi', 'pin-bars']))
+    if asset['provider']=='colmex':
+        import os
+        from pathlib import Path
+        path=Path(os.environ.get('COLMEX_TIME_POLICY','/nonexistent'))
+        try:fields['time_policy']=hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:fields['time_policy']='unconfigured'
+        history=os.environ.get('COLMEX_HISTORY_DIR')
+        if history:
+            fields['history_policy']='colmex-terminal-2026-11-06-v1'
+            for period in (300,3600):
+                path=Path(history)/f"{asset['symbol']}-{period}.json"
+                try:fields[f'history_{period}']=hashlib.sha256(path.read_bytes()).hexdigest()
+                except OSError:fields[f'history_{period}']='unavailable'
     if asset['provider']=='csv' and asset.get('path'):
         from pathlib import Path
         from platform_app import ROOT
@@ -39,7 +52,12 @@ def saved(store, key, now):
 def next_due(asset, timeframe, raw, candles, now, row):
     from scanner import interval_end
     delay=16*60*1000 if asset['provider']=='alpaca' and asset.get('alpaca_feed','sip')=='sip' else 0
+    if row['status']=='unavailable' and asset['provider']=='colmex':
+        return now+30000
     if row['status']=='unavailable':
+        if asset['provider']=='kraken' and timeframe in ('5m','15m','30m'):
+            # A one-hour retry can outlive an entire lower-timeframe watch.
+            return now+60000
         return next_market_time(asset,now+3600000)
     if asset['provider']=='yahoo' and getattr(raw,'next_close_at',None):
         return max(now+60000, raw.next_close_at)
@@ -70,6 +88,9 @@ def provider_lag(store,key,row,now,deadline,asset=None):
     if previous and previous[0]<=now and row.get('last_closed_at'):
         old=json.loads(previous[1])
         if old.get('last_closed_at')==row['last_closed_at'] and row['status']!='unavailable':
+            if (asset or {}).get('provider')=='kraken' and row['timeframe'] in ('5m','15m','30m'):
+                row['data_notes']='; '.join(filter(None,[row.get('data_notes'),'Awaiting the next completed provider candle; retry in one minute']))
+                return min(deadline,now+60000)
             row['data_notes']='; '.join(filter(None,[row.get('data_notes'),'Awaiting the next completed provider candle; retry in one hour']))
             return min(deadline,next_market_time(asset or {},now+3600000))
     return deadline

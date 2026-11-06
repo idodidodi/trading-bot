@@ -40,6 +40,9 @@ def scan(store, asset, timeframe, candles, rules, now, selection_start=None, cat
             inserted = db.execute(f'INSERT INTO {engine.TABLE_PREFIX}_signals VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',
                                   (key,signal['confirmed_at'],json.dumps(signal))).rowcount
             new += inserted
+            if inserted:
+                from signal_service import publish
+                publish(db, engine.STRATEGY, signal | dict(market=asset.get('market','unknown')), origin='replay' if catchup else 'live')
             if inserted and not catchup:
                 from telegram_routing import remember
                 remember(db, 'notification:' + engine.STRATEGY + ':' + key, asset.get('market') or 'unknown', engine.STRATEGY)
