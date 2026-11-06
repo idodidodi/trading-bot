@@ -1,16 +1,22 @@
-# Separate API process. Does not start a scanner or Telegram poller.
+# Proposed existing-host cutover unit. Install only during the approved cutover.
+# api.env contains TRADING_DATABASE_URL and SIGNAL_ADMIN_TOKEN; no broker/Telegram keys.
 [Unit]
-Description=Signal subscription API
+Description=Signal Service subscriber API (loopback only)
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/ABSOLUTE/SIGNAL/INSTALLATION
-EnvironmentFile=/ABSOLUTE/PRIVATE/signal-api.env
-ExecStart=/ABSOLUTE/SIGNAL/INSTALLATION/.venv/bin/python signal_service.py
+WorkingDirectory=/home/ido/apps/trading-bot-postgres
+Environment=TRADING_BOT_ENV=prod
+Environment=SIGNAL_API_PORT=8090
+EnvironmentFile=/home/ido/.config/SignalService/api.env
+ExecStart=/home/ido/apps/trading-bot-postgres/.venv/bin/python /home/ido/apps/trading-bot-postgres/signal_service.py
 Restart=on-failure
-RestartSec=5
+RestartSec=15
+TimeoutStopSec=30
 UMask=0077
+NoNewPrivileges=true
 
 [Install]
 WantedBy=default.target

@@ -2,7 +2,7 @@ import json
 import unittest
 from unittest.mock import Mock
 
-from telegram_dismissal import DismissibleMessage
+from telegram_dismissal import DismissibleMessage, MessageCannotBeDeleted
 
 
 class DismissalTests(unittest.TestCase):
@@ -49,8 +49,41 @@ class DismissalTests(unittest.TestCase):
         self.now = 103
         self.call.reset_mock()
         self.item.handle(self.query('undo'), self.call, self.clock)
-        self.assertEqual(self.call.call_args_list[0].args[0], 'deleteMessage')
+        self.call.assert_called_once_with('answerCallbackQuery',
+                                         {'callback_query_id': 'q', 'text': 'Undo window ended'})
+        self.assertTrue(self.item.expire(self.call, self.clock))
         self.assertEqual(self.item.phase, 'deleted')
+
+    def test_undeletable_message_becomes_completed_without_stale_undo(self):
+        self.done()
+        self.now = 104
+        self.call.reset_mock()
+        self.call.side_effect = [MessageCannotBeDeleted('too old'), None]
+        self.assertTrue(self.item.expire(self.call, self.clock))
+        body = self.call.call_args.args[1]
+        self.assertIn('Completed', body['text'])
+        self.assertEqual(body['reply_markup'], {'inline_keyboard': []})
+        self.assertEqual(self.item.phase, 'completed')
+        self.assertIsNone(self.item.delete_at)
+
+    def test_failed_fallback_edit_remains_pending(self):
+        self.done()
+        self.now = 104
+        self.call.side_effect = [MessageCannotBeDeleted('too old'), RuntimeError('offline')]
+        with self.assertRaises(RuntimeError):
+            self.item.expire(self.call, self.clock)
+        self.assertEqual(self.item.phase, 'pending')
+
+    def test_persisted_retry_deadline_defers_delete(self):
+        self.done()
+        self.item.retry_at = 130
+        restored = DismissibleMessage.restore(self.item.snapshot())
+        self.now = 104
+        self.call.reset_mock()
+        self.assertFalse(restored.expire(self.call, self.clock))
+        self.call.assert_not_called()
+        self.now = 130
+        self.assertTrue(restored.expire(self.call, self.clock))
 
     def test_duplicate_done_does_not_extend_grace_period(self):
         self.done()

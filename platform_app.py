@@ -85,7 +85,7 @@ def validate_signal(body, rules):
     if body.get('rules') != rules:
         raise ValueError('Rules differ; restart the scanner with the current Markdown settings.')
     for key in ('symbol', 'timeframe'):
-        pattern = r'[A-Za-z0-9_^=:./!\-]{1,100}' if key == 'symbol' else r'[A-Za-z0-9_:./!\-]{1,100}'
+        pattern = r'[A-Za-z0-9#_^=:./!\-]{1,100}' if key == 'symbol' else r'[A-Za-z0-9_:./!\-]{1,100}'
         if not isinstance(body.get(key), str) or not re.fullmatch(pattern, body[key]):
             raise ValueError(f'Invalid {key}')
     if body.get('direction') not in ('bullish', 'bearish'):
@@ -654,26 +654,37 @@ def main():
     from postgres_store import resilient_worker
     worker = threading.Thread(target=resilient_worker(delivery_worker, 'delivery'), args=(store, token, chat_id, dry_run, stop), daemon=True)
     worker.start()
-    from chasing_runtime import worker as chasing_worker
-    chasing_thread = threading.Thread(target=resilient_worker(chasing_worker,'chasing'),args=(store,token,dry_run,stop),name='chasing',daemon=True)
-    chasing_thread.start()
+    from signal_notice_delivery import worker as notice_worker
+    notice_thread = threading.Thread(target=resilient_worker(notice_worker, 'execution-notices'),
+        args=(store, token, dry_run, stop), name='execution-notices', daemon=True)
+    notice_thread.start()
+    # Signal service boundary: do not launch chasing/position monitoring here.
+    # Trading engines are retained for a separate trading runtime; see
+    # TELEGRAM_ALERT_LOGIC.md (Linux signals-only boundary).
     from telegram_checklist import worker as checklist_worker
     threading.Thread(target=resilient_worker(checklist_worker, 'telegram-checklist'),
                      args=(store, token, dry_run, stop), name='telegram-checklist', daemon=True).start()
     from market_summary import worker as summary_worker
     summary_thread = threading.Thread(target=resilient_worker(summary_worker, 'summary'), args=(store, stop), name='market-summary', daemon=True)
     summary_thread.start()
+
     from backtest_jobs import worker as replay_worker
     replay_thread = threading.Thread(target=resilient_worker(replay_worker, 'replay'),args=(store,stop),daemon=True)
     replay_thread.start()
     host = os.environ.get('HOST', '127.0.0.1')
     scanner_thread = None
+    colmex_thread = None
     if not legacy_webhook:
         from scanner import load_config, scanner_worker, prepare_store
         config = load_config()
         prepare_store(store)
         scanner_thread = threading.Thread(target=resilient_worker(scanner_worker, 'scanner'), args=(store, config, rules, stop), daemon=True)
         scanner_thread.start()
+        if os.environ.get("COLMEX_FILES_DIR"):
+            from colmex_runtime import worker as colmex_worker
+            colmex_thread = threading.Thread(target=resilient_worker(colmex_worker, "colmex"),
+                args=(store, config, stop), name="colmex-bridge", daemon=True)
+            colmex_thread.start()
     server = LocalHTTPServer((host, int(os.environ.get('PORT', '8080'))), handler_factory(store, rules, secret, dry_run, dashboard=True))
     from windows_update import worker as update_worker
     def update_shutdown():
@@ -711,9 +722,11 @@ def main():
             webhook_server.server_close()
         stop.set()
         worker.join(timeout=20)
+        notice_thread.join(timeout=12)
         summary_thread.join(timeout=12)
         replay_thread.join(timeout=16)
-        chasing_thread.join(timeout=21)
+        if colmex_thread:
+            colmex_thread.join(timeout=5)
         if scanner_thread:
             scanner_thread.join(timeout=21)
 

@@ -37,6 +37,9 @@ def api(token, method, body):
             return None
         if method == 'deleteMessage' and 'message to delete not found' in result.get('description', '').lower():
             return True
+        if method == 'deleteMessage' and "message can't be deleted" in result.get('description', '').lower():
+            from telegram_dismissal import MessageCannotBeDeleted
+            raise MessageCannotBeDeleted('Telegram cannot delete this message') from None
         raise RuntimeError(f'Telegram checklist HTTP {exc.code}') from None
     except (urllib.error.URLError, TimeoutError):
         raise RuntimeError('Telegram checklist connection failed') from None

@@ -13,6 +13,12 @@ def identity(asset, timeframe, rules):
     fields={k:asset.get(k) for k in ('id','provider','symbol','exchange','path','max_data_age_seconds','continuous')}
     fields.update(timeframe=timeframe,skill=rules['skill_hash'])
     fields['scan_strategies'] = sorted(asset.get('scan_strategies', ['rsi', 'pin-bars']))
+    if asset['provider']=='colmex':
+        import os
+        from pathlib import Path
+        path=Path(os.environ.get('COLMEX_TIME_POLICY','/nonexistent'))
+        try:fields['time_policy']=hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:fields['time_policy']='unconfigured'
     if asset['provider']=='csv' and asset.get('path'):
         from pathlib import Path
         from platform_app import ROOT
@@ -39,6 +45,8 @@ def saved(store, key, now):
 def next_due(asset, timeframe, raw, candles, now, row):
     from scanner import interval_end
     delay=16*60*1000 if asset['provider']=='alpaca' and asset.get('alpaca_feed','sip')=='sip' else 0
+    if row['status']=='unavailable' and asset['provider']=='colmex':
+        return now+30000
     if row['status']=='unavailable':
         if asset['provider']=='kraken' and timeframe in ('5m','15m','30m'):
             # A one-hour retry can outlive an entire lower-timeframe watch.

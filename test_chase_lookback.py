@@ -1,3 +1,4 @@
+from unittest.mock import patch
 import unittest
 from scanner import Candle
 from divergence_chasing import create,step
@@ -13,6 +14,7 @@ def signal(frame='4h',at=ORIGIN,direction='bullish'):
 def minutes(prices):return [Candle(ORIGIN+i*60000,ORIGIN+(i+1)*60000,p,p,p,p) for i,p in enumerate(prices)]
 
 
+@patch('chasing_runtime.CHASING_SUSPENDED',False)
 class LookbackTests(unittest.TestCase):
     def setUp(self):self.session=create('owner',signal(),ORIGIN)
 
@@ -94,6 +96,7 @@ USER='00000000-0000-0000-0000-000000000001'
 INST='00000000-0000-0000-0000-000000000002'
 
 
+@patch('chasing_runtime.CHASING_SUSPENDED',False)
 class LookbackRuntimeTests(PostgresTestCase):
     def setUp(self):
         self.store=TestStore()

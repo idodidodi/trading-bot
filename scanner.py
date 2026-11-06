@@ -273,9 +273,12 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     from oanda_feed import fetch_oanda
     from fmp_feed import fetch_fmp
     from yahoo_feed import fetch_yahoo
+    from colmex_feed import fetch_colmex
     from tiingo_feed import fetch_tiingo
     from alpaca_feed import fetch_alpaca
     config, config_revision = effective(store, config)
+    from colmex_runtime import refresh as refresh_colmex
+    config = refresh_colmex(store, config)
     configured = config
     now = int(time.time() * 1000) if now is None else now
     from weekly_stock_screen import resolve as resolve_weekly_stocks
@@ -371,7 +374,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                         return coverage
                     last_requests[provider] = time.monotonic()
                 try:
-                    raw = {'csv': read_csv, 'twelvedata': fetch_twelve_data, 'kraken': fetch_kraken, 'oanda': fetch_oanda, 'tiingo': fetch_tiingo, 'alpaca': fetch_alpaca, 'fmp': fetch_fmp, 'yahoo': fetch_yahoo}[provider](asset, timeframe)
+                    raw = {'csv': read_csv, 'twelvedata': fetch_twelve_data, 'kraken': fetch_kraken, 'oanda': fetch_oanda, 'tiingo': fetch_tiingo, 'alpaca': fetch_alpaca, 'fmp': fetch_fmp, 'yahoo': fetch_yahoo, 'colmex': fetch_colmex}[provider](asset, timeframe)
                 except TwelveDataRateLimit:
                     from alpaca_feed import supported, fallback_asset, fetch_alpaca
                     if not config.get('alpaca_rate_limit_fallback', True) or not supported(asset):
@@ -642,6 +645,8 @@ def _scanner_worker(store, config, rules, stop):
         from momentum import seconds_to_scan
         delay = min(delay, seconds_to_scan(store))
         closes = [r['next_close_at'] / 1000 for r in (coverage or []) if r.get('next_close_at')]
+        if os.environ.get('COLMEX_FILES_DIR'):
+            delay = min(delay, 30)
         if closes:
             delay = min(delay, max(30, min(closes) + 15 - time.time()))
         policy = current.get('daily_universe', {})

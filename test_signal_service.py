@@ -97,13 +97,21 @@ class StreamTests(PostgresTestCase):
             rows=db.execute('SELECT event FROM chasing_outbox').fetchall()
         self.assertEqual(len(rows),1);self.assertEqual(rows[0][0]['destination'],'live_positions')
         self.assertEqual(rows[0][0]['kind'],'demo_exit')
+        from chasing_runtime import enqueue
+        with self.store.connect() as db:
+            state=db.execute('SELECT state FROM chasing_sessions').fetchone()[0]
+            enqueue(db,state,dict(kind='entered',at=3000001,destination='live_positions'))
         from chasing_runtime import deliver_pending
         person=dict(user_id=user,telegram_user_id=72,live_positions=True,routes={'live_positions':'-10002'})
         with patch('chasing_runtime.people',return_value=[person]),patch('telegram_checklist.api',return_value=dict(chat=dict(id=-10002),message_id=99)) as api:
-            deliver_pending(self.store,'fake')
+            with patch('chasing_runtime.tick') as tick:
+                deliver_pending(self.store,'fake',execution_only=True)
+                tick.assert_not_called()
         message=next(c.args[2] for c in api.call_args_list if c.args[1]=='sendMessage')
         self.assertIn('reduce-only close queued',message['text'])
         self.assertNotIn("I've exited",str(message['reply_markup']))
+        with self.store.connect() as db:
+            self.assertEqual(db.execute("SELECT status FROM chasing_outbox WHERE event->>'kind'='entered'").fetchone()[0],'pending')
         with self.assertRaises(ValueError):execution_notice(self.store,p['token'],body|dict(at=4000000))
     def test_independent_runner_consumes_over_http_without_broker_credentials(self):
         p=self.project();self.emit();self.emit(evidence(3000000),origin='replay')
@@ -152,7 +160,15 @@ class CutoverTests(PostgresTestCase):
         script=(Path(__file__).parent/'cloud/execution-cutover.sql').read_text().replace('BEGIN;','').replace('COMMIT;','')
         with psycopg.connect(test_dsn()) as db:
             with db.transaction(force_rollback=True):
+                dashboard=(Path(__file__).parent/'cloud/postgres-dashboard.sql').read_text().replace('BEGIN;','').replace('COMMIT;','')
+                db.execute(dashboard,prepare=False)
                 db.execute(script,prepare=False)
+                colmex=(Path(__file__).parent/'cloud/colmex.sql').read_text().replace('BEGIN;','').replace('COMMIT;','')
+                db.execute(colmex,prepare=False)
                 self.assertEqual(db.execute("SELECT payload::jsonb->'order'->>'id' FROM execution_legacy.paper_trades").fetchone()[0],'broker-id')
                 self.assertIsNone(db.execute("SELECT to_regclass('bot_runtime.paper_trades')").fetchone()[0])
                 self.assertFalse(db.execute("SELECT has_schema_privilege('trading_worker','execution_legacy','USAGE')").fetchone()[0])
+                db.execute("SELECT set_config('test.auth_uid','00000000-0000-0000-0000-000000000001',true)")
+                db.execute('SET LOCAL ROLE authenticated')
+                result=db.execute("SELECT public.dashboard_api('00000000-0000-0000-0000-000000000002','/api/colmex','{}'::jsonb)").fetchone()[0]
+                self.assertEqual(result['symbols'],[])
