@@ -114,15 +114,15 @@ class StreamTests(PostgresTestCase):
                 target=Path(directory)/'execution.sqlite3'
                 env={k:v for k,v in os.environ.items() if k in ('PATH','SYSTEMROOT')}
                 env.update(SIGNAL_API_URL=f'http://127.0.0.1:{server.server_port}',SIGNAL_PROJECT_TOKEN=p['token'],SIGNAL_PROJECT=p['project'])
-                runner=Path(__file__).parent/'projects/trading-executor'
+                runner=Path(__file__).parent/'examples'
                 import sys,sqlite3
                 for _ in range(2):
-                    result=subprocess.run([sys.executable,str(runner/'runner.py'),'--database',str(target),'--once'],cwd=directory,env=env,capture_output=True,text=True,timeout=15)
+                    result=subprocess.run([sys.executable,str(runner/'signal_subscriber.py'),'--database',str(target),'--once'],cwd=directory,env=env,capture_output=True,text=True,timeout=15)
                     self.assertEqual(result.returncode,0,result.stderr)
                 with closing(sqlite3.connect(target)) as db:
                     self.assertEqual(db.execute('SELECT count(*) FROM inbox').fetchone()[0],2)
-                    self.assertEqual(db.execute('SELECT enabled FROM control').fetchone()[0],0)
-                    self.assertEqual(db.execute('SELECT count(*) FROM demo_execution_trades').fetchone()[0],0)
+                    tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                    self.assertEqual(tables,{'inbox','progress'})
                 req=urllib.request.Request(env['SIGNAL_API_URL']+'/v1/events')
                 with self.assertRaises(urllib.error.HTTPError) as caught:urllib.request.urlopen(req)
                 self.assertEqual(caught.exception.code,401)

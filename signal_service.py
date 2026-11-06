@@ -163,7 +163,16 @@ def main():
     if len(token)<32:raise SystemExit('Set SIGNAL_ADMIN_TOKEN (at least 32 characters)')
     # Dedicated API process: never starts a scanner, Telegram, or execution.
     server=ThreadingHTTPServer(('127.0.0.1',int(os.environ.get('SIGNAL_API_PORT','8090'))),handler(Store(),token))
-    server.serve_forever()
+    stop_path=os.environ.get('SIGNAL_STOP_FILE')
+    if stop_path:
+        import threading
+        from pathlib import Path
+        def desktop_stop():
+            while not Path(stop_path).exists():time.sleep(.5)
+            server.shutdown()
+        threading.Thread(target=desktop_stop,daemon=True).start()
+    try:server.serve_forever()
+    finally:server.server_close()
 
 
 

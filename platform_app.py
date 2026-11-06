@@ -691,6 +691,13 @@ def main():
     def terminate(signum, frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, terminate)
+    stop_path=os.environ.get('SIGNAL_STOP_FILE')
+    if stop_path:
+        def desktop_stop():
+            while not stop.wait(.5):
+                if Path(stop_path).exists():
+                    server.shutdown();return
+        threading.Thread(target=desktop_stop,daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -705,7 +712,6 @@ def main():
         stop.set()
         worker.join(timeout=20)
         summary_thread.join(timeout=12)
-        paper_thread.join(timeout=16)
         replay_thread.join(timeout=16)
         chasing_thread.join(timeout=21)
         if scanner_thread:

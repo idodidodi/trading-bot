@@ -1,10 +1,21 @@
 # Signal service architecture
 
-This project detects and publishes versioned market signals and owns Telegram delivery. Broker execution, paper/demo accounts and trade simulations live in the independent [trading executor](projects/trading-executor/README.md). See [the API contract](SIGNAL_API.md), [manual cutover](SIGNAL_SERVICE_MIGRATION.md), and [canonical Telegram behavior](TELEGRAM_ALERT_LOGIC.md). Existing installation instructions below are historical where they describe paper trading.
+This project detects and publishes versioned market signals and owns Telegram delivery. Broker execution, paper/demo accounts and trade simulations live in the independent [trading executor](https://github.com/idodidodi/trading-executor). See [the API contract](SIGNAL_API.md), [manual cutover](SIGNAL_SERVICE_MIGRATION.md), and [canonical Telegram behavior](TELEGRAM_ALERT_LOGIC.md). Existing installation instructions below are historical where they describe paper trading.
 
 # Family Trading Bot
 
 The Linux worker and authenticated dashboard share one authoritative Postgres database. Candles, strategies, configuration, findings, feedback, request budgets and delivery history persist in Postgres. There is no SQLite runtime or mirror synchronization.
+
+## Independent desktop programs
+
+Signal Service and Trading Executor are separate repositories, windows, processes, installers, settings and data stores. This repository contains only Signal Service; the private [Trading Executor repository](https://github.com/idodidodi/trading-executor) contains execution and simulation source. They communicate through the authenticated HTTP signal contract, never shared Python imports or internal database tables.
+
+- **Signal Service:** launch `python signal_desktop.py`, or install `SignalService-Setup.exe` on Windows / `signal-service_*.deb` on Ubuntu 22.04+ x86-64. Start/stop the scanner and subscriber API independently in its window. Register subscribers there; the signal dashboard opens in your browser.
+- **Trading Executor:** install its own `TradingExecutor-Setup.exe` / `trading-executor_*.deb`. Its window manages subscription, policy, migration, reconciliation and order history. Opening either program starts no worker. Execution starts disabled.
+- **Private settings:** `%LOCALAPPDATA%/SignalService` on Windows, `~/.local/share/SignalService` on Linux (or `$XDG_DATA_HOME/SignalService`). The other program uses `TradingExecutor` instead, including its own SQLite journal. Settings contain credentials; keep the directories private. Market-data settings belong in `SignalService/providers.env`.
+- **Builds:** the `Signal Service desktop` workflow installs and smoke-tests each native package on Windows and Linux before uploading installers and a source/SHA256 manifest. The other repo has its own workflow. Installers are unsigned; macOS is supported for source launches only, with no packaged macOS release here. Neither installer adds an autostart service.
+
+Production cutover remains governed by [the migration procedure](SIGNAL_SERVICE_MIGRATION.md). Installing these programs does not migrate or activate production.
 
 ## Installation and operation
 

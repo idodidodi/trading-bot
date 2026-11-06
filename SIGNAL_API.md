@@ -25,3 +25,7 @@ Pages scan a bounded number of stream rows, then filter. An empty page can advan
 RSI provisional pivots receive later update/invalidation events when the scanner has the required following candles. These events do not retract or repeat Telegram alerts. Structural confirmation remains a separate stored finding/stage. Missing candle history is not proof of invalidation. Other strategies currently emit detections; their producers can emit explicit lifecycle events using the same transaction API.
 
 Delivery is at least once; broker actions cannot be exactly-once across a network. The executor persists an intent before writing and reconciles ambiguous submissions by original broker client ID. The API does not authorize a trade, and subscriber replay mode cannot bypass execution activation/freshness checks.
+
+## Independent consumer example
+
+`examples/signal_subscriber.py` is a dependency-free inbox/cursor example, exercised against this API by integration tests. The separate [Trading Executor repository](https://github.com/idodidodi/trading-executor) implements the production consumer contract without importing this service. The Signal Service desktop window can register a live subscriber and display its token once.

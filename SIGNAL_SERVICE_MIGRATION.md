@@ -1,6 +1,6 @@
 # Manual signal-service / trading-executor cutover
 
-Prepared 2026-11-06. Local implementation only. No production changes, broker requests, test alerts, pushes or deployment have been performed by this work. Publication and each production cutover require explicit approval. Legacy executable publishing remains disabled.
+Prepared 2026-11-06. Repository publication and independent installer builds are authorized. No production cutover, broker requests or test alerts are part of this work. Production cutover requires explicit approval. Legacy executable publishing remains disabled.
 
 ## Ownership and dependency map
 
@@ -16,11 +16,11 @@ Prepared 2026-11-06. Local implementation only. No production changes, broker re
 
 The alert-only position monitor is deliberately retained because removing it would change existing Telegram behavior. It never owns broker orders or an account. Trading rules do not import it from the service. Read `TELEGRAM_ALERT_LOGIC.md` for alert semantics.
 
-The independent project is `projects/trading-executor/`. It can be copied or installed alone, with its own `pyproject.toml`, requirements, environment and journal. This repository contains both reviewable source trees; production installs must be separate. No shared internal-table reads or signal-service Python imports are used by the executor. The current packaged runner supports Alpaca paper and Bybit demo only; the moved Velotrade gateway remains an independently tested adapter, not a newly activated production integration.
+The independent project is [idodidodi/trading-executor](https://github.com/idodidodi/trading-executor), a separate private repository with its own desktop window, installer workflow, `pyproject.toml`, requirements, environment and journal. The signal repository no longer contains its source tree. No shared internal-table reads or signal-service Python imports are used by the executor. The current packaged runner supports Alpaca paper and Bybit demo only; the moved Velotrade gateway remains an independently tested adapter, not a newly activated production integration.
 
 ## Review and staging
 
-1. Review branch `codex/signal-service-separation` in `idodidodi/trading-bot`. Push only after explicit Yes/No/Q approval. A branch push may trigger GitHub/Cloudflare preview checks; it is not approval to merge or change production.
+1. Review branch `codex/signal-service-separation` in `idodidodi/trading-bot`. Repository publication was approved; production merge/cutover is separate. A branch push may trigger GitHub/Cloudflare preview checks; it is not approval to merge or change production.
 2. After any approved push, record exact SHA and inspect every Actions/check/status/deployment for it. Wait for terminal results; fix and reverify the new SHA if needed. No checks is not success. For executable artifacts require Linux and Windows builds plus frozen-app smoke tests. Do not enable the disabled legacy publisher.
 3. Rehearse with a disposable Postgres database and independent temporary execution SQLite journal. Run service tests, executor tests, and HTTP recorded-signal integration with `EXECUTION_ENABLED=false`. Do not connect rehearsal brokers or Telegram destinations.
 4. Apply `cloud/signal-service.sql` and updated `cloud/postgres-dashboard.sql` in rehearsal. The new source-update compatibility policy is `signal-service-v2`; the old updater must refuse automatic replacement. The actual production database currently configured is Supabase project `bwejkkboophbfeiwizbu`; do not apply any SQL there without approval.

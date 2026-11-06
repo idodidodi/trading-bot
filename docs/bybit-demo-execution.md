@@ -1,4 +1,4 @@
-> Historical pre-separation execution notes. Current execution lives in `projects/trading-executor/`; use `SIGNAL_SERVICE_MIGRATION.md` for cutover and `TELEGRAM_ALERT_LOGIC.md` for current alert behavior. Do not activate legacy policies using these instructions.
+> Historical pre-separation execution notes. Current execution lives in the separate `idodidodi/trading-executor` repository; use `SIGNAL_SERVICE_MIGRATION.md` for cutover and `TELEGRAM_ALERT_LOGIC.md` for current alert behavior. Do not activate legacy policies using these instructions.
 
 # Bybit demo execution
 
