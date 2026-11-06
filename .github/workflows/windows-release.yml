@@ -40,6 +40,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Disposable schema setup failed' }
           python -m unittest discover -q
           if ($LASTEXITCODE -ne 0) { throw 'Scanner tests failed' }
+          Push-Location projects/trading-executor
+          try {
+            python -m unittest discover -s tests -q
+            if ($LASTEXITCODE -ne 0) { throw 'Executor tests failed' }
+          } finally { Pop-Location }
       - name: Build executable and update manifest
         shell: pwsh
         run: ./scripts/build-windows.ps1
