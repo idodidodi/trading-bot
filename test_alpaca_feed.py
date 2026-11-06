@@ -117,7 +117,7 @@ class AlpacaTests(PostgresTestCase):
             with patch('alpaca_feed.fetch_alpaca', return_value=fixture()) as fetch, patch('scanner.fetch_twelve_data') as twelve:
                 coverage = scan_once(store, dict(assets=[asset], timeframes=['1h']), load_rules(), fixture()[-1].end)
             twelve.assert_not_called()
-            self.assertEqual(fetch.call_args.args[1], '1h')
+            self.assertEqual([call.args[1] for call in fetch.call_args_list], ['1h','daily'])
             self.assertEqual(coverage[0]['status'], 'baseline set')
             self.assertEqual(coverage[0]['provider'], 'alpaca')
             self.assertEqual(store.rows(), [])
