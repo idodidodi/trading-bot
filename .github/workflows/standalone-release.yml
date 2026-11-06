@@ -32,8 +32,13 @@ jobs:
     uses: ./.github/workflows/linux-release.yml
     with:
       release_version: ${{ needs.prepare.outputs.version }}
+  windows:
+    needs: prepare
+    uses: ./.github/workflows/windows-release.yml
+    with:
+      release_version: ${{ needs.prepare.outputs.version }}
   publish:
-    needs: [prepare, linux]
+    needs: [prepare, linux, windows]
     # Migration artifacts must never enter the legacy auto-update release channel.
     # A separately reviewed manual release/cutover workflow is required.
     if: ${{ false }}

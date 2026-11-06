@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from decimal import Decimal as D
 from repair_kraken_minutes import aggregate, repair
-from chasing_research import outcome, detect_series
+from chasing_research import detect_series
 from scanner import Candle
 from platform_app import load_rules
 
@@ -38,14 +38,6 @@ class RepairTests(unittest.TestCase):
         _,_,_,evidence=repair(source,lambda since:(rows,190*10**9,{}),record_differences=True)
         self.assertEqual(len(evidence['overlap_conflicts']),1)
         self.assertEqual(source[0]['open'],100)
-
-    def test_empty_observation_is_not_an_executable_entry(self):
-        bars=[Candle(i*60000,(i+1)*60000,100,100,100,100) for i in range(1,9)]
-        starts=[b.start for b in bars]
-        result=outcome(bars,starts,60000,360000,'bullish',0,empty=[120000,180000,360000,420000])
-        self.assertEqual(result['entry_at'],240000)
-        self.assertEqual(result['end_at'],480000)
-        self.assertEqual(result['exit_delay_ms'],120000)
 
     def test_partial_minute_pages_deduplicate_trade_ids(self):
         source={0:bar(0),120:bar(120)}

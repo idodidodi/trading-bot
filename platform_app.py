@@ -179,6 +179,8 @@ class Store:
                 db.execute('INSERT INTO catchup_findings VALUES(%s,%s) ON CONFLICT DO NOTHING',(catchup_id,key))
             inserted = result.rowcount == 1
             if inserted:
+                from signal_service import publish
+                publish(db, 'rsi', payload, origin='replay' if catchup_id or delivery_status in ('baseline','summarized') else 'live')
                 from postgres_store import remember_finding
                 remember_finding(db, 'live', payload)
             if inserted:
@@ -652,6 +654,10 @@ def main():
     from postgres_store import resilient_worker
     worker = threading.Thread(target=resilient_worker(delivery_worker, 'delivery'), args=(store, token, chat_id, dry_run, stop), daemon=True)
     worker.start()
+    from signal_notice_delivery import worker as notice_worker
+    notice_thread = threading.Thread(target=resilient_worker(notice_worker, 'execution-notices'),
+        args=(store, token, dry_run, stop), name='execution-notices', daemon=True)
+    notice_thread.start()
     # Signal service boundary: do not launch chasing/position monitoring here.
     # Trading engines are retained for a separate trading runtime; see
     # TELEGRAM_ALERT_LOGIC.md (Linux signals-only boundary).
@@ -661,8 +667,7 @@ def main():
     from market_summary import worker as summary_worker
     summary_thread = threading.Thread(target=resilient_worker(summary_worker, 'summary'), args=(store, stop), name='market-summary', daemon=True)
     summary_thread.start()
-    # paper_trading.worker also runs Bybit demo reconciliation and exits.
-    # It must not be started by the Linux signal service.
+
     from backtest_jobs import worker as replay_worker
     replay_thread = threading.Thread(target=resilient_worker(replay_worker, 'replay'),args=(store,stop),daemon=True)
     replay_thread.start()
@@ -697,6 +702,13 @@ def main():
     def terminate(signum, frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, terminate)
+    stop_path=os.environ.get('SIGNAL_STOP_FILE')
+    if stop_path:
+        def desktop_stop():
+            while not stop.wait(.5):
+                if Path(stop_path).exists():
+                    server.shutdown();return
+        threading.Thread(target=desktop_stop,daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -710,6 +722,7 @@ def main():
             webhook_server.server_close()
         stop.set()
         worker.join(timeout=20)
+        notice_thread.join(timeout=12)
         summary_thread.join(timeout=12)
         replay_thread.join(timeout=16)
         if colmex_thread:

@@ -1,0 +1,62 @@
+name: Signal Service desktop
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install build dependencies
+        run: python -m pip install -r windows-build-requirements.txt
+      - name: Install Linux desktop tooling
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk
+      - name: Install Windows installer tooling
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe")) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Installer tooling failed' }
+          }
+      - name: Test desktop process isolation
+        run: python -m unittest test_signal_desktop -q
+      - name: Build native executable and installer
+        run: python scripts/build-desktop.py
+      - name: Install and smoke-test Linux application
+        if: runner.os == 'Linux'
+        run: |
+          sudo dpkg -i dist/signal-service_*_amd64.deb
+          xvfb-run -a /opt/signal-service/SignalService --smoke-test --home "$RUNNER_TEMP/signal-smoke-home" --smoke-report "$RUNNER_TEMP/signal-smoke.json"
+          python -c "import json,os; from pathlib import Path; r=json.loads((Path(os.environ['RUNNER_TEMP'])/'signal-smoke.json').read_text()); assert r['window_created'] and not r['worker_started']"
+      - name: Install and smoke-test Windows application
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $Install = Join-Path $env:RUNNER_TEMP 'SignalService-installed'
+          $Setup = Start-Process (Resolve-Path 'dist/SignalService-Setup.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=$Install") -Wait -PassThru
+          if ($Setup.ExitCode -ne 0) { throw 'Installer failed' }
+          $Report = Join-Path $env:RUNNER_TEMP 'signal-smoke.json'
+          $App = Start-Process (Join-Path $Install 'SignalService.exe') -ArgumentList @('--smoke-test','--home',(Join-Path $env:RUNNER_TEMP 'signal-smoke-home'),'--smoke-report',$Report) -Wait -PassThru
+          if ($App.ExitCode -ne 0 -or -not (Test-Path $Report)) { throw 'Frozen desktop smoke failed' }
+          $Result = Get-Content $Report | ConvertFrom-Json
+          if (-not $Result.window_created -or $Result.worker_started) { throw 'Unsafe desktop startup' }
+      - name: Save verified installers and manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: signal-service-${{ runner.os }}-${{ github.sha }}
+          path: |
+            dist/SignalService*
+            dist/signal-service*
+          if-no-files-found: error
+          retention-days: 30

@@ -38,6 +38,9 @@ def enqueue(db,s,event):
     if event.get('destination'):key+=':'+event['destination']
     db.execute('INSERT INTO chasing_outbox(id,session_id,event) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',
                (key,s['id'],json.dumps(event)))
+    if event['kind']=='chase' and event.get('destination')=='crypto_auto_chase':
+        from signal_service import publish
+        publish(db,'chase-4h-5m',event['signal'] | dict(version=s['version'],market='crypto'),root=s['root'],instrument=s.get('asset_key'))
 
 
 def proposal(root,person,now,automatic=False):
@@ -420,14 +423,15 @@ def text_for(s,event):
     return head+dict(started=started,return_to_close='Price returned to the original close. Chasing continues.',expired='Chase reached its time limit. Watching stopped.')[kind]
 
 
-def deliver_pending(store,token):
+def deliver_pending(store,token,*,execution_only=False):
     from postgres_store import assert_worker, WorkerOwned
     from telegram_delivery import deliver
     from telegram_personal import prepare_message, bind_message
     from telegram_checklist import api, bot_key
     recipients={str(p['user_id']):p for p in people(store)}
     with activity_connection(store) as db:
-        rows=db.execute("SELECT o.id,o.event,s.state FROM chasing_outbox o JOIN chasing_sessions s ON s.id=o.session_id WHERE o.status='pending' AND o.retry_at<=%s ORDER BY o.event->>'at' LIMIT 100",(int(time.time()*1000),)).fetchall()
+        scope=" AND o.event->>'kind'='demo_exit' AND s.state->>'status'='demo_exit'" if execution_only else ''
+        rows=db.execute("SELECT o.id,o.event,s.state FROM chasing_outbox o JOIN chasing_sessions s ON s.id=o.session_id WHERE o.status='pending' AND o.retry_at<=%s"+scope+" ORDER BY o.event->>'at' LIMIT 100",(int(time.time()*1000),)).fetchall()
     for key,event,s in rows:
         person=recipients.get(s['user']);route=event.get('destination') or ('live_positions' if event['kind'] in ('opposite','entered','position_reference','position_extended','position_trail','exit_signal','reported_exit','position_data_delayed','position_data_resumed') else 'chasing')
         suspended=CHASING_SUSPENDED and route in ('chasing','crypto_auto_chase')

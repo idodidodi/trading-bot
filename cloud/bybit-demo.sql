@@ -1,3 +1,4 @@
+-- Legacy export/rehearsal schema only. New execution uses projects/trading-executor.
 -- Demo execution only. Explicit policy activation follows verified source deployment.
 BEGIN;
 CREATE TABLE IF NOT EXISTS bot_runtime.demo_execution_policy (

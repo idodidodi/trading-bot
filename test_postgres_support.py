@@ -29,6 +29,7 @@ def reset():
         tables=[r[0] for r in db.execute("SELECT tablename FROM pg_tables WHERE schemaname='bot_runtime' AND tablename<>'schema_version'")]
         db.execute(sql.SQL('TRUNCATE {} RESTART IDENTITY CASCADE').format(sql.SQL(',').join(sql.Identifier('bot_runtime',t) for t in tables)))
     with psycopg.connect(test_dsn()) as db:
+        db.execute('INSERT INTO bot_runtime.signal_stream_clock VALUES(1,0) ON CONFLICT DO NOTHING')
         db.execute("DELETE FROM public.telegram_routes WHERE installation='00000000-0000-0000-0000-000000000002'")
         for table in ('telegram_recipients','telegram_alert_preferences','chasing_preferences','crypto_auto_chase_preferences'):
             if db.execute('SELECT to_regclass(%s)', ('public.'+table,)).fetchone()[0]:

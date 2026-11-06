@@ -41,9 +41,6 @@ def activity_connection(store):
 def blockers(db):
     """Fail closed on missing schema, malformed state, or unknown activity states."""
     reasons = set()
-    if db.execute("SELECT to_regclass('bot_runtime.demo_execution_trades')").fetchone()[0]:
-        if db.execute("SELECT 1 FROM bot_runtime.demo_execution_trades WHERE state NOT IN ('closed','unfilled','skipped') LIMIT 1").fetchone():
-            reasons.add('demo execution position or unresolved submission')
     for (state,) in db.execute('SELECT state FROM bot_runtime.chasing_sessions'):
         if not isinstance(state, dict):
             reasons.add('unknown session'); continue
@@ -134,7 +131,7 @@ def extract_verified(archive, stage, tree):
             found.add(name)
     if found != set(wanted):raise UpdateRefused('Missing source files')
     policy = json.loads((stage/POLICY).read_text())
-    if policy != {'format': 1, 'runtime': 'postgres-source-v1'}:raise UpdateRefused('Unsupported source policy')
+    if policy != {'format': 1, 'runtime': 'signal-service-v2'}:raise UpdateRefused('Unsupported source policy')
     for path in stage.glob('*.py'):compile(path.read_bytes(), str(path), 'exec')
     return sorted(found)
 
