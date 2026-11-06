@@ -99,3 +99,26 @@ not production signals or Telegram delivery. Deployment requires the SQL migrati
 package and worker configuration, and the hosted UI together. No production asset
 selection or alert route has been switched by this implementation.
 
+
+## Linux signals-only boundary (2026-11-06 correction)
+
+Position management belongs to the separate trading runtime. The Linux signal
+entrypoint no longer starts `paper_trading.worker` (including Bybit demo execution,
+reconciliation and exits) or `chasing_runtime.worker` (including position
+monitoring and position notices). Their shutdown joins are removed too. The
+implementation remains available for reference and a separate trading service.
+Signal scanning, ordinary signal Telegram delivery, dismissal handling, market
+summaries, backtests and the Colmex feed bridge remain in the signal service.
+
+This supersedes the earlier statement that Linux should retain position management
+and RSI + PB *execution*. RSI + PB signal detection and its signal alerts continue;
+its demo order execution does not. On 2026-11-06, production demo execution was
+disabled and position notification preferences were turned off. Manual and
+automatic chasing remain off; there were no open demo trades or entered chase
+positions. Alpaca paper execution was already disabled in the worker environment.
+No orders were placed or closed by this correction. The startup removal is local
+until its code deployment is verified.
+
+Source: `platform_app.py` (`main` startup/shutdown), `paper_trading.py` (`worker`),
+`demo_execution.py` (`_cycle`), `chasing_runtime.py` (`worker`). Do not restore
+trading worker startup here when reactivating a separate trading service.

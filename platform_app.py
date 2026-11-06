@@ -652,18 +652,17 @@ def main():
     from postgres_store import resilient_worker
     worker = threading.Thread(target=resilient_worker(delivery_worker, 'delivery'), args=(store, token, chat_id, dry_run, stop), daemon=True)
     worker.start()
-    from chasing_runtime import worker as chasing_worker
-    chasing_thread = threading.Thread(target=resilient_worker(chasing_worker,'chasing'),args=(store,token,dry_run,stop),name='chasing',daemon=True)
-    chasing_thread.start()
+    # Signal service boundary: do not launch chasing/position monitoring here.
+    # Trading engines are retained for a separate trading runtime; see
+    # TELEGRAM_ALERT_LOGIC.md (Linux signals-only boundary).
     from telegram_checklist import worker as checklist_worker
     threading.Thread(target=resilient_worker(checklist_worker, 'telegram-checklist'),
                      args=(store, token, dry_run, stop), name='telegram-checklist', daemon=True).start()
     from market_summary import worker as summary_worker
     summary_thread = threading.Thread(target=resilient_worker(summary_worker, 'summary'), args=(store, stop), name='market-summary', daemon=True)
     summary_thread.start()
-    from paper_trading import worker as paper_worker
-    paper_thread = threading.Thread(target=resilient_worker(paper_worker, 'paper'), args=(store, stop), daemon=True)
-    paper_thread.start()
+    # paper_trading.worker also runs Bybit demo reconciliation and exits.
+    # It must not be started by the Linux signal service.
     from backtest_jobs import worker as replay_worker
     replay_thread = threading.Thread(target=resilient_worker(replay_worker, 'replay'),args=(store,stop),daemon=True)
     replay_thread.start()
@@ -712,9 +711,7 @@ def main():
         stop.set()
         worker.join(timeout=20)
         summary_thread.join(timeout=12)
-        paper_thread.join(timeout=16)
         replay_thread.join(timeout=16)
-        chasing_thread.join(timeout=21)
         if colmex_thread:
             colmex_thread.join(timeout=5)
         if scanner_thread:
