@@ -1,0 +1,14 @@
+[Unit]
+Description=Verified Trading Bot Linux source updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/absolute/existing-postgres-install
+Environment=TRADING_BOT_ENV=prod
+Environment=TRADING_BOT_ENV_FILE=/absolute/existing-config/worker.env
+ExecStart=/absolute/existing-postgres-install/.venv/bin/python /absolute/existing-postgres-install/source_update.py --root /absolute/existing-postgres-install
+TimeoutStartSec=15min
+UMask=0077
+NoNewPrivileges=true

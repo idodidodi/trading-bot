@@ -276,7 +276,7 @@ class TelegramDestinationError(RuntimeError):
     """Telegram definitively rejected the destination; safe to use General."""
 
 
-def send_telegram(token, chat_id, text, silent=False, source_identity=None, dismissal_user_id=None):
+def send_telegram(token, chat_id, text, silent=False, source_identity=None, dismissal_user_id=None, dismissal_actions=None):
     from telegram_delivery import footer
     from telegram_formatting import presentation
     text = footer(text, source_identity)
@@ -287,6 +287,7 @@ def send_telegram(token, chat_id, text, silent=False, source_identity=None, dism
     if dismissal_user_id is not None:
         from telegram_personal import prepare_message
         dismissal = prepare_message(Store(), token, chat_id, text, entities, dismissal_user_id)
+        if dismissal_actions:dismissal.extra_keyboard=dismissal_actions
     payload = {'chat_id': chat_id, 'text': text, 'entities': entities,
                'disable_notification': silent}
     if checklist_key:
@@ -651,6 +652,9 @@ def main():
     from postgres_store import resilient_worker
     worker = threading.Thread(target=resilient_worker(delivery_worker, 'delivery'), args=(store, token, chat_id, dry_run, stop), daemon=True)
     worker.start()
+    from chasing_runtime import worker as chasing_worker
+    chasing_thread = threading.Thread(target=resilient_worker(chasing_worker,'chasing'),args=(store,token,dry_run,stop),name='chasing',daemon=True)
+    chasing_thread.start()
     from telegram_checklist import worker as checklist_worker
     threading.Thread(target=resilient_worker(checklist_worker, 'telegram-checklist'),
                      args=(store, token, dry_run, stop), name='telegram-checklist', daemon=True).start()
@@ -704,6 +708,7 @@ def main():
         summary_thread.join(timeout=12)
         paper_thread.join(timeout=16)
         replay_thread.join(timeout=16)
+        chasing_thread.join(timeout=21)
         if scanner_thread:
             scanner_thread.join(timeout=21)
 

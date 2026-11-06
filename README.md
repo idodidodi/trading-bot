@@ -14,7 +14,7 @@ Install [requirements-runtime.txt](https://github.com/idodidodi/trading-bot/blob
 
 One worker owns the installation through a database advisory lock and durable ownership generation. `bot_runtime.runtime_control` separately controls routing and external effects. `DRY_RUN=true` simulates Telegram delivery; paper orders additionally require the paper-trading setting. Dry-run alerts are not automatically resent when real delivery is enabled.
 
-Automatic legacy executable updates are disabled. Linux and Windows builds remain tested, but Postgres artifacts do not publish to the old update channel. Deploy reviewed source deliberately and restart the existing service; do not launch another scanner against production.
+Automatic legacy executable updates remain disabled. Linux builds and frozen-app smoke tests run in CI; Windows builds are disabled. The Postgres source updater checks verified main commits daily at 02:39 Israel time and postpones while chasing, lookback or live positions are active. See [Linux source updates](docs/linux-source-updates.md). Never launch another scanner against production.
 
 ## Strategies and data
 
@@ -23,6 +23,8 @@ The worker supports RSI divergence, Pin-Bars, BB Pin-Bars, RSI + PB, daily momen
 See the [RSI strategy specification](https://github.com/idodidodi/trading-bot/blob/main/skills/rsi-divergence/SKILL.md). Providers include Twelve Data, Kraken, OANDA, Tiingo, Alpaca, FMP and Yahoo. A successful connection does not establish candle freshness or entitlement; inspect coverage, timestamps and provider notes. Feed changes retain separate identities and require verified symbol/provider choices.
 
 The dashboard uses Supabase Auth and owner/editor-scoped APIs. Browser roles cannot directly access worker tables. Hosted replay and uploaded-CSV research run independently of Linux. Telegram reservations retain accepted message IDs, but ambiguous network failures can still repeat a message. Reconcile ambiguous broker submissions before retrying them.
+
+Crypto RSI alerts support [automatic and manual descending Chase](docs/crypto-auto-chase.md): one active watch per asset, shared candle requests, follow-up alerts as lower timeframes appear, and completion at 5m or expiry. The automatic destination is separately registered and enabled in Settings.
 
 ## Local ad hoc scanner UI
 

@@ -42,9 +42,15 @@ def public_text(text):
             continue
         if content == '--------------------':
             continue
-        # Signal headers have a symbol followed by their timeframe.
+        # Chase headers include descriptive text after the symbol (for example
+        # "original 4h bullish"), so known symbols must not depend on that text.
         parts = line.split(' · ')
-        if len(parts) > 1 and parts[1] in ('1h', '4h', '1d', '1w', '1mo', 'daily', 'weekly', 'monthly'):
+        known_symbol = parts[0] in symbol_names()
+        qualified_symbol = (parts[0].count(':') == 2
+                            and all(parts[0].split(':'))
+                            and not any(c.isspace() for c in parts[0]))
+        if len(parts) > 1 and (known_symbol or qualified_symbol or parts[1] in
+                ('1h', '4h', '1d', '1w', '1mo', 'daily', 'weekly', 'monthly')):
             symbol = parts[0]
             if symbol.count(':') == 2:
                 provider = provider_name(symbol)

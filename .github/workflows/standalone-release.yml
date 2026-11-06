@@ -4,25 +4,6 @@ on:
   push:
     branches: ['**']
     tags: ['v*']
-    paths:
-      - '*.py'
-      - 'web/**'
-      - 'skills/**'
-      - 'scanner.json'
-      - 'stock_universe.json'
-      - 'alert-symbol-map.xml'
-      - 'tradingview_template.pine'
-      - '.env.example'
-      - '*requirements*.txt'
-      - 'pyproject.toml'
-      - 'poetry.lock'
-      - 'uv.lock'
-      - 'scripts/build-*.sh'
-      - 'scripts/build-*.ps1'
-      - 'scripts/*-manifest.py'
-      - 'scripts/release-version.py'
-      - 'scripts/smoke-*.py'
-      - '.github/workflows/**'
 permissions:
   contents: read
 # Serialize releases so version allocation and publication cannot overtake one another.
@@ -51,13 +32,8 @@ jobs:
     uses: ./.github/workflows/linux-release.yml
     with:
       release_version: ${{ needs.prepare.outputs.version }}
-  windows:
-    needs: prepare
-    uses: ./.github/workflows/windows-release.yml
-    with:
-      release_version: ${{ needs.prepare.outputs.version }}
   publish:
-    needs: [prepare, linux, windows]
+    needs: [prepare, linux]
     # Migration artifacts must never enter the legacy auto-update release channel.
     # A separately reviewed manual release/cutover workflow is required.
     if: ${{ false }}

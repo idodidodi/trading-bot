@@ -1,7 +1,7 @@
 const config=window.DASHBOARD_CONFIG||{}, online=Boolean(config.supabaseUrl);
 const $=id=>document.getElementById(id),content=$('content'),status=$('status');
 const frames=['monthly','weekly','daily','4h','1h'];
-const assetFrames=[...frames];
+const assetFrames=[...frames,'30m','15m','5m'];
 const defaultAssetFrames=['monthly','weekly','daily','4h'];
 const selectedFindings={live:sessionStorage.getItem('selected_live'),backtest:sessionStorage.getItem('selected_backtest')};
 function selectFinding(source,id){selectedFindings[source]=id;sessionStorage.setItem?.('selected_'+source,id);for(const tr of document.querySelectorAll?.('.finding-row')||[]){const active=tr.dataset.findingId===id;tr.classList.toggle('selected-row',active);tr.setAttribute('aria-selected',String(active));}}
@@ -76,7 +76,7 @@ function manageAssetButton(signal){
 function assetMatches(signal,assets){
  const exact=assets.filter(a=>a.id===signal.symbol);if(exact.length)return exact;
  const identities=[signal.symbol,signal.source].filter(Boolean);
- const feeds=assets.filter(a=>frames.some(f=>{
+ const feeds=assets.filter(a=>assetFrames.some(f=>{
   const provider=a.timeframe_providers?.[f]||a.provider;
   const exchange=provider==='kraken'?'Kraken':provider==='tiingo'?'Tiingo-UTC':a.exchange||'configured';
   const identity=`${provider}:${exchange}:${a.symbol||a.id}`;
@@ -127,7 +127,7 @@ async function openAssetManager(signal){
    const enableLabel=node('label','Enabled in scanner');enableLabel.append(enabled);
    form.append(node('p',`${asset.id} · ${asset.provider} · ${asset.symbol||asset.id}`),enableLabel);
    const field=node('fieldset');field.append(node('legend','Scanner timeframes'));
-   const selected={};for(const f of frames){const label=node('label',({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'1 hour'})[f]),input=node('input');input.type='checkbox';input.value=f;input.checked=(asset.timeframes||settings.config.timeframes||frames.filter(f=>f!=='1h')).includes(f);selected[f]=input;label.append(input);field.append(label);}
+   const selected={};for(const f of assetFrames){const label=node('label',({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'1 hour','30m':'30 minutes','15m':'15 minutes','5m':'5 minutes'})[f]),input=node('input');input.type='checkbox';input.value=f;input.checked=(asset.timeframes||settings.config.timeframes||defaultAssetFrames).includes(f);selected[f]=input;label.append(input);field.append(label);}
    form.append(field,node('p','Select one or more timeframes. Uncheck a timeframe to remove it, or replace it by selecting another. These settings apply across this asset’s candle strategies. Momentum always uses daily candles.'));
    const strategyField=node('fieldset');strategyField.append(node('legend','Scan strategies'));
    const strategyInputs={},strategyOptions=[['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB']];
@@ -138,7 +138,7 @@ async function openAssetManager(signal){
    const save=node('button','Save changes');save.type='submit';
    const actions=node('div');actions.className='asset-modal-actions';actions.append(save,button('Cancel',()=>dialog.close()));form.append(error,actions);target.append(form);
    form.onsubmit=async event=>{
-    event.preventDefault();const timeframes=frames.filter(f=>selected[f].checked);
+    event.preventDefault();const timeframes=assetFrames.filter(f=>selected[f].checked);
     if(!timeframes.length){error.textContent='Choose at least one timeframe. To pause all scanning, turn off Enabled in scanner.';return;}
     const scan_strategies=strategyOptions.map(([key])=>key).filter(key=>strategyInputs[key].checked);
     if(!scan_strategies.length){error.textContent='Choose at least one scan strategy. To pause all scanning, turn off Enabled in scanner.';return;}
@@ -305,7 +305,7 @@ async function loadAssets(){state=await request('/api/assets');content.replaceCh
  }
  content.append(node('h3','Permanent portfolio'));
  const groups=new Map();for(const a of state.config.assets){const category=marketCategory(a);if(!groups.has(category)){const section=node('section');section.className='asset-group';section.append(node('h4',category));groups.set(category,section);}}for(const category of ['Stocks & ETFs','Forex','Futures','Crypto','Other assets'])if(groups.has(category))content.append(groups.get(category));
- for(const asset of state.config.assets){const scanStrategies=asset.scan_strategies||['rsi','pin-bars','rsi-pb'],strategyName=scanStrategies.map(s=>({'rsi':'RSI','pin-bars':'Pin-Bars','bb-pin-bars':'BB Pin-Bars','rsi-pb':'RSI + PB'})[s]).join(' + ');const warning=coverageWarning(asset),row=node('details'),summary=node('summary',`${asset.id}${asset.name?' · '+asset.name:''} · ${asset.enabled?'Enabled':'Disabled'} · ${strategyName} · ${(asset.timeframes||frames.filter(f=>f!=='1h')).join(', ')}${warning?' · Data unavailable':''}`);row.className='asset-row'+(warning?' asset-unavailable':'');row.append(summary);summary.title=warning;row.ontoggle=()=>row.classList.toggle('selected-row',row.open);const field=node('fieldset');if(warning){const note=node('p',warning);note.className='error';field.append(note);}
+ for(const asset of state.config.assets){const scanStrategies=asset.scan_strategies||['rsi','pin-bars','rsi-pb'],strategyName=scanStrategies.map(s=>({'rsi':'RSI','pin-bars':'Pin-Bars','bb-pin-bars':'BB Pin-Bars','rsi-pb':'RSI + PB'})[s]).join(' + ');const warning=coverageWarning(asset),row=node('details'),summary=node('summary',`${asset.id}${asset.name?' · '+asset.name:''} · ${asset.enabled?'Enabled':'Disabled'} · ${strategyName} · ${(asset.timeframes||defaultAssetFrames).join(', ')}${warning?' · Data unavailable':''}`);row.className='asset-row'+(warning?' asset-unavailable':'');row.append(summary);summary.title=warning;row.ontoggle=()=>row.classList.toggle('selected-row',row.open);const field=node('fieldset');if(warning){const note=node('p',warning);note.className='error';field.append(note);}
  const enabled=node('input');enabled.type='checkbox';enabled.checked=asset.enabled;const enablelabel=node('label','Scan enabled');enablelabel.append(enabled);field.append(enablelabel);
  field.append(node('p',`Category: ${marketCategory(asset)}`),node('p',`Data source: ${assetProviderNames[asset.provider]||asset.provider}`),node('p',assetDataStatus(asset,state)));
  const selected=assetTimeframeControls(asset),strategies=assetStrategyControls(asset);field.append(selected.field,strategies.field);
@@ -388,7 +388,7 @@ function feedback(source,r){const wrap=node('div');wrap.className='feedback';let
  async function save(){if(saving)return;saving=true;const submitted={rating,comment:comment.value};dirty=false;try{const value=await request('/api/feedback',{source,finding_id:r.id,revision,...submitted});revision=value.revision;progress.textContent=online?'Saved online':'Saved locally';}catch(e){dirty=true;progress.textContent=e.message;}finally{saving=false;if(dirty&&progress.textContent==='Saving…')timer=setTimeout(save,0);}}
  comment.oninput=()=>changed(600);comment.onblur=()=>{if(dirty&&!saving)save();};return wrap;
 }
-async function openCandle(source,id,target='pivot2'){selectFinding(source,id);const dialog=$('candle-dialog');if(!dialog.open)dialog.showModal();$('candle-title').textContent='Signal candles';$('candle-note').textContent='Loading candles…';$('candle-legend').textContent='';$('candle-actions').replaceChildren();$('candle-table').replaceChildren();if(chart){chart.remove();chart=null;}$('chart').replaceChildren();try{const data=await request('/api/candles?'+new URLSearchParams({source,finding:id,target}));$('candle-title').textContent=`${data.signal.symbol} · ${({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'Hourly','60':'Hourly','240':'4 hours','D':'Daily','W':'Weekly','M':'Monthly'})[data.signal.timeframe]||data.signal.timeframe} candles${data.signal.direction?' · '+data.signal.direction.toUpperCase():''}`;const rules=data.signal.rules;$('candle-legend').textContent=`Bollinger Bands (${rules.bb_period}, ${rules.bb_multiplier}σ) · RSI (${rules.rsi_period}, Wilder).`; const slope=data.signal.band_slope_pct;if(Number.isFinite(slope)){const angle=Math.atan(slope/100)*180/Math.PI;$('candle-legend').textContent+=` ${data.signal.direction==='bullish'?'Lower':'Upper'} touching BB slope: ${slope>=0?'+':''}${slope.toFixed(3)}%/candle · normalized angle ${angle>=0?'+':''}${angle.toFixed(3)}° (${rules.band_slope_period||3} candles).`;}else $('candle-legend').textContent+=' Band slope is not used as a filter.'; $('candle-legend').title='Normalized angle = atan(slope % / 100), with one candle horizontally and a 100% price change vertically; independent of chart zoom. Indicators are recalculated from the displayed candles and may differ slightly from the values saved with the signal.'; $('candle-note').textContent='';if(online&&!data.tradingview_url){const settings=await request('/api/assets');const a=settings.config.assets.map(a=>{const p=a.timeframe_providers?.[data.signal.timeframe]||a.provider;return p==='kraken'?{...a,provider:p,exchange:'Kraken',tradingview_symbol:a.provider==='kraken'?a.tradingview_symbol:''}:p==='oanda'?{...a,provider:p,exchange:data.signal.symbol.split(':')[1],tradingview_symbol:a.provider==='oanda'?a.tradingview_symbol:''}:p==='tiingo'?{...a,provider:p,exchange:'Tiingo-UTC',tradingview_symbol:a.provider==='tiingo'?a.tradingview_symbol:''}:p==='alpaca'?{...a,provider:p,exchange:data.signal.symbol.split(':')[1],tradingview_symbol:a.provider==='alpaca'?a.tradingview_symbol:''}:a;}).find(a=>a.id===data.signal.symbol||`${a.provider}:${a.exchange||'configured'}:${a.symbol||a.id}`===data.signal.symbol);if(a?.tradingview_symbol){const interval={monthly:'M',weekly:'W',daily:'D','4h':'240','1h':'60'}[data.signal.timeframe];data.tradingview_url='https://www.tradingview.com/chart/?'+new URLSearchParams({symbol:a.tradingview_symbol,interval});}}const actions=$('candle-actions');actions.replaceChildren();for(const [key,label] of [['pivot1','First pivot'],['pivot2','Second pivot'],['confirmation',data.signal.signal_status==='provisional'?'Signal candle close':'Confirmation']])actions.append(button(label,()=>openCandle(source,id,key)));
+async function openCandle(source,id,target='pivot2'){selectFinding(source,id);const dialog=$('candle-dialog');if(!dialog.open)dialog.showModal();$('candle-title').textContent='Signal candles';$('candle-note').textContent='Loading candles…';$('candle-legend').textContent='';$('candle-actions').replaceChildren();$('candle-table').replaceChildren();if(chart){chart.remove();chart=null;}$('chart').replaceChildren();try{const data=await request('/api/candles?'+new URLSearchParams({source,finding:id,target}));$('candle-title').textContent=`${data.signal.symbol} · ${({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'Hourly','30m':'30 minutes','15m':'15 minutes','5m':'5 minutes','60':'Hourly','240':'4 hours','D':'Daily','W':'Weekly','M':'Monthly'})[data.signal.timeframe]||data.signal.timeframe} candles${data.signal.direction?' · '+data.signal.direction.toUpperCase():''}`;const rules=data.signal.rules;$('candle-legend').textContent=`Bollinger Bands (${rules.bb_period}, ${rules.bb_multiplier}σ) · RSI (${rules.rsi_period}, Wilder).`; const slope=data.signal.band_slope_pct;if(Number.isFinite(slope)){const angle=Math.atan(slope/100)*180/Math.PI;$('candle-legend').textContent+=` ${data.signal.direction==='bullish'?'Lower':'Upper'} touching BB slope: ${slope>=0?'+':''}${slope.toFixed(3)}%/candle · normalized angle ${angle>=0?'+':''}${angle.toFixed(3)}° (${rules.band_slope_period||3} candles).`;}else $('candle-legend').textContent+=' Band slope is not used as a filter.'; $('candle-legend').title='Normalized angle = atan(slope % / 100), with one candle horizontally and a 100% price change vertically; independent of chart zoom. Indicators are recalculated from the displayed candles and may differ slightly from the values saved with the signal.'; $('candle-note').textContent='';if(online&&!data.tradingview_url){const settings=await request('/api/assets');const a=settings.config.assets.map(a=>{const p=a.timeframe_providers?.[data.signal.timeframe]||a.provider;return p==='kraken'?{...a,provider:p,exchange:'Kraken',tradingview_symbol:a.provider==='kraken'?a.tradingview_symbol:''}:p==='oanda'?{...a,provider:p,exchange:data.signal.symbol.split(':')[1],tradingview_symbol:a.provider==='oanda'?a.tradingview_symbol:''}:p==='tiingo'?{...a,provider:p,exchange:'Tiingo-UTC',tradingview_symbol:a.provider==='tiingo'?a.tradingview_symbol:''}:p==='alpaca'?{...a,provider:p,exchange:data.signal.symbol.split(':')[1],tradingview_symbol:a.provider==='alpaca'?a.tradingview_symbol:''}:a;}).find(a=>a.id===data.signal.symbol||`${a.provider}:${a.exchange||'configured'}:${a.symbol||a.id}`===data.signal.symbol);if(a?.tradingview_symbol){const interval={monthly:'M',weekly:'W',daily:'D','4h':'240','1h':'60','30m':'30','15m':'15','5m':'5'}[data.signal.timeframe];data.tradingview_url='https://www.tradingview.com/chart/?'+new URLSearchParams({symbol:a.tradingview_symbol,interval});}}const actions=$('candle-actions');actions.replaceChildren();for(const [key,label] of [['pivot1','First pivot'],['pivot2','Second pivot'],['confirmation',data.signal.signal_status==='provisional'?'Signal candle close':'Confirmation']])actions.append(button(label,()=>openCandle(source,id,key)));
  if(data.tradingview_url){const a=node('a','Open TradingView');a.href=data.tradingview_url;a.target='_blank';a.rel='noopener';a.title='Opens the configured comparison feed in TradingView.';actions.append(a);}
  const candles=data.candles;if(chart){chart.remove();chart=null;}$('chart').replaceChildren();$('candle-table').replaceChildren();
  if(candles.length){const library=await import('/web/chart.js');chart=await library.draw($('chart'),candles,data.signal,target);$('candle-table').replaceChildren(table(['Candle (Israel)','Open','High','Low','Close'],candles.filter(c=>c.start===data.signal.pivot1||c.start===data.signal.pivot2||c.end===data.signal.confirmed_at).map(c=>[displayTime(c.start),c.open,c.high,c.low,c.close])));}else{$('candle-note').textContent+=' No stored source candles are available for this finding.';}
@@ -536,6 +536,69 @@ async function telegramRoutingControls(panel,isCurrent){
   section.append(status);
  }catch(e){if(isCurrent())section.append(node('p','Telegram routing unavailable. Only the installation owner can access online routing; the cloud migration must be installed.'));}
 }
+async function chasingControls(panel,isCurrent){
+ if(!online)return;
+ panel.append(node('p','Chasing is suspended. Chasing Telegram groups are inactive; historical settings are retained.'));
+}
+// Preserved for a future reviewed reactivation; not called by settings.
+async function archivedChasingControls(panel,isCurrent){
+ if(!online)return;
+ const section=node('section');section.append(node('h3','Chasing'));panel.append(section);
+ try{
+  let value=await request('/api/chasing-settings');if(!isCurrent())return;
+  if(!value.groups?.chasing||!value.groups?.live_positions)section.append(node('p','Your personal chase chats have not been connected yet. You can save your preferences now.'));
+  const row=node('label','Stop chasing after favorable move (%) '),pct=node('input');
+  pct.type='number';pct.min='0';pct.max='100';pct.step='any';pct.value=value.stop_pct;
+  pct.setAttribute('aria-label','Stop chasing after favorable move (%)');row.append(pct);section.append(row);
+  section.append(node('p','Measured from the original signal close for non-crypto chases. Crypto RSI watches end at 5m or expiry; price moves do not cancel them.'));
+  const inputs={};
+  for(const [key,label] of [['chasing','Receive chasing notifications'],['live_positions','Receive live-position notifications']]){
+   const line=node('label'),input=node('input');input.type='checkbox';input.checked=value[key]===true;
+   input.setAttribute('aria-label',label);line.append(input,document.createTextNode(' '+label));section.append(line);inputs[key]=input;
+  }
+  const status=node('p');status.setAttribute('role','status');
+  section.append(button('Save chasing settings',async()=>{
+   const stop_pct=Number(pct.value);
+   if(!pct.value.trim()||!Number.isFinite(stop_pct)||stop_pct<=0||stop_pct>=100){status.textContent='Enter a percentage greater than zero and below 100.';return;}
+   try{value=await request('/api/chasing-settings',{action:'save',revision:value.revision,stop_pct,chasing:inputs.chasing.checked,live_positions:inputs.live_positions.checked});status.textContent='Saved for new chases.';}catch(e){status.textContent=e.message;}
+  }),status);
+  for(const s of value.sessions||[]){section.append(node('p',`${s.root.symbol} · ${s.root.direction} · ${s.status} · stop ${s.stop_pct}%`));}
+ }catch(e){section.append(node('p','Chasing settings unavailable: '+e.message));}
+ try{
+  const data=await request('/api/chasing-registration');if(!isCurrent())return;
+  const admin=node('section'),member=node('select'),chase=node('input'),live=node('input'),status=node('p');
+  admin.append(node('h3','Personal chase chats'),node('p','Owner-only rollout: create two private groups containing only the installation owner and the bot. Verify membership and identity before registering.'));
+  for(const m of data.members||[]){const option=node('option',m.label);option.value=m.user_id;member.append(option);}
+  function selectMember(){const m=(data.members||[]).find(m=>m.user_id===member.value);chase.value=m?.routes?.chasing||'';live.value=m?.routes?.live_positions||'';}
+  member.onchange=selectMember;selectMember();
+  for(const [label,input] of [['User',member],['Chasing chat ID',chase],['Live positions chat ID',live]]){const row=node('label',label+' ');row.append(input);admin.append(row);}
+  admin.append(button('Register verified chats',async()=>{try{await request('/api/chasing-registration',{user_id:member.value,chasing:chase.value.trim(),live_positions:live.value.trim()});status.textContent='Registered. Personal notification choices remain separate.';}catch(e){status.textContent=e.message;}}),status);section.append(admin);
+ }catch{/* Registration is owner-only. Personal settings remain available. */}
+}
+async function cryptoAutoChaseControls(panel,isCurrent){
+ if(!online)return;
+ panel.append(node('p','Automatic RSI + 5m RSI chasing is suspended.'));
+}
+// Preserved for a future reviewed reactivation; not called by settings.
+async function archivedCryptoAutoChaseControls(panel,isCurrent){
+ if(!online)return;
+ const section=node('section');section.append(node('h3','Automatic crypto Chase'));panel.append(section);
+ try{
+  let value=await request('/api/crypto-auto-chase-settings');if(!isCurrent())return;
+  const enabled=node('input'),chat=node('input'),status=node('p');enabled.type='checkbox';enabled.checked=value.enabled===true;
+  enabled.setAttribute('aria-label','Receive automatic crypto Chase alerts');
+  chat.type='text';chat.value=value.chat||'';chat.setAttribute('aria-label','Automatic crypto Chase chat ID');
+  const choice=node('label','Receive automatic crypto Chase alerts ');choice.append(enabled);
+  const destination=node('label','Verified group chat ID ');destination.append(chat);
+  section.append(choice,destination,node('p','One watch per asset, shared with manual Chase. Lower timeframes take priority; alerts continue down to 5m or expiry. A 1h watch expires after 55 minutes.'));
+  status.setAttribute('role','status');
+  section.append(button('Save automatic crypto Chase',async()=>{
+   const group=chat.value.trim();
+   if((enabled.checked&&!group)||(group&&!/^-[1-9][0-9]{0,18}$/.test(group))){status.textContent='Enter a numeric group chat ID.';return;}
+   try{value=await request('/api/crypto-auto-chase-settings',{action:'save',revision:value.revision,enabled:enabled.checked,chat:group});status.textContent='Saved. Applies to new crypto RSI alerts.';}catch(e){status.textContent=e.message;}
+  }),status);
+ }catch(e){if(isCurrent())section.append(node('p','Automatic crypto Chase settings unavailable: '+e.message));}
+}
 function settingsLoading(label){
  const status=node('p');status.className='settings-loading';status.setAttribute('role','status');
  const spinner=node('span');spinner.className='loading-spinner';spinner.setAttribute('aria-hidden','true');
@@ -544,9 +607,9 @@ function settingsLoading(label){
 async function openVersions(){
  const dialog=$('settings-dialog'),panel=$('version-content'),id=++versionRequest;
  const isCurrent=()=>id===versionRequest&&dialog.open;
- const personal=node('div'),routing=node('div'),development=node('div'),versions=node('section');
+ const personal=node('div'),routing=node('div'),development=node('div'),chasing=node('div'),automatic=node('div'),versions=node('section');
  versions.append(node('h3','Versions'),settingsLoading('Checking versions…'));
- panel.replaceChildren(personal,routing,development,versions);
+ panel.replaceChildren(personal,chasing,automatic,routing,development,versions);
  if(!dialog.open)dialog.showModal();
  async function loadSettings(target,label,load){
   const loading=settingsLoading(label);target.append(loading);
@@ -554,6 +617,8 @@ async function openVersions(){
  }
  await Promise.all([
   loadSettings(personal,'Loading personal alerts…',personalTelegramControls),
+  loadSettings(chasing,'Loading chasing settings…',chasingControls),
+  loadSettings(automatic,'Loading automatic crypto Chase…',cryptoAutoChaseControls),
   loadSettings(routing,'Loading Telegram groups…',telegramRoutingControls),
   loadSettings(development,'Loading local settings…',developmentSettingsControls),
   loadVersionDetails(versions,isCurrent),

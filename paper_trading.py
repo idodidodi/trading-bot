@@ -413,10 +413,10 @@ def check_and_log(store):
 def worker(store, stop):
     while not stop.is_set():
         try:
-            if not paper_trading_enabled(store):
-                stop.wait(1)
-                continue
-            check_and_log(store)
+            from demo_execution import check as demo_check
+            demo_check(store)
+            if paper_trading_enabled(store):
+                check_and_log(store)
         except OperationalError as exc:
             from platform_app import database_busy
             if not database_busy(exc):

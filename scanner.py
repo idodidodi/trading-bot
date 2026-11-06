@@ -20,7 +20,7 @@ import urllib.error
 
 from platform_app import ROOT, Store, database_busy, load_env, load_rules, validate_signal, rsi_divergence_matches
 
-TIMEFRAMES = {'1h': '1h', '4h': '4h', 'daily': '1day', 'weekly': '1week', 'monthly': '1month'}
+TIMEFRAMES = {'5m': '5min', '15m': '15min', '30m': '30min', '1h': '1h', '4h': '4h', 'daily': '1day', 'weekly': '1week', 'monthly': '1month'}
 
 
 def minimum_history(rules):
@@ -207,7 +207,8 @@ def interval_end(start, timeframe):
         month = start.month % 12 + 1
         year = start.year + (start.month == 12)
         return start.replace(year=year, month=month, day=min(start.day, calendar.monthrange(year, month)[1]))
-    return start + {'1h': timedelta(hours=1), '4h': timedelta(hours=4), 'daily': timedelta(days=1), 'weekly': timedelta(days=7)}[timeframe]
+    return start + {'5m': timedelta(minutes=5), '15m': timedelta(minutes=15), '30m': timedelta(minutes=30),
+                    '1h': timedelta(hours=1), '4h': timedelta(hours=4), 'daily': timedelta(days=1), 'weekly': timedelta(days=7)}[timeframe]
 
 
 class TwelveDataRateLimit(ValueError):
@@ -266,7 +267,9 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     pin_rules = pin_bars.load_rules()
     bb_rules = bb_pin_bars.load_rules()
     combined_rules = rsi_pb.load_rules(rules)
-    from kraken_feed import fetch_kraken
+    from shared_kraken import fetch as shared_kraken_fetch
+    def fetch_kraken(asset, timeframe):
+        return shared_kraken_fetch(asset, timeframe, now)
     from oanda_feed import fetch_oanda
     from fmp_feed import fetch_fmp
     from yahoo_feed import fetch_yahoo
@@ -397,9 +400,9 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 future_closes = [c.end for c in raw if c.end > now]
                 if future_closes:
                     row['next_close_at'] = min(future_closes)
-                elif candles and timeframe in ('1h', '4h'):
+                elif candles and timeframe in ('5m', '15m', '30m', '1h', '4h'):
                     # Preserve the feed's native intraday alignment.
-                    period = (1 if timeframe == '1h' else 4) * 60 * 60 * 1000
+                    period = {'5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240}[timeframe] * 60000
                     row['next_close_at'] = candles[-1].end + ((now - candles[-1].end) // period + 1) * period
                 cache_candles(store, asset, timeframe, candles)
                 if candles:row['last_closed_at']=candles[-1].end
