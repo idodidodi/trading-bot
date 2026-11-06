@@ -159,11 +159,38 @@ async function openAssetManager(signal){
 }
 $('close-asset').onclick=()=>$('asset-dialog').close();
 $('asset-dialog').addEventListener('close',()=>{assetManagerGeneration++;});
+async function loadColmexRequests(parent){
+ const section=node('section');section.className='colmex-requests';parent.append(section);
+ section.append(node('h3','Colmex MT4 · requested forex pairs'));
+ if(!online){section.append(node('p','Sign in to the hosted dashboard to manage your personal Colmex requests.'));return;}
+ try{
+  const value=await request('/api/colmex'),feed=value.feed||{},age=Date.now()/1000-Number(feed.updated_at||0);
+  const fresh=feed.status==='collecting'&&age>=-5&&age<=120;
+  section.append(node('p',fresh?'Terminal connected · catalogue available':'Feed unavailable or stale · '+(feed.reason||'waiting for terminal update')),
+   node('p','Choose up to 10 exact broker pairs. Requests are shared across subscribers; collection does not mean candles are ready to scan. Removing your request keeps pairs needed by others.'),
+   node('p',value.note||''));
+  const names=[...new Set([...(value.symbols||[]),...(fresh?(feed.catalogue||[]).filter(s=>s.export_supported&&s.forex===true).map(s=>s.symbol):[])])].sort();
+  const form=node('form'),inputs={},feedback=node('p');
+  for(const name of names){const label=node('label',name),input=node('input');input.type='checkbox';input.checked=(value.symbols||[]).includes(name);inputs[name]=input;label.append(input);form.append(label);}
+  const save=node('button','Save my requested pairs');form.append(save,feedback);
+  form.onsubmit=async event=>{event.preventDefault();const symbols=Object.keys(inputs).filter(s=>inputs[s].checked);if(symbols.length>10){feedback.textContent='Choose at most 10 pairs.';return;}save.disabled=true;
+   try{const result=await request('/api/colmex',{action:'set',revision:value.revision,symbols});value.revision=result.revision;feedback.textContent='Saved. Collection and scanning will update when the worker validates the feed.';}
+   catch(error){feedback.textContent=error.message+' Reload before retrying.';}finally{save.disabled=false;}
+  };section.append(form);
+  if(feed.owner_disabled_symbols?.length)section.append(node('p','Disabled by the installation owner: '+feed.owner_disabled_symbols.join(', ')));
+  const assets=feed.terminal?.assets||[];
+  if(assets.length)section.append(table(['Broker symbol','Collection'],assets.map(a=>[a.symbol,a.status])));
+  const coverage=(value.coverage||[]).filter(r=>r.provider==='colmex');
+  if(coverage.length)section.append(table(['Symbol','Timeframe','Scanner status','Details'],coverage.map(r=>[r.symbol||r.asset,r.timeframe,r.status,r.reason||r.data_notes||''])));
+  else section.append(node('p','Scanner readiness has not been checked yet.'));
+ }catch(error){section.append(node('p','Colmex requests unavailable: '+error.message));}
+}
 async function loadAssets(){state=await request('/api/assets');content.replaceChildren();
  content.append(node('h2','Live assets'),node('p',`Configuration ${state.revision}; scanner applied ${state.applied_revision}. New tickers are disabled drafts until you configure their data feed.`));
  const form=node('form'),input=node('input');input.name='tickers';input.placeholder='NVDA, EURUSD, BTCUSD';input.required=true;input.maxLength=10000;form.append(input,node('button','Add tickers'));form.onsubmit=async e=>{e.preventDefault();await mutate({action:'bulk',tickers:input.value});};if(state.sync?.error)content.append(node('p','Sync: '+state.sync.error));
  if(!online&&state.configuration_conflict)content.append(button('Use online configuration',()=>mutate({action:'accept_online'})));
  if(!online&&state.conflicts)content.append(node('p',`${state.conflicts} sync conflicts retained for review. Pending local edits are preserved.`));
+ await loadColmexRequests(content);
  content.append(form,node('p',`Candle timeframes are independent per asset. Polling interval: ${state.config.poll_seconds/3600} hours.`));
  if(state.config.weekly_stock_screen?.enabled){
   const stocks=state.weekly_stock_selection;
@@ -176,12 +203,13 @@ async function loadAssets(){state=await request('/api/assets');content.replaceCh
  for(const asset of state.config.assets){const scanStrategies=asset.scan_strategies||['rsi','pin-bars','rsi-pb'],strategyName=scanStrategies.map(s=>({'rsi':'RSI','pin-bars':'Pin-Bars','bb-pin-bars':'BB Pin-Bars','rsi-pb':'RSI + PB'})[s]).join(' + ');const warning=coverageWarning(asset),row=node('details'),summary=node('summary',`${asset.id}${asset.name?' · '+asset.name:''} · ${asset.enabled?'Enabled':'Disabled'} · ${strategyName} · ${(asset.timeframes||defaultAssetFrames).join(', ')}${warning?' · Data unavailable':''}`);row.className='asset-row'+(warning?' asset-unavailable':'');row.append(summary);summary.title=warning;row.ontoggle=()=>row.classList.toggle('selected-row',row.open);const field=node('fieldset');if(warning){const note=node('p',warning);note.className='error';field.append(note);}
  const enabled=node('input');enabled.type='checkbox';enabled.checked=asset.enabled;const enablelabel=node('label','Scan enabled');enablelabel.append(enabled);field.append(enablelabel);
  const strategies={},strategyField=node('fieldset');strategyField.append(node('legend','Scan strategies'));for(const [key,title] of [['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB']]){const input=node('input');input.type='checkbox';input.value=key;input.checked=scanStrategies.includes(key);input.setAttribute('aria-label',asset.id+' '+title);strategies[key]=input;const label=node('label',title);label.append(input);strategyField.append(label);}field.append(strategyField,node('p','Applies to all selected candle timeframes for this asset. Save asset to apply.'));
- const provider=node('select');for(const p of ['csv','twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo']){const o=node('option',p==='csv'?'Candle CSV files':p==='kraken'?'Kraken spot':p==='oanda'?'OANDA forex':p==='tiingo'?'Tiingo FX / commodities':p==='alpaca'?'Alpaca US equities':p==='fmp'?'FMP cash indices':p==='yahoo'?'Yahoo indices / futures (delayed)':'Twelve Data');o.value=p;provider.append(o);}provider.value=asset.provider;field.append(provider);
+ const provider=node('select');for(const p of ['csv','twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo','colmex']){const o=node('option',p==='csv'?'Candle CSV files':p==='kraken'?'Kraken spot':p==='oanda'?'OANDA forex':p==='tiingo'?'Tiingo FX / commodities':p==='alpaca'?'Alpaca US equities':p==='fmp'?'FMP cash indices':p==='colmex'?'Colmex MT4':p==='yahoo'?'Yahoo indices / futures (delayed)':'Twelve Data');o.value=p;provider.append(o);}provider.value=asset.provider;field.append(provider);
  const inputs={};for(const [key,title] of [['symbol','Provider symbol'],['exchange','Provider exchange'],['tradingview_symbol','TradingView exchange:ticker']]){const l=node('label',title),i=node('input');i.value=asset[key]||'';i.maxLength=100;inputs[key]=i;l.append(i);field.append(l);}
  const confirmed=node('input');confirmed.type='checkbox';confirmed.checked=asset.feed_confirmed===true;const cl=node('label','I verified this provider feed');cl.append(confirmed);field.append(cl);
  const selected={},sources={};for(const f of assetFrames){const l=node('label',f),i=node('input');i.type='checkbox';i.checked=(asset.timeframes||defaultAssetFrames).includes(f);selected[f]=i;l.append(i);field.append(l);const source=node('select');source.setAttribute('aria-label',f+' candle provider');for(const [value,label] of [['','Primary provider'],['twelvedata','Twelve Data'],['oanda','OANDA forex'],['tiingo','Tiingo FX / commodities'],['alpaca','Alpaca US equities'],['fmp','FMP cash indices'],['yahoo','Yahoo indices / futures (delayed)'],...(f==='monthly'?[]:[['kraken','Kraken spot']])]){const o=node('option',label);o.value=value;source.append(o);}source.value=asset.timeframe_providers?.[f]||'';sources[f]=source;field.append(source);}
  field.append(node('p',asset.provider==='csv'?`CSV: ${asset.path||'data/candles/{asset}-{timeframe}.csv'}`:'Provider entitlement and native intervals must be verified.'));
  field.append(node('p','OANDA supports forex on all five timeframes; its token and account ID stay in the local .env. Kraken supports crypto 5m, 15m, 30m, 1h, 4h, daily and weekly; monthly crypto stays on Twelve Data. Changing the venue starts a new alert baseline. Intraday timeframes are optional; 5m, 15m and 30m require Kraken or CSV.'));
+ field.append(node('p','Colmex uses exact broker symbols (including #), exchange Colmex-MT4, and 1h, 4h or daily UTC candles. Use a dedicated primary provider without TradingView mapping.'));
  field.append(button('Save asset',()=>mutate({action:'save',asset:{id:asset.id,market:asset.market,provider:provider.value,enabled:enabled.checked,scan_strategies:Object.keys(strategies).filter(key=>strategies[key].checked),timeframes:assetFrames.filter(f=>selected[f].checked),feed_confirmed:confirmed.checked,timeframe_providers:Object.fromEntries(assetFrames.filter(f=>sources[f].value).map(f=>[f,sources[f].value])),...Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value.trim()]))}})),button('Disable',()=>mutate({action:'save',asset:{...asset,enabled:false}})),button('Remove asset',()=>mutate({action:'remove',ticker:asset.id})));row.append(field);groups.get(marketCategory(asset)).append(row);
  }
 }

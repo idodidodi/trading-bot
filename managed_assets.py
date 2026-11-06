@@ -8,10 +8,10 @@ DEFAULTS = ['monthly', 'weekly', 'daily', '4h']
 LOWER_TIMEFRAMES = ('5m', '15m', '30m')
 SUPPORTED_TIMEFRAMES = DEFAULTS + ['1h', *LOWER_TIMEFRAMES]
 LIMIT = 100
-PROVIDERS = ('csv', 'twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca', 'fmp', 'yahoo')
+PROVIDERS = ('csv', 'twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca', 'fmp', 'yahoo', 'colmex')
 SCAN_STRATEGIES = ['rsi', 'pin-bars', 'rsi-pb']
 SUPPORTED_SCAN_STRATEGIES = SCAN_STRATEGIES + ['bb-pin-bars']
-TOKEN = re.compile(r'[A-Za-z0-9_^=:.!/\-]{1,100}')
+TOKEN = re.compile(r'[A-Za-z0-9#_^=:.!/\-]{1,100}')
 
 
 def initialize(db):
@@ -75,7 +75,7 @@ def validate_asset(asset):
     if not isinstance(asset, dict) or not isinstance(asset.get('id'),str) or not TOKEN.fullmatch(asset['id']):
         raise ValueError('Invalid ticker')
     if asset.get('provider') not in PROVIDERS:
-        raise ValueError('Select CSV, Twelve Data, Kraken, OANDA, Tiingo, Alpaca, FMP or Yahoo')
+        raise ValueError('Select CSV, Twelve Data, Kraken, OANDA, Tiingo, Alpaca, FMP, Yahoo or Colmex')
     if type(asset.get('enabled')) is not bool:
         raise ValueError('Invalid enabled state')
     if 'market' in asset and asset['market'] not in (None, 'stock', 'stocks', 'equity', 'equities', 'etf', 'forex', 'crypto', 'index', 'indices', 'commodity', 'commodities', 'futures'):
@@ -93,8 +93,10 @@ def validate_asset(asset):
     if asset.get('tradingview_symbol') and ':' not in asset['tradingview_symbol']:
         raise ValueError('TradingView symbol must include its exchange, e.g. NASDAQ:NVDA')
     overrides = asset.get('timeframe_providers', {})
-    if not isinstance(overrides, dict) or any(f not in SUPPORTED_TIMEFRAMES or p not in ('twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca', 'fmp', 'yahoo') for f, p in overrides.items()):
+    if not isinstance(overrides, dict) or any(f not in SUPPORTED_TIMEFRAMES or p not in ('twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca', 'fmp', 'yahoo', 'colmex') for f, p in overrides.items()):
         raise ValueError('Invalid timeframe providers')
+    if (asset['provider'] == 'colmex' and any(p != 'colmex' for p in overrides.values())) or (asset['provider'] != 'colmex' and 'colmex' in overrides.values()):
+        raise ValueError('Use Colmex as a dedicated primary provider with its exact broker symbol')
     if overrides and asset['provider'] == 'csv':
         raise ValueError('Timeframe provider overrides require an API feed')
     if asset['provider'] in ('kraken', 'oanda', 'tiingo') and 'twelvedata' in overrides.values():
@@ -119,6 +121,10 @@ def validate_asset(asset):
             if asset['provider'] == 'oanda' and asset.get('exchange') != 'OANDA':
                 raise ValueError('Select OANDA as the provider exchange')
             validate_oanda(feed, frame)
+
+        if feed['provider'] == 'colmex' and asset['enabled']:
+            from colmex_feed import validate_feed as validate_colmex
+            validate_colmex(feed, frame)
 
         if feed['provider'] == 'yahoo' and asset['enabled']:
             from yahoo_feed import validate_feed as validate_yahoo
