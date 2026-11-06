@@ -325,7 +325,7 @@ async function openAssetSetup(ticker='',existingId=null){
     const categories=node('fieldset');categories.className='library-categories';categories.append(node('legend','Asset category'));
     const categoryButtons=[];
     for(const [value,title,subtitle] of [['stock','Stock / ETF','US-listed'],['crypto','Crypto','Spot pairs'],['forex','Forex','Currency pairs'],['other','Other','Indices, futures & commodities']]){
-     const choice=button('',()=>{category=value;categoryChosen=true;instrument='';other.value='';refreshCategory();showSuggestions();});choice.append(node('strong',title),node('small',subtitle));choice.setAttribute('aria-label',title);choice.dataset.category=value;categories.append(choice);categoryButtons.push(choice);controls.push(choice);
+     const choice=button('',()=>{category=value;categoryChosen=true;instrument='';other.value='';refreshCategory();symbolInput.focus?.();symbolInput.select?.();showSuggestions();});choice.onmousedown=event=>event.preventDefault();choice.append(node('strong',title),node('small',subtitle));choice.setAttribute('aria-label',title);choice.dataset.category=value;categories.append(choice);categoryButtons.push(choice);controls.push(choice);
     }
     form.append(categories);
     const label=node('label','Search assets to add');label.className='library-input-label';symbolInput=node('input');symbolInput.value=symbol;symbolInput.placeholder='Type a symbol or name…';symbolInput.maxLength=100;symbolInput.required=true;symbolInput.autocomplete='off';symbolInput.setAttribute('aria-label','Asset symbol');symbolInput.setAttribute('role','combobox');symbolInput.setAttribute('aria-autocomplete','list');symbolInput.setAttribute('aria-controls','asset-suggestions');symbolInput.setAttribute('aria-expanded','false');label.append(symbolInput);
@@ -345,7 +345,7 @@ async function openAssetSetup(ticker='',existingId=null){
     }
     function refreshCategory(){for(const choice of categoryButtons)choice.setAttribute('aria-pressed',String(choice.dataset.category===category));hint.textContent=category?'Suggestions stay within this category. Data availability is checked after saving.':'Search all categories, or choose one to narrow the list.';error.textContent='';}
     symbolInput.oninput=()=>{symbol=symbolInput.value.trim();instrument='';other.value='';if(!categoryChosen)category=inferredAssetCategory(symbol);refreshCategory();showSuggestions();};
-    symbolInput.onfocus=showSuggestions;symbolInput.onblur=event=>{if(!suggestions.contains(event.relatedTarget))closeSuggestions();};
+    symbolInput.onfocus=showSuggestions;symbolInput.onblur=event=>{if(!suggestions.contains(event.relatedTarget)&&!categories.contains(event.relatedTarget))closeSuggestions();};
     symbolInput.onkeydown=event=>{
      if(event.key==='Escape'&&!suggestions.hidden){event.preventDefault();event.stopPropagation();closeSuggestions();return;}
      if(event.key==='ArrowDown'||event.key==='ArrowUp'){
