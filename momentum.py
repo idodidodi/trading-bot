@@ -10,8 +10,7 @@ from zoneinfo import ZoneInfo
 
 VERSION = 'momentum-v1'
 RULES = dict(fast=20, slow=50, breakout=20, roc=10, min_roc_pct=2,
-             min_efficiency=.35, max_extension_atr=2, entry_tolerance_atr=.5,
-             stop_atr=1.5, target_r=2, max_hold=10, cost_bps=10)
+             min_efficiency=.35, max_extension_atr=2, )
 MIN_HISTORY = 80
 from stock_policy import MIN_PRICE, scan_day
 RULES['min_stock_price'] = MIN_PRICE
@@ -60,55 +59,13 @@ def candidate(bars, symbol, market, index=None, indicators=None):
         if not 0<=extension<=RULES['max_extension_atr']:continue
         # Yesterday must be the first break, preventing repeated continuation alerts.
         if direction*(bars[i-2].close-level)>0:continue
-        stop=b.close-direction*RULES['stop_atr']*a
-        target=b.close+direction*RULES['stop_atr']*a*RULES['target_r']
-        if min(stop,target)<=0:continue
         return dict(strategy='momentum',version=VERSION,symbol=symbol,market=market,timeframe='daily',
                     direction='buy' if direction==1 else 'sell',confirmed_at=b.end,
-                    entry=b.close,entry_min=b.close-.5*a,entry_max=b.close+.5*a,
-                    stop=stop,target=target,atr=a,breakout_level=level,roc_pct=roc,
+                    price2=b.close,atr=a,breakout_level=level,roc_pct=roc,
                     efficiency=efficiency,extension_atr=extension,
                     score=round(abs(roc)/(a/b.close*100)*efficiency,6),rules=dict(RULES),
-                    explanation='Breakout held for two closed daily candles; EMA trend, directional return and efficiency confirmed. Enter only within the entry range; expire after the next session. Sell means a short candidate, requiring an eligible account/instrument.')
+                    explanation='Breakout held for two closed daily candles; EMA trend, directional return and efficiency confirmed.')
     return None
-
-
-def outcome(signal, bars):
-    rules=signal.get('rules',RULES)
-    def opened_at(bar):
-        if signal['market']!='stock':return bar.start
-        local=datetime.fromtimestamp(bar.start/1000,ZoneInfo('America/New_York'))
-        return int(local.replace(hour=9,minute=30,second=0,microsecond=0).timestamp()*1000)
-    baseline=max(signal['confirmed_at'],signal.get('published_at',0))
-    following=[b for b in bars if opened_at(b)>=baseline]
-    if not following:return dict(status='awaiting entry')
-    first=following[0];entry=first.open
-    if signal.get('entry_open_at') and opened_at(first)!=signal['entry_open_at']:
-        return dict(status='unavailable',reason='Entry-session candle missing; no later entry substituted')
-    if opened_at(first)-baseline>(5 if signal['market']=='stock' else 2)*86400000:
-        return dict(status='unavailable',reason='Entry-session history missing; no later entry substituted')
-    if not signal['entry_min']<=entry<=signal['entry_max']:
-        return dict(status='skipped gap',entry_at=opened_at(first))
-    d=1 if signal['direction']=='buy' else -1
-    # Preserve quoted stop/target; next-open entry must still offer at least 1.5R.
-    risk=d*(entry-signal['stop']);reward=d*(signal['target']-entry)
-    if risk<=0 or reward/risk<1.5:return dict(status='skipped reward/risk')
-    adverse=favorable=0
-    for n,b in enumerate(following[:rules['max_hold']],1):
-        adverse=max(adverse,max(0,d*(entry-(b.low if d==1 else b.high)))/entry*100)
-        favorable=max(favorable,max(0,d*((b.high if d==1 else b.low)-entry))/entry*100)
-        # Stop first if both levels are touched; opening gaps execute at the open.
-        stop_hit=b.low<=signal['stop'] if d==1 else b.high>=signal['stop']
-        target_hit=b.high>=signal['target'] if d==1 else b.low<=signal['target']
-        if stop_hit:
-            exit_price=min(b.open,signal['stop']) if d==1 else max(b.open,signal['stop']);status='stop'
-        elif target_hit:exit_price=signal['target'];status='target'
-        elif n==rules['max_hold']:exit_price=b.close;status='time exit'
-        else:continue
-        return dict(status=status,entry_at=opened_at(first),entry_price=entry,exit_at=b.end,
-                    exit_price=exit_price,net_pct=d*(exit_price/entry-1)*100-2*rules['cost_bps']/100,
-                    adverse_pct=adverse,favorable_pct=favorable)
-    return dict(status='open',entry_at=opened_at(first),entry_price=entry,adverse_pct=adverse,favorable_pct=favorable)
 
 
 def replay(histories):
@@ -122,13 +79,9 @@ def replay(histories):
     selected=[]
     for key,candidates in sorted(by_close.items()):
         s=sorted(candidates,key=lambda s:(-s['score'],s['symbol']))[0]
-        selected.append(s|dict(outcome=outcome(s,histories[(s['market'],s['symbol'])])))
-    closed=[s['outcome']['net_pct'] for s in selected if 'net_pct' in s['outcome']]
+        selected.append(s)
     return dict(strategy='momentum',version=VERSION,generated_at=int(time.time()*1000),signals=selected[-500:],
-                metrics=dict(candidates=len(selected),closed_trades=len(closed),wins=sum(x>0 for x in closed),
-                             win_rate_pct=sum(x>0 for x in closed)/len(closed)*100 if closed else None,
-                             average_net_pct=sum(closed)/len(closed) if closed else None),
-                note='Daily cross-sectional ranking; next-session open entries; gaps outside entry range skipped; stop first when both touched; 10 sessions maximum; 10 bps per side. Independent trade returns, not portfolio returns. Current stock universe and current crypto selection introduce survivorship/selection bias. No short borrow, funding or liquidity model. Recent replay is diagnostic, not an out-of-sample validation.')
+                metrics=dict(candidates=len(selected)),note='Signal detection replay. Trade simulations belong to trading-executor.')
 
 
 def initialize(db):
@@ -148,19 +101,6 @@ def session(now):
 def same_confirmation(pick, previous):
     """A version hash change must not make an already-issued candle look new."""
     return bool(pick and any(s and (s.get('symbol'),s.get('confirmed_at'))==(pick['symbol'],pick['confirmed_at']) for s in previous))
-
-
-def entry_session(market, now):
-    zone=ZoneInfo('America/New_York' if market=='stock' else 'UTC')
-    local=datetime.fromtimestamp(now/1000,zone)
-    opening=local.replace(hour=9 if market=='stock' else 0,minute=30 if market=='stock' else 0,second=0,microsecond=0)
-    if opening<local:opening+=timedelta(days=1)
-    if market=='stock':
-        from market_calendar import stock_trading_day,stock_close
-        while not stock_trading_day(opening.date()):opening+=timedelta(days=1)
-        closing=stock_close(opening.date())
-    else:closing=opening+timedelta(days=1)
-    return dict(entry_open_at=int(opening.timestamp()*1000),expires_at=int(closing.timestamp()*1000))
 
 
 def seconds_to_scan(store):
@@ -264,7 +204,7 @@ def scan(store, config, now=None, stop=None, force=False):
         repeated=same_confirmation(pick,old)
         # A retry can fill a missing market but never rewrite an already issued pick.
         issued=prior.get('picks',{}).get(market) if prior else None
-        picks[market]=issued or (None if repeated else pick|dict(published_at=now)|entry_session(market,now) if pick else None)
+        picks[market]=issued or (None if repeated else pick|dict(published_at=now) if pick else None)
         results.append(dict(market=market,status='signal' if picks[market] else 'already published' if repeated else 'no qualifying setup' if any(k[0]==market for k in histories) else 'weekday only' if market=='stock' and not stock_enabled else 'no eligible stocks' if market=='stock' and any(c['market']=='stock' and c['status']=='scanned' for c in coverage) else 'unavailable',candidates=len(candidates)))
     payload=dict(strategy='momentum',version=VERSION,day=day,scanned_at=now,picks=picks,results=results,coverage=coverage,
                  status='partial' if not crypto or any(c['status']=='unavailable' for c in coverage) else 'completed')
@@ -279,6 +219,9 @@ def scan(store, config, now=None, stop=None, force=False):
         db.executemany('INSERT INTO momentum_history VALUES(%s,%s,%s) ON CONFLICT(market,symbol) DO UPDATE SET payload=excluded.payload',
             ((market,symbol,json.dumps([vars(b) for b in bars])) for (market,symbol),bars in histories.items()))
         db.execute('INSERT INTO momentum_runs VALUES(%s,%s) ON CONFLICT(day) DO UPDATE SET payload=excluded.payload',(day,json.dumps(payload)))
+        from signal_service import publish
+        for pick in picks.values():
+            if pick:publish(db,'momentum',pick)
         db.execute('INSERT INTO momentum_reports(created,payload) VALUES(%s,%s)',(now,json.dumps(report)))
     store.log('Momentum daily scan',json.dumps(dict(day=day,status=payload['status'],results=results)))
     return payload
@@ -297,19 +240,8 @@ def view(store, source='live', limit=30):
         rows=[json.loads(r[0]) for r in db.execute(query+' LIMIT %s',(limit,))] if limit else [json.loads(r[0]) for r in db.execute(query)]
         latest=rows[0] if rows else None
         histories={(m,s):json.loads(raw) for m,s,raw in db.execute('SELECT * FROM momentum_history')}
-    from scanner import Candle
-    signals=[]
-    for row in rows:
-        for s in row['picks'].values():
-            if s:
-                if s.get('published_at') and not s.get('entry_open_at'):
-                    s=s|entry_session(s['market'],s['published_at'])
-                bars=[Candle(**b) for b in histories.get((s['market'],s['symbol']),[])]
-                signals.append(s|dict(outcome=outcome(s,bars),published_day=row['day']))
-    from paper_trading import view as paper_view, identity as paper_identity
-    paper=paper_view(store);executions={r['id']:r for r in paper['trades']}
-    for s in signals:s['paper']=executions.get(paper_identity(s))
-    return dict(latest=latest,signals=signals,paper=paper,note='At most one new stock and one crypto candidate per daily scan. No qualifying setup and unavailable coverage are reported explicitly. Entry expires after the next session; shown levels are research candidates.')
+    signals=[s|dict(published_day=row['day']) for row in rows for s in row['picks'].values() if s]
+    return dict(latest=latest,signals=signals,note='Daily signal candidates; execution policy and outcomes are owned by trading-executor.')
 
 
 if __name__=='__main__':

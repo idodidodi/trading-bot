@@ -1,0 +1,16 @@
+# Separate API process. Does not start a scanner or Telegram poller.
+[Unit]
+Description=Signal subscription API
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/ABSOLUTE/SIGNAL/INSTALLATION
+EnvironmentFile=/ABSOLUTE/PRIVATE/signal-api.env
+ExecStart=/ABSOLUTE/SIGNAL/INSTALLATION/.venv/bin/python signal_service.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

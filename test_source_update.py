@@ -56,7 +56,7 @@ class SourceTests(unittest.TestCase):
             self.assertEqual(update.source_manifest(root)['version'],'8.2.0')
 
     def test_archive_hashes_and_unsafe_members_are_rejected(self):
-        policy=b'{"format":1,"runtime":"postgres-source-v1"}'
+        policy=b'{"format":1,"runtime":"signal-service-v2"}'
         files={'source-update-policy.json':policy,'scanner.py':b'pass\n'}
         tree=[dict(path=k,sha=update.blob_hash(v),type='blob',mode='100644') for k,v in files.items()]
         with tempfile.TemporaryDirectory() as d:

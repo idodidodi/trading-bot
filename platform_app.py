@@ -179,6 +179,8 @@ class Store:
                 db.execute('INSERT INTO catchup_findings VALUES(%s,%s) ON CONFLICT DO NOTHING',(catchup_id,key))
             inserted = result.rowcount == 1
             if inserted:
+                from signal_service import publish
+                publish(db, 'rsi', payload, origin='replay' if catchup_id or delivery_status in ('baseline','summarized') else 'live')
                 from postgres_store import remember_finding
                 remember_finding(db, 'live', payload)
             if inserted:
@@ -661,9 +663,6 @@ def main():
     from market_summary import worker as summary_worker
     summary_thread = threading.Thread(target=resilient_worker(summary_worker, 'summary'), args=(store, stop), name='market-summary', daemon=True)
     summary_thread.start()
-    from paper_trading import worker as paper_worker
-    paper_thread = threading.Thread(target=resilient_worker(paper_worker, 'paper'), args=(store, stop), daemon=True)
-    paper_thread.start()
     from backtest_jobs import worker as replay_worker
     replay_thread = threading.Thread(target=resilient_worker(replay_worker, 'replay'),args=(store,stop),daemon=True)
     replay_thread.start()

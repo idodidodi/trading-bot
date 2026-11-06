@@ -1,3 +1,7 @@
+# Signal service architecture
+
+This project detects and publishes versioned market signals and owns Telegram delivery. Broker execution, paper/demo accounts and trade simulations live in the independent [trading executor](projects/trading-executor/README.md). See [the API contract](SIGNAL_API.md), [manual cutover](SIGNAL_SERVICE_MIGRATION.md), and [canonical Telegram behavior](TELEGRAM_ALERT_LOGIC.md). Existing installation instructions below are historical where they describe paper trading.
+
 # Family Trading Bot
 
 The Linux worker and authenticated dashboard share one authoritative Postgres database. Candles, strategies, configuration, findings, feedback, request budgets and delivery history persist in Postgres. There is no SQLite runtime or mirror synchronization.

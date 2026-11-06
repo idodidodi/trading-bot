@@ -1,0 +1,16 @@
+# Install only after the separately approved cutover; disabled env by default.
+[Unit]
+Description=Independent signal trading subscriber
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/ABSOLUTE/EXECUTOR/INSTALLATION
+EnvironmentFile=/ABSOLUTE/PRIVATE/executor.env
+ExecStart=/ABSOLUTE/EXECUTOR/INSTALLATION/.venv/bin/python runner.py --database /ABSOLUTE/PRIVATE/execution.sqlite3
+Restart=on-failure
+RestartSec=15
+UMask=0077
+
+[Install]
+WantedBy=default.target

@@ -1,4 +1,5 @@
-from test_postgres_support import TestStore as Store, PostgresTestCase
+from runtime_store import Store
+from unittest import TestCase as PostgresTestCase
 import json
 import tempfile
 import unittest

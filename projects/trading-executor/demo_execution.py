@@ -186,7 +186,7 @@ class Broker(BybitDemo):
 
 
 def save(store, trade, state, **values):
-    from source_update import activity_connection
+    from runtime_store import activity_connection
     if state=='closing':trade['close_requested']=True
     trade.update(values, state=state, updated_at=int(time.time()*1000))
     with activity_connection(store) as db:
@@ -195,62 +195,30 @@ def save(store, trade, state, **values):
 
 
 def opposing_divergence(store, trade, now):
-    """Consume the sole scanner's live RSI findings on the original source/frame."""
     original=trade['root'] if trade['strategy']=='chase-4h-5m' else trade['signal']
     source=original['symbol'] if trade['strategy']=='chase-4h-5m' else original['source']
     direction='bearish' if trade['side']=='Buy' else 'bullish'
-    with store.connect() as db:
-        row=db.execute("""SELECT payload FROM signals
-            WHERE payload::jsonb->>'symbol'=%s AND payload::jsonb->>'timeframe'=%s
-            AND payload::jsonb->>'direction'=%s AND payload::jsonb->>'signal_status'='provisional'
-            AND (payload::jsonb->>'confirmed_at')::bigint>%s
-            AND (payload::jsonb->>'confirmed_at')::bigint<=%s
-            AND status NOT IN ('summarized','baseline')
-            ORDER BY (payload::jsonb->>'confirmed_at')::bigint,id LIMIT 1""",
-            (source,original['timeframe'],direction,trade['entry_terminal_at'],now)).fetchone()
-    if row:return json.loads(row[0])
-    # RSI+PB-only assets still populate the sole scanner's closed-candle cache.
-    # Evaluate RSI evidence there without another scanner or provider request.
-    with store.connect() as db:
-        rows=db.execute('SELECT start,"end",open,high,low,close FROM candle_cache WHERE feed=%s AND timeframe=%s AND "end"<=%s ORDER BY start DESC LIMIT 720',
-                        (source,original['timeframe'],now)).fetchall()
-    if not rows:return None
-    from scanner import Candle, check_candles
-    from shared_kraken import detect
-    rules=original.get('rules',{})
-    if trade['strategy']=='rsi-pb':rules=rules.get('rsi',{})
-    if not rules:return None
-    findings=detect(check_candles([Candle(*r) for r in reversed(rows)],now),rules,source,original['timeframe'],now)
-    eligible=[s for s in findings if s['direction']==direction
-              and trade['entry_terminal_at']<s['confirmed_at']<=now]
-    return min(eligible,key=lambda s:s['confirmed_at']) if eligible else None
+    candidates=[e['evidence'] for e in store.events() if e['strategy']=='rsi'
+        and e['kind']!='invalidated' and e['origin']=='live' and e['delivery_mode']=='live'
+        and e['instrument']['source']==source and e['timeframe']==original['timeframe']
+        and e['direction']==direction and e['evidence'].get('signal_status')=='provisional'
+        and trade['entry_terminal_at']<e['occurred_at']<=now]
+    return min(candidates,key=lambda s:s['confirmed_at']) if candidates else None
 
 
 def divergence_close(store, trade, signal, now):
-    """Persist close intent and opted-in Live positions alerts before the broker write."""
-    from source_update import activity_connection
-    from chasing_runtime import enqueue
     trade.update(state='closing',close_requested=True,updated_at=now,exit_reason='opposite_divergence',
                  exit_divergence=signal,reason='Opposing RSI divergence on original timeframe')
-    with activity_connection(store) as db:
+    original=trade['root'] if trade['strategy']=='chase-4h-5m' else trade['signal']
+    notice=dict(id=trade['id']+':exit',kind='demo_exit',at=now,root=original,signal=signal,symbol=trade['symbol'])
+    with store.connect() as db:
         db.execute('UPDATE demo_execution_trades SET state=%s,payload=%s,updated_at=%s WHERE id=%s',
                    ('closing',json.dumps(trade),now,trade['id']))
-        recipients=db.execute('SELECT bot_runtime.chasing_recipients()').fetchone()[0]
-        installation=db.execute('SELECT installation FROM runtime_control WHERE id=1').fetchone()[0]
-        original=trade['root'] if trade['strategy']=='chase-4h-5m' else trade['signal']
-        root=original|dict(symbol=signal['symbol'])
-        for person in recipients:
-            if not person.get('live_positions') or not person['routes'].get('live_positions'):continue
-            key=hashlib.sha256((trade['id']+':exit:'+str(person['user_id'])).encode()).hexdigest()[:32]
-            state=dict(id=key,user=str(person['user_id']),root=root,status='demo_exit',next_due=None)
-            db.execute('INSERT INTO chasing_sessions VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING',
-                       (key,installation,person['user_id'],json.dumps(state)))
-            enqueue(db,state,dict(kind='demo_exit',at=now,session=key,destination='live_positions',
-                                 signal=signal,symbol=trade['symbol']))
+        db.execute('INSERT OR IGNORE INTO notifications(id,payload) VALUES(?,?)',(notice['id'],json.dumps(notice)))
 
 
 def reconcile(store, broker, trade, now):
-    from postgres_store import assert_worker
+    from runtime_store import assert_worker
     order = broker.order(trade)
     if not order:
         # Absence is inconclusive, including after a crash before submission.
@@ -315,131 +283,58 @@ def reconcile(store, broker, trade, now):
     broker.protect(trade,levels)
 
 
-def candidates(db, policy, now):
-    config=policy['config'];since=max(policy['activated_at'],now-config['max_signal_age_ms'])
-    # Only live PB notifications qualify; historical/catch-up rows lack this join.
-    rows=db.execute("""SELECT r.id,r.payload FROM rsi_pb_signals r
-        JOIN notification_queue n ON n.id='rsi-pb:'||r.id
-        WHERE r.confirmed_at >= %s ORDER BY r.confirmed_at,r.id""",(since,)).fetchall()
+def candidates(store, policy, now):
     items=[]
-    for key,raw in rows:
-        signal=json.loads(raw)
-        if signal.get('market')!='crypto':continue
-        candidate=intent('rsi-pb',signal,signal['symbol'],key,config,policy['activated_at'],now)
-        if candidate:items.append(candidate)
-    rows=db.execute("""SELECT o.id,o.event,s.state FROM chasing_outbox o
-        JOIN chasing_sessions s ON s.id=o.session_id
-        WHERE o.event->>'kind'='chase' AND o.event->>'destination'='crypto_auto_chase'
-        AND o.event->'signal'->>'timeframe'='5m'
-        AND (o.event->'signal'->>'confirmed_at')::bigint >= %s
-        ORDER BY o.event->>'at',o.id""",(since,)).fetchall()
-    for key,event,session in rows:
-        candidate=intent('chase-4h-5m',event['signal'],session.get('asset_key'),key,config,
-                         policy['activated_at'],now,root=session['root'])
-        if candidate:items.append(candidate)
+    for strategy in policy['config']['strategies']:
+        for event in store.signals(strategy,now):
+            signal=event['evidence'];asset=event['instrument']['symbol']
+            candidate=intent(strategy,signal,asset,event['event_id'],policy['config'],policy['activated_at'],now,root=signal.get('root'))
+            if candidate:
+                candidate.update(signal_id=event['signal_id'],event_id=event['event_id'])
+                items.append(candidate)
     return sorted(items,key=lambda t:(t['signal']['confirmed_at'],t['id']))
 
 
-def selected(trade, asset):
-    from managed_assets import for_timeframe, SCAN_STRATEGIES
-    if asset.get('market')!='crypto' or not asset.get('enabled'):
-        return False
-    original=trade['signal'] if trade['strategy']=='rsi-pb' else trade['root']
-    strategy='rsi-pb' if trade['strategy']=='rsi-pb' else 'rsi'
-    if strategy not in asset.get('scan_strategies',SCAN_STRATEGIES):return False
-    if original['timeframe'] not in asset.get('timeframes',[]):return False
-    feed=for_timeframe(asset,original['timeframe'])
-    expected=f"{feed['provider']}:{feed.get('exchange') or 'configured'}:{feed.get('symbol') or feed['id']}"
-    actual=original.get('source') if strategy=='rsi-pb' else original.get('symbol')
-    if actual!=expected:return False
-    if strategy=='rsi-pb':
-        from rsi_pb import load_rules
-        if original.get('version')!=load_rules()['version']:return False
-    return True
-
-
-def _cycle(store, broker=None, now=None):
-    from postgres_store import assert_worker
-    from source_update import activity_connection
-    now=now or int(time.time()*1000)
-    with store.connect() as db:
-        if not db.execute("SELECT to_regclass('bot_runtime.demo_execution_policy')").fetchone()[0]:return
-        row=db.execute('SELECT revision,enabled,activated_at,config FROM demo_execution_policy WHERE id=1').fetchone()
-        if not row:return
-        policy=dict(zip(('revision','enabled','activated_at','config'),row))
-        active=[r[0] for r in db.execute("SELECT payload FROM demo_execution_trades WHERE state NOT IN ('closed','unfilled','skipped') ORDER BY id")]
-    if not policy['enabled'] and not active:return
-    assert_worker(store)
-    policy_valid(policy['config'])
-    broker=broker or Broker(os.environ['family_trading_bot_bybit_demo_api_key'],os.environ['family_trading_bot_bybit_demo_api_secret'])
-    for trade in active:
-        reconcile(store,broker,trade,now)
-    with activity_connection(store) as db:
-        unresolved=db.execute("SELECT 1 FROM demo_execution_trades WHERE state NOT IN ('closed','unfilled','skipped','protected') LIMIT 1").fetchone()
-        if unresolved or not policy['enabled']:
-            db.execute('UPDATE demo_execution_policy SET status=%s WHERE id=1',
-                (json.dumps(dict(checked_at=now,blocked=bool(unresolved),entries_enabled=policy['enabled'])),))
-            return
-        fresh=candidates(db,policy,now)
-        managed=db.execute('SELECT payload FROM managed_config WHERE id=1').fetchone()
-        assets={a['id']:a for a in json.loads(managed[0]).get('assets',[])} if managed else {}
-    count=0
-    for trade in fresh:
-        asset=assets.get(trade['asset'],{})
-        if not selected(trade,asset):continue
-        with store.connect() as db:
-            if db.execute('SELECT 1 FROM demo_execution_trades WHERE id=%s',(trade['id'],)).fetchone():continue
-        try:
-            instrument=broker.instrument(trade['symbol'])
-            account=broker.account()
-            positions=broker.positions()
-            # Empty symbols can still report configured hedge mode.
-            positions+=broker.positions(trade['symbol']) if not any(p['symbol']==trade['symbol'] for p in positions) else []
-            orders=broker.orders()
-            ticker=broker.ticker(trade['symbol'])  # fetch last, immediately before sizing
-            trade['plan']=plan(trade,account,instrument,ticker,positions,orders)
-        except ValueError:
-            trade.update(state='skipped',reason='Instrument, exposure, collateral or sizing check failed')
-        else:
-            trade.update(state='submitting')
-        if int(time.time()*1000)-trade['signal']['confirmed_at'] > policy['config']['max_signal_age_ms']:
-            continue
-        with activity_connection(store) as db:
-            current=db.execute('SELECT revision,enabled FROM demo_execution_policy WHERE id=1 FOR UPDATE').fetchone()
-            if current!=(policy['revision'],True):return
-            current_assets=db.execute('SELECT payload FROM managed_config WHERE id=1').fetchone()
-            current_asset=next((a for a in json.loads(current_assets[0])['assets'] if a['id']==trade['asset']),{}) if current_assets else {}
-            if current_asset!=asset:return
-            if db.execute("SELECT 1 FROM demo_execution_trades WHERE state NOT IN ('closed','unfilled','skipped','protected') LIMIT 1").fetchone():return
-            inserted=db.execute('INSERT INTO demo_execution_trades VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING id',
-                (trade['id'],trade['state'],json.dumps(trade),now)).fetchone()
-        if not inserted:continue
-        if trade['state']=='skipped':continue
-        # Committed durable reservation exists before the first order side effect.
-        assert_worker(store)
-        broker.entry(trade)
-        save(store,trade,'submitted')
-        count+=1
-        break  # reconcile the fill and protection before another entry
-    with store.connect() as db:
-        db.execute('UPDATE demo_execution_policy SET status=%s WHERE id=1',
-                   (json.dumps(dict(checked_at=now,submitted=count,eligible=len(fresh))),))
-
-
 def cycle(store, broker=None, now=None):
+    from runtime_store import assert_worker
     if not _lock.acquire(blocking=False):return
     try:
-        return _cycle(store,broker,now)
-    finally:
-        _lock.release()
+        assert_worker(store)
+        now=int(time.time()*1000) if now is None else now
+        with store.connect() as db:
+            row=db.execute('SELECT revision,enabled,activated_at,config FROM demo_execution_policy WHERE id=1').fetchone()
+            if not row:return
+            policy=dict(zip(('revision','enabled','activated_at','config'),row));policy['config']=json.loads(policy['config'])
+            active=[json.loads(r[0]) for r in db.execute("SELECT payload FROM demo_execution_trades WHERE state NOT IN ('closed','unfilled','skipped') ORDER BY id")]
+        policy_valid(policy['config'])
+        broker=broker or Broker(os.environ['family_trading_bot_bybit_demo_api_key'],os.environ['family_trading_bot_bybit_demo_api_secret'])
+        for trade in active:reconcile(store,broker,trade,now)
+        with store.connect() as db:
+            unresolved=db.execute("SELECT 1 FROM demo_execution_trades WHERE state NOT IN ('closed','unfilled','skipped','protected') LIMIT 1").fetchone()
+        if unresolved or not policy['enabled']:return
+        for trade in candidates(store,policy,now):
+            with store.connect() as db:
+                if db.execute('SELECT 1 FROM demo_execution_trades WHERE id=?',(trade['id'],)).fetchone():continue
+            try:
+                instrument=broker.instrument(trade['symbol']);account=broker.account();positions=broker.positions()
+                positions+=broker.positions(trade['symbol']) if not any(p['symbol']==trade['symbol'] for p in positions) else []
+                trade['plan']=plan(trade,account,instrument,broker.ticker(trade['symbol']),positions,broker.orders())
+            except ValueError:
+                trade.update(state='skipped',reason='Instrument, exposure, collateral or sizing check failed')
+            else:trade.update(state='submitting')
+            if int(time.time()*1000)-trade['signal']['confirmed_at']>policy['config']['max_signal_age_ms']:continue
+            with store.connect() as db:
+                current=db.execute('SELECT revision,enabled FROM demo_execution_policy WHERE id=1').fetchone()
+                if current!=(policy['revision'],1):return
+                inserted=db.execute('INSERT OR IGNORE INTO demo_execution_trades VALUES(?,?,?,?)',
+                    (trade['id'],trade['state'],json.dumps(trade),now)).rowcount
+            if not inserted or trade['state']=='skipped':continue
+            assert_worker(store);broker.entry(trade);save(store,trade,'submitted')
+            break
+    finally:_lock.release()
 
 
 def check(store):
-    """Keep provider failures sanitized and retry reads on the next worker cycle."""
-    try:
-        cycle(store)
-    except (ExecutionError, ValueError, KeyError, TypeError, ArithmeticError, StopIteration):
-        # Reservation remains unresolved after ambiguous writes; no entry retries.
-        with store.connect() as db:
-            db.execute('UPDATE demo_execution_policy SET status=%s WHERE id=1',
-                (json.dumps(dict(checked_at=int(time.time()*1000),error='Demo check failed; new entries blocked until reconciliation')),))
+    try:cycle(store)
+    except (ExecutionError,ValueError,KeyError,TypeError,ArithmeticError,StopIteration):
+        store.log('Demo check failed','New entries blocked until reconciliation')

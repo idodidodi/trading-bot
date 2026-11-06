@@ -1,3 +1,5 @@
+> Historical pre-separation execution notes. Current execution lives in `projects/trading-executor/`; use `SIGNAL_SERVICE_MIGRATION.md` for cutover and `TELEGRAM_ALERT_LOGIC.md` for current alert behavior. Do not activate legacy policies using these instructions.
+
 # Bybit demo execution
 
 The existing paper-execution worker also reads fresh crypto signals for Bybit's

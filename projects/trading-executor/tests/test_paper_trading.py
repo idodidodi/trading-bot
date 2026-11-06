@@ -1,4 +1,5 @@
-from test_postgres_support import TestStore as Store, PostgresTestCase
+from runtime_store import Store
+from unittest import TestCase as PostgresTestCase
 import json
 import os
 import tempfile
@@ -48,10 +49,13 @@ class FakeBroker:
 class PaperTests(PostgresTestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.store=Store(Path(self.tmp.name)/'test.sqlite3')
-        self.env=patch.dict(os.environ,TRADING_BOT_ENV='prod',PAPER_TRADING_ENABLED='true',PAPER_RISK_PCT='1',PAPER_MAX_NOTIONAL='10000');self.env.start()
+        self.store.acquire_worker()
+        with self.store.connect() as db:db.execute('UPDATE control SET enabled=1,reconciled=1')
+        self.env=patch.dict(os.environ,EXECUTION_ENABLED='true',TRADING_BOT_ENV='prod',PAPER_TRADING_ENABLED='true',PAPER_RISK_PCT='1',PAPER_MAX_NOTIONAL='10000');self.env.start()
         self.broker=FakeBroker();self.signals=[signal()]
-        self.source=patch('momentum.view',side_effect=lambda *a,**kw:dict(signals=self.signals));self.source.start()
-    def tearDown(self):self.source.stop();self.env.stop();self.tmp.cleanup()
+        self.source=patch.object(self.store,'signals',side_effect=lambda *a,**kw:self.signals);self.source.start()
+        self.prepare=patch('momentum_policy.prepare',side_effect=lambda e:e);self.prepare.start()
+    def tearDown(self):self.source.stop();self.prepare.stop();self.env.stop();self.store.close();self.tmp.cleanup()
     def run_tick(self,now=NOW):return p.tick(self.store,self.broker,now)['trades']
     def test_sizing_and_stock_bracket(self):
         order,size=p.plan(signal(),ACCOUNT,ASSET,QUOTE,NOW)

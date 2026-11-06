@@ -36,6 +36,7 @@ jobs:
         run: |
           python3 scripts/setup-postgres-tests.py
           python3 -m unittest discover -q
+          (cd projects/trading-executor && python3 -m unittest discover -s tests -q)
       - name: Build standalone executable
         run: bash scripts/build-linux.sh
       - name: Smoke-test frozen app and persistent settings

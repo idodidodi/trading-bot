@@ -7,10 +7,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from momentum import outcome
+from momentum_policy import outcome
 from paper_trading import initialize as initialize_paper, save
-from platform_app import ROOT, Store, load_env
-from scanner import Candle
+from runtime_store import Store
+from candles import Candle
 
 
 def exit_deadline(signal):
@@ -124,7 +124,7 @@ def acknowledge(store, record_id, kind, now=None):
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--ack',nargs=2,metavar=('RECORD_ID','KIND'));args=parser.parse_args()
-    load_env();store=Store()
+    parser=argparse.ArgumentParser();parser.add_argument('--database',required=True);parser.add_argument('--ack',nargs=2,metavar=('RECORD_ID','KIND'));args=parser.parse_args()
+    store=Store(args.database)
     result=acknowledge(store,*args.ack) if args.ack else refresh(store)
     print(json.dumps(result,indent=2))

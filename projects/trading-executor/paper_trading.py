@@ -1,10 +1,10 @@
 """Momentum execution restricted to Alpaca's simulated endpoint, with durable order IDs."""
-from postgres_store import RETRYABLE, DatabaseError
+from runtime_store import RETRYABLE, DatabaseError
 import hashlib
 import json
 import math
 import os
-from postgres_store import DatabaseError, OperationalError
+from runtime_store import DatabaseError, OperationalError
 import sys
 import time
 import urllib.error
@@ -15,7 +15,7 @@ from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from local_settings import paper_trading_enabled
+from runtime_store import paper_trading_enabled
 
 PAPER_HOST = 'https://paper-api.alpaca.markets'
 DATA_HOST = 'https://data.alpaca.markets'
@@ -36,7 +36,7 @@ class AlpacaPaper:
 
     def request(self, path, method='GET', body=None, data=False):
         if method != 'GET':
-            from postgres_store import assert_worker
+            from runtime_store import assert_worker
             assert_worker(self.store)
         # No configurable trading host: live endpoint cannot be selected by .env.
         if not path.startswith('/') or '://' in path:
@@ -285,12 +285,16 @@ def reconcile(store, broker, record, now):
 
 
 def tick(store, broker=None, now=None):
-    from momentum import view as signals_view
     now=int(time.time()*1000) if now is None else now
     broker=broker or AlpacaPaper(store)
     if not paper_trading_enabled(store):return view(store)
     records={r['id']:r for r in view(store)['trades']}
-    signals=signals_view(store)['signals']
+    from momentum_policy import prepare
+    signals=[prepare(e) for e in store.signals('momentum',now)]
+    eligible={identity(signal) for signal in signals}
+    for record in records.values():
+        if record['state']=='scheduled' and record['id'] not in eligible:
+            record.update(state='skipped',reason='Signal withdrawn, replayed, or predates activation');save(store,record)
     for signal in signals:
         key=identity(signal)
         if key not in records:
@@ -382,7 +386,7 @@ def tick(store, broker=None, now=None):
 
 
 def cycle(store):
-    from postgres_store import assert_worker
+    from runtime_store import assert_worker
     assert_worker(store)
     return tick(store)
 
@@ -400,37 +404,10 @@ def check_and_log(store):
     # A disabled executor or busy lock can return cached state, not a successful check.
     if result.get('enabled') and status.get('checked_at',0)>=started:
         with store.connect() as db:
-            exists=db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='activity_log'").fetchone()
-            last=db.execute("SELECT id,event,occurred FROM activity_log WHERE event IN ('Paper trading check failed','Paper trading connection recovered') ORDER BY id DESC LIMIT 1").fetchone() if exists else None
+            last=db.execute("SELECT id,event,occurred FROM activity_log WHERE event IN ('Paper trading check failed','Paper trading connection recovered') ORDER BY id DESC LIMIT 1").fetchone()
             if last and last[1]=='Paper trading check failed':
                 failed=datetime.fromtimestamp(last[2],ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y, %H:%M:%S')
                 details=f'Alpaca paper check succeeded; account {status.get("account_status","unknown")}. Previous failure: {failed} Israel time.'
                 # Persist resolution once; it survives restarts and is mirrored to the Logs UI.
                 db.execute("INSERT INTO activity_log(occurred,event,details) SELECT %s,%s,%s WHERE (SELECT id FROM activity_log WHERE event IN ('Paper trading check failed','Paper trading connection recovered') ORDER BY id DESC LIMIT 1)=%s",(time.time(),'Paper trading connection recovered',details,last[0]))
     return result
-
-
-def worker(store, stop):
-    while not stop.is_set():
-        try:
-            from demo_execution import check as demo_check
-            demo_check(store)
-            if paper_trading_enabled(store):
-                check_and_log(store)
-        except OperationalError as exc:
-            from platform_app import database_busy
-            if not database_busy(exc):
-                raise
-            print('Paper trading database busy; retrying on next check', file=sys.stderr, flush=True)
-        stop.wait(15)
-
-
-if __name__=='__main__':
-    from platform_app import ROOT, Store, load_env
-    from runtime_env import configure
-    load_env();configure(ROOT)
-    data=Path(os.environ['DATA_DIR']);data.mkdir(parents=True,exist_ok=True)
-    store=Store()
-    store.acquire_worker()
-    result=cycle(store)
-    print(json.dumps(result,indent=2))

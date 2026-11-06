@@ -6,7 +6,11 @@ import unittest
 from unittest.mock import Mock, patch
 
 import demo_execution as d
-from test_postgres_support import PostgresTestCase, TestStore
+from unittest import TestCase as PostgresTestCase
+from runtime_store import Store as TestStore
+import tempfile
+from pathlib import Path
+import os
 
 CONFIG=dict(version=1,allocation='.25',exit_distance='.01',max_signal_age_ms=300000,
             strategies=['chase-4h-5m','rsi-pb'],symbols={'NEARUSD':'NEARUSDT'})
@@ -19,9 +23,8 @@ TICKER=dict(bid1Price='10',ask1Price='10')
 
 
 def signal(now, frame='4h', **extra):
-    from rsi_pb import load_rules
     return dict(symbol='NEARUSD',timeframe=frame,direction='bullish',pivot2=now-60000,
-                confirmed_at=now,market='crypto',source='kraken:Kraken:NEAR/USD',version=load_rules()['version'],**extra)
+                confirmed_at=now,market='crypto',source='kraken:Kraken:NEAR/USD',version='rsi-pb-fixture-v1',**extra)
 
 
 def trade(now):
@@ -85,7 +88,11 @@ class PolicyTests(unittest.TestCase):
 
 class DurableTests(PostgresTestCase):
     def setUp(self):
-        self.store=TestStore();self.now=int(time.time()*1000)
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.store=TestStore(Path(self.tmp.name)/'execution.sqlite3');self.store.acquire_worker();self.addCleanup(self.store.close)
+        self.env=patch.dict(os.environ,EXECUTION_ENABLED='true');self.env.start();self.addCleanup(self.env.stop)
+        self.now=int(time.time()*1000)
+        with self.store.connect() as db:db.execute('UPDATE control SET enabled=1,reconciled=1,activated_at=?',(self.now-1000,))
         self.broker=Mock()
         self.broker.instrument.return_value=INSTRUMENT
         self.broker.account.return_value=ACCOUNT
@@ -95,16 +102,20 @@ class DurableTests(PostgresTestCase):
         self.broker.entry.return_value={'orderId':'order1'}
         with self.store.connect() as db:
             db.execute('INSERT INTO demo_execution_policy(id,revision,enabled,activated_at,config) VALUES(1,1,true,%s,%s)',(self.now-1000,json.dumps(CONFIG)))
-            db.execute('INSERT INTO managed_config VALUES(1,1,1,%s)',(json.dumps(dict(assets=[dict(id='NEARUSD',enabled=True,market='crypto',provider='kraken',symbol='NEAR/USD',timeframes=['4h'])])),))
         self.add_pb('pb1',self.now)
 
-    def add_pb(self,key,at,notify=True):
+    def add_event(self, key, value, strategy='rsi-pb', live=True, instrument='NEARUSD'):
         with self.store.connect() as db:
-            db.execute('INSERT INTO rsi_pb_signals VALUES(%s,%s,%s)',(key,at,json.dumps(signal(at))))
-            if notify:db.execute('INSERT INTO notification_queue(id,text) VALUES(%s,%s)',('rsi-pb:'+key,'signal'))
-
+            seq=db.execute('SELECT coalesce(max(cursor),0)+1 FROM inbox').fetchone()[0]
+            event=dict(contract_version=1,event_id=key,signal_id=key,cursor=seq,strategy=strategy,
+                strategy_version='fixture-v1',kind='detected',origin='live' if live else 'replay',
+                delivery_mode='live' if live else 'replay',published_at=value['confirmed_at'],
+                occurred_at=value['confirmed_at'],timeframe=value['timeframe'],direction=value['direction'],
+                instrument=dict(symbol=instrument,source=value.get('source',value['symbol']),market='crypto'),evidence=value)
+            db.execute('INSERT INTO inbox VALUES(?,?,?,?)',(key,seq,key,json.dumps(event)))
+    def add_pb(self,key,at,notify=True):self.add_event(key,signal(at),live=notify)
     def records(self):
-        with self.store.connect() as db:return [r[0] for r in db.execute('SELECT payload FROM demo_execution_trades ORDER BY id')]
+        with self.store.connect() as db:return [json.loads(r[0]) for r in db.execute('SELECT payload FROM demo_execution_trades ORDER BY id')]
 
     def test_intent_committed_before_write_and_timeout_never_resubmits(self):
         def timeout(t):
@@ -117,8 +128,6 @@ class DurableTests(PostgresTestCase):
         d.cycle(self.store,self.broker,self.now+1000)
         self.assertEqual(self.broker.entry.call_count,1)
         self.assertEqual(self.records()[0]['state'],'unknown')
-        from source_update import blockers
-        with self.store.connect() as db:self.assertIn('demo execution position or unresolved submission',blockers(db))
 
     def test_fill_verified_then_protection_and_no_duplicate_after_restart(self):
         d.cycle(self.store,self.broker,self.now)
@@ -145,7 +154,7 @@ class DurableTests(PostgresTestCase):
         self.assertEqual(self.broker.entry.call_count,1)
 
     def test_policy_disabled_catchup_old_and_unmapped_never_enter(self):
-        with self.store.connect() as db:db.execute('DELETE FROM notification_queue')
+        with self.store.connect() as db:db.execute('DELETE FROM inbox')
         d.cycle(self.store,self.broker,self.now)
         self.broker.entry.assert_not_called()
         self.add_pb('pb2',self.now+1)
@@ -172,17 +181,16 @@ class DurableTests(PostgresTestCase):
         self.assertEqual(self.broker.entry.call_count,1)
 
     def test_effect_gate_blocks_all_broker_requests(self):
-        with self.store.connect() as db:db.execute('UPDATE runtime_control SET effects_enabled=false')
-        from postgres_store import WorkerOwned
-        with self.assertRaises(WorkerOwned):d.cycle(self.store,self.broker,self.now)
+        with self.store.connect() as db:db.execute('UPDATE control SET enabled=0')
+        with self.assertRaises(RuntimeError):d.cycle(self.store,self.broker,self.now)
         self.broker.entry.assert_not_called();self.broker.account.assert_not_called()
 
-    def test_strategy_change_or_feed_change_prevents_entry(self):
-        for changes in (dict(scan_strategies=['rsi']),dict(provider='twelvedata'),dict(timeframes=['daily'])):
-            with self.store.connect() as db:
-                asset=dict(id='NEARUSD',enabled=True,market='crypto',provider='kraken',symbol='NEAR/USD',timeframes=['4h'])|changes
-                db.execute('UPDATE managed_config SET payload=%s',(json.dumps(dict(assets=[asset])),))
-            d.cycle(self.store,self.broker,self.now)
+    def test_invalidation_prevents_entry(self):
+        with self.store.connect() as db:
+            raw=db.execute('SELECT payload FROM inbox').fetchone()[0]
+            event=json.loads(raw);event.update(kind='invalidated',event_id='invalid',cursor=2)
+            db.execute('INSERT INTO inbox VALUES(?,?,?,?)',('invalid',2,event['signal_id'],json.dumps(event)))
+        d.cycle(self.store,self.broker,self.now)
         self.broker.entry.assert_not_called()
 
     def test_stale_after_broker_read_does_not_submit(self):
@@ -190,16 +198,10 @@ class DurableTests(PostgresTestCase):
             d.cycle(self.store,self.broker,self.now)
         self.broker.entry.assert_not_called()
 
-    def test_actual_chase_outbox_only_five_minute_four_hour_root_is_candidate(self):
-        user='00000000-0000-0000-0000-000000000001'
-        installation='00000000-0000-0000-0000-000000000002'
-        root=signal(self.now-10000)|dict(symbol='kraken:Kraken:NEAR/USD')
-        state=dict(root=root,asset_key='NEARUSD')
-        event=dict(kind='chase',at=self.now,destination='crypto_auto_chase',signal=signal(self.now,'5m'))
-        with self.store.connect() as db:
-            db.execute('DELETE FROM notification_queue')
-            db.execute('INSERT INTO chasing_sessions VALUES(%s,%s,%s,%s)',('session',installation,user,json.dumps(state)))
-            db.execute('INSERT INTO chasing_outbox(id,session_id,event) VALUES(%s,%s,%s)',('event','session',json.dumps(event)))
+    def test_actual_chase_only_five_minute_four_hour_root_is_candidate(self):
+        with self.store.connect() as db:db.execute('DELETE FROM inbox')
+        value=signal(self.now,'5m');value['root']=signal(self.now-10000)|dict(symbol='kraken:Kraken:NEAR/USD')
+        self.add_event('chase',value,'chase-4h-5m')
         d.cycle(self.store,self.broker,self.now)
         self.assertEqual(self.records()[0]['strategy'],'chase-4h-5m')
         self.assertEqual(self.broker.entry.call_count,1)
@@ -208,14 +210,13 @@ class DurableTests(PostgresTestCase):
 class DivergenceExitTests(PostgresTestCase):
     setUp = DurableTests.setUp
     add_pb = DurableTests.add_pb
+    add_event = DurableTests.add_event
     records = DurableTests.records
 
     def add_divergence(self, at, **changes):
         value=dict(symbol='kraken:Kraken:NEAR/USD',timeframe='4h',direction='bearish',
                    confirmed_at=at,pivot2=at-60000,pivot1=at-120000,signal_status='provisional')|changes
-        with self.store.connect() as db:
-            db.execute('INSERT INTO signals(id,payload,received,status) VALUES(%s,%s,%s,%s)',
-                       (str(at)+json.dumps(changes,sort_keys=True),json.dumps(value),at/1000,'sent'))
+        self.add_event(str(at)+json.dumps(changes,sort_keys=True),value,'rsi')
         return value
 
     def filled(self, strategy='rsi-pb', side='Buy'):
@@ -258,19 +259,11 @@ class DivergenceExitTests(PostgresTestCase):
 
     def test_close_intent_and_alert_commit_before_timeout_and_never_resubmit(self):
         self.filled()
-        person=dict(user_id='00000000-0000-0000-0000-000000000001',telegram_user_id=72,
-                    live_positions=True,routes={'live_positions':'-10002'})
-        # Register the real opt-in route used by the SQL recipient function.
-        with self.store.connect() as db:
-            db.execute('INSERT INTO public.telegram_recipients(installation,user_id,telegram_user_id,routes) VALUES(%s,%s,72,%s)',
-                       ('00000000-0000-0000-0000-000000000002',person['user_id'],json.dumps(person['routes'])))
-            db.execute('INSERT INTO public.chasing_preferences(installation,user_id,live_positions) VALUES(%s,%s,true)',
-                       ('00000000-0000-0000-0000-000000000002',person['user_id']))
         self.add_divergence(self.now+2000)
         def timeout(t,size):
             self.assertEqual(self.records()[0]['state'],'closing')
             with self.store.connect() as db:
-                self.assertEqual(db.execute("SELECT count(*) FROM chasing_outbox WHERE event->>'kind'='demo_exit'").fetchone()[0],1)
+                self.assertEqual(db.execute("SELECT count(*) FROM notifications").fetchone()[0],1)
             raise d.SubmissionUnknown('timeout')
         self.broker.flatten.side_effect=timeout
         with self.assertRaises(d.SubmissionUnknown):d.cycle(self.store,self.broker,self.now+3000)
@@ -285,20 +278,11 @@ class DivergenceExitTests(PostgresTestCase):
         self.broker.positions.return_value=position
         d.cycle(self.store,self.broker,self.now+4600)
         self.assertEqual(self.broker.flatten.call_count,1)
-        from chasing_runtime import deliver_pending
-        with patch('chasing_runtime.people',return_value=[person]),patch('telegram_checklist.api',return_value=dict(chat=dict(id=-10002),message_id=99)) as api:
-            deliver_pending(self.store,'fake')
-        message=next(c.args[2] for c in api.call_args_list if c.args[1]=='sendMessage')
-        self.assertIn('reduce-only close queued',message['text'])
-        self.assertNotIn("I've exited",str(message['reply_markup']))
         self.broker.positions.return_value=[]
         d.cycle(self.store,self.broker,self.now+5000)
         d.cycle(self.store,self.broker,self.now+35000)
         self.assertEqual(self.records()[0]['state'],'closed')
-        from source_update import blockers
-        with self.store.connect() as db:
-            self.assertNotIn('unknown session',blockers(db))
-            self.assertEqual(db.execute('SELECT count(*) FROM chasing_outbox').fetchone()[0],1)
+        with self.store.connect() as db:self.assertEqual(db.execute('SELECT count(*) FROM notifications').fetchone()[0],1)
 
     def test_modified_or_reversed_position_is_not_closed(self):
         self.filled()
@@ -310,14 +294,7 @@ class DivergenceExitTests(PostgresTestCase):
             self.broker.flatten.assert_not_called()
             self.broker.positions.return_value=[original]
 
-    def test_pb_only_uses_original_cached_candles(self):
-        t=self.filled()
-        t['signal']['rules']={'rsi':{'rsi_period':3}}
-        with self.store.connect() as db:
-            db.execute('INSERT INTO candle_cache VALUES(%s,%s,%s,%s,%s,10,10,10,10)',
-                       ('kraken:Kraken:NEAR/USD','NEARUSD','4h',self.now-1000,self.now+2000))
-        found=dict(direction='bearish',confirmed_at=self.now+2000,timeframe='4h')
-        with patch('shared_kraken.detect',return_value=[found]) as detect:
-            self.assertEqual(d.opposing_divergence(self.store,t,self.now+3000),found)
-            self.assertEqual(detect.call_args.args[2:4],('kraken:Kraken:NEAR/USD','4h'))
-            self.assertEqual(detect.call_args.args[1],{'rsi_period':3})
+    def test_pb_only_consumes_exported_divergence(self):
+        trade=self.filled()
+        found=self.add_divergence(self.now+2000)
+        self.assertEqual(d.opposing_divergence(self.store,trade,self.now+3000),found)

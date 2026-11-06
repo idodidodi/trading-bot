@@ -323,19 +323,7 @@ async function developmentSettingsControls(panel,isCurrent){
  const section=node('section'),result=node('p');section.className='development-settings';
  try{
   const value=await request('/api/local-settings');if(!isCurrent())return;
-  const paper=node('section'),paperResult=node('p'),paperRow=node('label'),paperInput=node('input');paper.className='development-settings';paperInput.type='checkbox';paperInput.checked=value.paper_trading_enabled;paperInput.disabled=!value.paper_trading_editable;
-  paperRow.append(paperInput,document.createTextNode(' Enable Alpaca paper trading'));
-  paper.append(node('h3','Paper trading'),paperRow,node('p',value.paper_trading_editable?'Saved for this installation and applied without restarting. Disabling stops local automation; existing simulated orders and positions remain at Alpaca. An in-progress cycle may finish.':'Paper trading is disabled in development. Configure this setting in the local production app.'));
-  if(value.paper_trading_editable){
-   const savePaper=button('Save paper trading setting',async()=>{
-    savePaper.disabled=true;paperResult.textContent='Saving…';paperResult.className='';
-    try{await request('/api/local-settings',{paper_trading_enabled:paperInput.checked});await openVersions();}
-    catch(e){paperResult.className='error';paperResult.textContent=e.message;}
-    finally{savePaper.disabled=false;}
-   });
-   paperResult.setAttribute('role','status');paper.append(savePaper,paperResult);
-  }
-  panel.append(paper);if(!value.editable)return;panel.append(section);
+  if(!value.editable)return;panel.append(section);
   section.append(node('h3','Development overrides'),node('p','Use while production is stopped. Saved for this installation and applied to new deliveries without restarting. An in-progress request may finish.'));
   const inputs={};
   for(const [key,label] of [['telegram_enabled','Send Telegram alerts from development']]){
@@ -509,7 +497,6 @@ async function momentumFindings(source){
  const data=await request('/api/momentum?source='+source);if(strategyViews[source]!=='momentum')return;
  content.replaceChildren(node('h2',source==='live'?'Daily momentum signals':'Momentum backtests'),strategySelector(source));
  content.append(node('p',data.note||''));
- if(source==='live'&&data.paper){const p=data.paper,st=p.status||{};content.append(node('p',`Paper trading: ${p.enabled?'enabled':'disabled'} · ${p.broker} · ${p.risk_pct}% risk · $${p.max_notional.toLocaleString()} position cap · equity ${st.equity==null?'—':'$'+st.equity.toLocaleString()} · checked ${st.checked_at?displayTime(st.checked_at):'pending'}`));}
  const latest=data.latest;
  if(source==='live'&&latest){
   content.append(node('p',`Scan: ${displayTime(latest.scanned_at)} · ${latest.status} · ${latest.version}`));
@@ -518,7 +505,7 @@ async function momentumFindings(source){
  }
  if(source==='backtest'){
   const m=data.metrics||{};
-  content.append(node('p',`${m.candidates??0} candidates · ${m.closed_trades??0} closed trades · win rate ${m.win_rate_pct==null?'—':m.win_rate_pct.toFixed(1)+'%'} · average net return ${m.average_net_pct==null?'—':m.average_net_pct.toFixed(2)+'%'}`));
+  content.append(node('p',`${m.candidates??0} detected candidates. Trade simulation is available in the trading project.`));
   if(data.generated_at)content.append(node('p','Last replay: '+displayTime(data.generated_at)));
   content.append(node('p','Momentum backtests refresh from daily scan history. The RSI replay controls apply to the RSI view.'));
   content.append(exportCSVButton('momentum-backtest-results',async()=>data.signals||[]));
@@ -527,11 +514,8 @@ async function momentumFindings(source){
  for(const [key,name] of [['all','Stocks and crypto'],['stock','US stocks'],['crypto','Crypto']]){const o=node('option',name);o.value=key;market.append(o);}
  const panel=node('section');content.append(market,panel);
  const price=v=>Number(v.toPrecision(7));
- function render(){panel.replaceChildren(table(['Market / asset','Direction / confirmation','Entry range','Stop / target','Evidence','Outcome','Actions'],signals.filter(s=>market.value==='all'||s.market===market.value).map(s=>{
-  const f=s.outcome||{},out=node('div');out.append(node('strong',f.status||'Awaiting evaluation'));if(f.net_pct!=null)out.append(node('p',`Net ${f.net_pct.toFixed(2)}%`));
-  if(s.paper){const p=s.paper;out.append(node('p','Alpaca paper: '+p.state));if(p.reason)out.append(node('small',p.reason));if(p.gross_return_pct!=null)out.append(node('small',`Paper gross ${p.gross_return_pct.toFixed(2)}% · P/L $${p.gross_pnl.toFixed(2)} before fees`));if(p.order?.filled_avg_price)out.append(node('small',`Filled ${p.order.filled_qty} at ${p.order.filled_avg_price}`));if(p.sizing)out.append(node('small',`Planned risk $${p.sizing.risk_dollars.toFixed(2)} · value $${p.sizing.notional.toFixed(2)}`));}
-  const entry=node('div');entry.append(node('strong',`${price(s.entry_min)} – ${price(s.entry_max)}`),node('small','Next session open only; skip outside range or below 1.5 reward/risk.'));if(s.entry_open_at)entry.append(node('small','Entry session: '+displayTime(s.entry_open_at)+' · expires '+displayTime(s.expires_at)));
-  return [s.market+' · '+s.symbol,s.direction.toUpperCase()+' · '+displayTime(s.confirmed_at),entry,`${price(s.stop)} / ${price(s.target)}`,`ROC ${s.roc_pct.toFixed(2)}% · efficiency ${s.efficiency.toFixed(2)} · extension ${s.extension_atr.toFixed(2)} ATR · ${s.version}`,out,manageAssetButton(s)];
+ function render(){panel.replaceChildren(table(['Market / asset','Direction / confirmation','Reference close','Evidence','Actions'],signals.filter(s=>market.value==='all'||s.market===market.value).map(s=>{
+  return [s.market+' · '+s.symbol,s.direction.toUpperCase()+' · '+displayTime(s.confirmed_at),price(s.price2??s.entry),`ROC ${s.roc_pct.toFixed(2)}% · efficiency ${s.efficiency.toFixed(2)} · extension ${s.extension_atr.toFixed(2)} ATR · ${s.version}`,manageAssetButton(s)];
  })));if(!signals.length)panel.append(node('p','No momentum signals available. Review the daily result and coverage.'));}
  market.onchange=render;render();
  if(source==='live'&&latest){const details=node('details');details.append(node('summary','Momentum scan coverage'),table(['Market','Asset','Status','Details'],latest.coverage.map(r=>[r.market,r.symbol||'Broad universe',r.status,r.reason||(r.eligible!=null?`${r.eligible} eligible histories`:r.candles?`${r.candles} closed daily candles`:'')])));content.append(details);}

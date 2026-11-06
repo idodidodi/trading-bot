@@ -33,6 +33,9 @@ def enqueue(db,s,event):
     if event.get('destination'):key+=':'+event['destination']
     db.execute('INSERT INTO chasing_outbox(id,session_id,event) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',
                (key,s['id'],json.dumps(event)))
+    if event['kind']=='chase' and event.get('destination')=='crypto_auto_chase':
+        from signal_service import publish
+        publish(db,'chase-4h-5m',event['signal'] | dict(version=s['version'],market='crypto'),root=s['root'],instrument=s.get('asset_key'))
 
 
 def proposal(root,person,now,automatic=False):

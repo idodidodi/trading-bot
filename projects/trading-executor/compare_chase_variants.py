@@ -44,7 +44,8 @@ def compare(baseline,candidate,out):
     columns=['original_time_utc','direction','original_close','one_minute_status','five_minutes_status']
     metrics=['followup_time_utc','followup_frame','mae_before_pct','mae_after_pct','mfe_after_pct','recovery_time_utc','further_2pct_time_utc','net_return_pct']
     columns += [prefix+'_'+m for prefix in ('one_minute','five_minutes') for m in metrics]
-    from repair_kraken_minutes import stamp
+    from datetime import datetime,timezone
+    def stamp(t):return datetime.fromtimestamp(t,timezone.utc).isoformat().replace('+00:00','Z')
     with (out/'comparison.csv').open('w',newline='') as f:
         w=csv.writer(f);w.writerow(columns)
         for k in roots[0]:
