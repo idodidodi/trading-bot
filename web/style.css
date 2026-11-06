@@ -34,3 +34,9 @@
 .telegram-routing label{justify-content:space-between;flex-wrap:wrap}.telegram-routing input{width:min(100%,260px);box-sizing:border-box}
 
 .settings-loading{display:flex;align-items:center;gap:8px}.loading-spinner{display:inline-block;width:14px;height:14px;border:2px solid #52657c;border-top-color:#a8caff;border-radius:50%;animation:settings-spin .8s linear infinite}@keyframes settings-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.loading-spinner{animation:none}}
+
+.asset-add{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}.asset-add input{flex:1;min-width:220px}.asset-add button{margin:0}
+.asset-choices{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0!important}.asset-choices label{display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid #39526b;border-radius:8px;margin:0}.asset-choices label:has(input:disabled){opacity:.55}.asset-choices input{margin:0}.asset-choices small{margin:0}
+.asset-connection-details{margin:16px 0;border-top:1px solid #39526b}.asset-connection-details summary{padding:12px 0}.asset-connection-details p{overflow-wrap:anywhere}
+#asset-content form>label{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:14px 0}#asset-content form>label[hidden]{display:none}#asset-content form>label input,#asset-content form>label select{max-width:100%;box-sizing:border-box}
+@media(max-width:600px){.asset-add input{min-width:0;width:100%;flex-basis:100%}#asset-content form>label{align-items:stretch;flex-direction:column}.asset-choices label{flex:1;min-width:100px}}

@@ -24,6 +24,7 @@ function setup(settings,saveError=null){
   if(url==='/api/assets'){
    if(body?.action==='bulk'){settings={...settings,revision:settings.revision+1,config:{...settings.config,assets:[...settings.config.assets,{id:body.tickers,provider:'csv',enabled:false,timeframes:['daily']}]}};}
    if(body?.action==='save'&&saveError)return {ok:false,json:async()=>({error:saveError})};
+   if(body?.action==='save')settings={...settings,revision:settings.revision+1,config:{...settings.config,assets:settings.config.assets.map(a=>a.id===body.asset.id?{...a,...body.asset}:a)},results:[{ticker:body.asset.id,status:'saved'}]};
    return {ok:true,json:async()=>structuredClone(settings)};
   }
   return {ok:true,json:async()=>({rows:[]})};
@@ -144,4 +145,82 @@ test('rendered rows across all strategies and historical results open the asset 
   assert.equal(controls.length,1,call);await controls[0].onclick();
   assert.equal(get('asset-dialog').open,true,call);assert.ok(formFor(get),call);get('asset-dialog').close();
  }
+});
+
+
+const setupCategory=(get,value)=>{const select=descendants(get('asset-content')).find(e=>e.attrs['aria-label']==='Asset category');select.value=value;select.onchange();return select;};
+const emptySettings={revision:1,applied_revision:1,config:{assets:[],poll_seconds:3600},coverage:[]};
+
+test('unknown ticker asks for category, then configures a US stock without provider fields',async()=>{
+ const {context,get,requests}=setup(emptySettings);
+ await vm.runInContext("openAssetSetup('MU')",context);
+ let form=formFor(get);assert.match(text(form),/Choose the asset category/);
+ assert.equal(descendants(form).find(e=>e.textContent==='Add asset').disabled,true);
+ await submit(form);assert.ok(!requests.some(r=>r.body));
+ setupCategory(get,'stock');form=formFor(get);
+ assert.match(text(form),/Automatic · Alpaca/);assert.doesNotMatch(text(form),/I verified|Primary provider|Provider exchange/);
+ await submit(form);
+ const saved=requests.find(r=>r.body?.action==='save').body;
+ assert.equal(saved.revision,2);assert.equal(saved.asset.provider,'alpaca');assert.equal(saved.asset.market,'stock');assert.equal(saved.asset.symbol,'MU');assert.equal(saved.asset.enabled,true);
+ assert.deepEqual(saved.asset.timeframes,['monthly','weekly','daily','4h']);assert.deepEqual(saved.asset.timeframe_providers,{});
+ assert.match(text(get('status')),/awaiting scanner data check/);
+});
+
+test('forex and crypto choose defaults and preserve exact quote currencies',async()=>{
+ for(const [ticker,provider,symbol,expected] of [['EURUSD','oanda','EUR/USD',['monthly','weekly','daily','4h']],['BTCUSDT','kraken','BTC/USDT',['weekly','daily','4h']]]){
+  const {context,get,requests}=setup(emptySettings);await vm.runInContext(`openAssetSetup('${ticker}')`,context);
+  const form=formFor(get);assert.match(text(form),/Automatic/);
+  const monthly=descendants(form).find(e=>e.tag==='input'&&e.value==='monthly');assert.equal(monthly.disabled,provider==='kraken');
+  await submit(form);const saved=requests.find(r=>r.body?.action==='save').body.asset;
+  assert.equal(saved.provider,provider);assert.equal(saved.symbol,symbol);assert.deepEqual(saved.timeframes,expected);
+ }
+});
+
+test('ambiguous crypto needs category and quote, unsupported Other needs exact selection',async()=>{
+ const {context,get,requests}=setup(emptySettings);await vm.runInContext("openAssetSetup('SOL')",context);
+ setupCategory(get,'crypto');assert.match(text(formFor(get)),/including its quote currency/);await submit(formFor(get));assert.ok(!requests.some(r=>r.body));
+ setupCategory(get,'other');assert.match(text(formFor(get)),/exact supported instrument/);
+ const other=descendants(formFor(get)).find(e=>e.attrs['aria-label']==='Exact instrument');other.value='CL=F';other.onchange();
+ assert.match(text(formFor(get)),/WTI crude oil futures/);assert.match(text(formFor(get)),/Yahoo/);
+ await submit(formFor(get));assert.equal(requests.find(r=>r.body?.action==='save').body.asset.symbol,'CL=F');
+});
+
+test('existing portfolio editor has no provider selectors and preserves routing on save',async()=>{
+ const current={...settings,config:{...settings.config,poll_seconds:3600}};
+ const {context,get,requests}=setup(current);await vm.runInContext('loadAssets()',context);
+ const all=descendants(get('content'));assert.equal(all.filter(e=>e.tag==='select').length,0);
+ assert.doesNotMatch(text(get('content')),/I verified this provider feed|Primary provider/);
+ const weekly=all.find(e=>e.tag==='input'&&e.value==='weekly');weekly.checked=true;
+ await all.find(e=>e.textContent==='Save asset').onclick();
+ const saved=requests.find(r=>r.body?.action==='save').body.asset;
+ assert.deepEqual(saved.timeframe_providers,asset.timeframe_providers);assert.equal(saved.exchange,asset.exchange);assert.equal(saved.tradingview_symbol,asset.tradingview_symbol);assert.equal(saved.path,asset.path);
+ assert.deepEqual(saved.scan_strategies,asset.scan_strategies);assert.ok(saved.timeframes.includes('weekly'));
+});
+
+test('failed automatic setup retains draft, supports retry, and never changes its identity',async()=>{
+ const {context,get,requests}=setup(emptySettings,'Connection unavailable');await vm.runInContext("openAssetSetup('MU')",context);setupCategory(get,'stock');
+ await submit(formFor(get));assert.match(text(formFor(get)),/disabled draft remains/);assert.equal(get('asset-dialog').open,true);
+ assert.equal(descendants(formFor(get)).find(e=>e.tag==='input'&&e.value==='MU').disabled,true);
+ await submit(formFor(get));assert.equal(requests.filter(r=>r.body?.action==='bulk').length,1);assert.equal(requests.filter(r=>r.body?.action==='save').length,2);
+});
+
+test('existing CSV setup preserves disabled state, and cancel does not create drafts',async()=>{
+ const current={...emptySettings,config:{assets:[{id:'MU',provider:'csv',enabled:false,timeframes:['monthly','daily'],scan_strategies:['bb-pin-bars']}]}};
+ const {context,get,requests}=setup(current);await vm.runInContext("openAssetSetup('MU','MU')",context);setupCategory(get,'stock');await submit(formFor(get));
+ assert.ok(!requests.some(r=>r.body?.action==='bulk'));const saved=requests.find(r=>r.body?.action==='save').body.asset;assert.equal(saved.enabled,false);assert.deepEqual(saved.scan_strategies,['bb-pin-bars']);assert.deepEqual(saved.timeframes,['monthly','daily']);
+ const cancelled=setup(emptySettings);await vm.runInContext("openAssetSetup('EURUSD')",cancelled.context);descendants(formFor(cancelled.get)).find(e=>e.textContent==='Cancel').onclick();assert.ok(!cancelled.requests.some(r=>r.body));
+});
+
+test('duplicates and empty selections do not mutate configuration',async()=>{
+ const {context,get,requests}=setup(settings);await vm.runInContext("openAssetSetup('BTC/USD')",context);assert.match(text(formFor(get)),/already in your portfolio/);await submit(formFor(get));assert.ok(!requests.some(r=>r.body));
+ const clean=setup(emptySettings);await vm.runInContext("openAssetSetup('EURUSD')",clean.context);for(const input of descendants(formFor(clean.get)).filter(e=>e.tag==='input'&&e.type==='checkbox'))input.checked=false;await submit(formFor(clean.get));assert.match(text(formFor(clean.get)),/at least one timeframe and one strategy/);assert.ok(!clean.requests.some(r=>r.body));
+});
+
+test('status requires applied configuration and coverage for every selected timeframe',()=>{
+ const {context}=setup(settings),a={...asset,provider:'kraken',timeframe_providers:{},timeframes:['daily','4h']};context.a=a;
+ context.s={revision:2,applied_revision:1,coverage:[{asset:a.id,symbol:a.symbol,provider:'kraken',timeframe:'daily',status:'ready',last_closed_at:123}]};
+ assert.match(vm.runInContext('assetDataStatus(a,s)',context),/Awaiting/);
+ context.s.applied_revision=2;assert.match(vm.runInContext('assetDataStatus(a,s)',context),/Awaiting/);
+ context.s.coverage.push({asset:a.id,symbol:a.symbol,provider:'kraken',timeframe:'4h',status:'ready',last_closed_at:123});assert.match(vm.runInContext('assetDataStatus(a,s)',context),/data received/);
+ context.s.coverage[0].status='unavailable';assert.match(vm.runInContext('assetDataStatus(a,s)',context),/attention/);
 });

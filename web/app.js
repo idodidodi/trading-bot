@@ -1,6 +1,8 @@
 const config=window.DASHBOARD_CONFIG||{}, online=Boolean(config.supabaseUrl);
 const $=id=>document.getElementById(id),content=$('content'),status=$('status');
 const frames=['monthly','weekly','daily','4h','1h'];
+const assetFrames=[...frames];
+const defaultAssetFrames=['monthly','weekly','daily','4h'];
 const selectedFindings={live:sessionStorage.getItem('selected_live'),backtest:sessionStorage.getItem('selected_backtest')};
 function selectFinding(source,id){selectedFindings[source]=id;sessionStorage.setItem?.('selected_'+source,id);for(const tr of document.querySelectorAll?.('.finding-row')||[]){const active=tr.dataset.findingId===id;tr.classList.toggle('selected-row',active);tr.setAttribute('aria-selected',String(active));}}
 function marketCategory(a){if(a.market==='crypto')return 'Crypto';if(a.market==='forex')return 'Forex';if(a.market==='futures')return 'Futures';if(['stock','etf','equity'].includes(a.market)||['NASDAQ','NYSE','AMEX','NYSE ARCA'].includes(a.exchange))return 'Stocks & ETFs';return 'Other assets';}
@@ -157,9 +159,141 @@ async function openAssetManager(signal){
 }
 $('close-asset').onclick=()=>$('asset-dialog').close();
 $('asset-dialog').addEventListener('close',()=>{assetManagerGeneration++;});
+// Asset setup owns feed defaults; users select instruments, timeframes and strategies.
+const assetProviderNames={csv:'CSV files',twelvedata:'Twelve Data',kraken:'Kraken',oanda:'OANDA',tiingo:'Tiingo',alpaca:'Alpaca',fmp:'FMP',yahoo:'Yahoo (delayed)',colmex:'Colmex MT4'};
+const assetFrameNames={monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'1 hour','30m':'30 minutes','15m':'15 minutes','5m':'5 minutes'};
+// Exact supported instruments from yahoo_feed.INSTRUMENTS and tiingo_feed.validate_feed.
+const otherAssetInstruments=[
+ {symbol:'^GSPC',name:'S&P 500 cash index',market:'index',provider:'yahoo',exchange:'SNP'},
+ {symbol:'^GDAXI',name:'DAX cash index',market:'index',provider:'yahoo',exchange:'XETRA'},
+ {symbol:'DX-Y.NYB',name:'US Dollar Index',market:'index',provider:'yahoo',exchange:'NYB'},
+ {symbol:'ES=F',name:'E-mini S&P 500 futures',market:'futures',provider:'yahoo',exchange:'CME'},
+ {symbol:'CL=F',name:'WTI crude oil futures',market:'futures',provider:'yahoo',exchange:'NYMEX'},
+ {symbol:'XAU/USD',name:'Gold / USD',market:'commodity',provider:'tiingo',exchange:'Tiingo'},
+ {symbol:'USOIL/USD',name:'WTI oil / USD',market:'commodity',provider:'tiingo',exchange:'Tiingo'},
+];
+function assetFrameAvailable(asset,frame){
+ const provider=asset.timeframe_providers?.[frame]||asset.provider;
+ if(provider==='csv')return true;
+ if(['30m','15m','5m'].includes(frame))return provider==='kraken';
+ if(provider==='kraken')return frame!=='monthly';
+ if(provider==='fmp')return ['monthly','weekly','daily'].includes(frame);
+ if(provider==='colmex')return ['daily','4h','1h'].includes(frame);
+ return frames.includes(frame);
+}
+function assetTimeframeControls(asset){
+ const field=node('fieldset'),inputs={};field.className='asset-choices';field.append(node('legend','Timeframes'));
+ for(const f of assetFrames){
+  const label=node('label',assetFrameNames[f]),input=node('input');input.type='checkbox';input.value=f;input.checked=(asset.timeframes||defaultAssetFrames).includes(f);
+  // Keep existing selections removable, including legacy unsupported selections.
+  input.disabled=!assetFrameAvailable(asset,f)&&!input.checked;
+  if(!assetFrameAvailable(asset,f)){label.title='Not available with this asset’s data connection';label.append(node('small','Unavailable'));}
+  label.append(input);field.append(label);inputs[f]=input;
+ }
+ return {field,inputs};
+}
+function assetStrategyControls(asset){
+ const field=node('fieldset'),inputs={};field.className='asset-choices';field.append(node('legend','Scan strategies'));
+ for(const [key,title] of [['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB']]){
+  const label=node('label',title),input=node('input');input.type='checkbox';input.value=key;input.checked=(asset.scan_strategies||['rsi','pin-bars','rsi-pb']).includes(key);input.setAttribute('aria-label',asset.id+' '+title);label.append(input);field.append(label);inputs[key]=input;
+ }
+ return {field,inputs};
+}
+function assetDataStatus(asset,settings){
+ if(asset.provider==='csv')return 'CSV files · live data not configured';
+ if(settings.revision!==settings.applied_revision)return 'Awaiting scanner data check';
+ const rows=(settings.coverage||[]).filter(r=>r.asset===asset.id&&r.symbol===(asset.symbol||asset.id)&&(asset.timeframes||defaultAssetFrames).includes(r.timeframe)&&r.provider===(asset.timeframe_providers?.[r.timeframe]||asset.provider));
+ if(rows.some(r=>/unavailable|insufficient|partial/.test(r.status)))return 'Data needs attention';
+ return rows.length&&(asset.timeframes||defaultAssetFrames).every(f=>rows.some(r=>r.timeframe===f&&r.last_closed_at))?'Candle data received · see latest checks below':'Awaiting scanner data check';
+}
+function automaticAsset(ticker,category,instrument=''){
+ const id=ticker.trim().toUpperCase();
+ if(!/^[A-Z0-9_^=:.!/\-]{1,100}$/.test(id))throw Error('Enter one asset symbol, such as MU, EURUSD or BTC/USD.');
+ let mapping;
+ if(category==='stock'){
+  if(!/^[A-Z][A-Z0-9.\-]{0,14}$/.test(id))throw Error('Enter the US-listed stock or ETF ticker, without an exchange prefix.');
+  mapping={symbol:id,market:'stock',provider:'alpaca',exchange:''};
+ }else if(category==='forex'||category==='crypto'){
+  let symbol=id.replace('_','/');
+  if(!symbol.includes('/')){
+   const quote=['USDT','USDC','USD','EUR','GBP','JPY','CHF','CAD','AUD','NZD','BTC','ETH'].find(q=>symbol.endsWith(q)&&symbol.length>q.length);
+   if(quote)symbol=symbol.slice(0,-quote.length)+'/'+quote;
+  }
+  if(!(category==='forex'?/^[A-Z]{3}\/[A-Z]{3}$/:/^[A-Z0-9]+\/[A-Z0-9]+$/).test(symbol)||symbol.split('/')[0]===symbol.split('/')[1])throw Error('Enter the exact pair including its quote currency, such as '+(category==='forex'?'EUR/USD.':'SOL/USD or SOL/USDT.'));
+  mapping={symbol,market:category,provider:category==='forex'?'oanda':'kraken',exchange:category==='forex'?'OANDA':'Kraken'};
+ }else if(category==='other'){
+  mapping=otherAssetInstruments.find(a=>a.symbol===(instrument||id));
+  if(!mapping)throw Error('Choose the exact supported instrument. If it is not listed, its data connection needs to be added first.');
+ }else throw Error('What category is this asset? Choose Stock / ETF, Crypto, Forex or Other.');
+ const asset={...mapping,id,enabled:true,feed_confirmed:true,tradingview_symbol:'',timeframe_providers:{},scan_strategies:['rsi','pin-bars','rsi-pb']};
+ asset.timeframes=defaultAssetFrames.filter(f=>assetFrameAvailable(asset,f));
+ return asset;
+}
+function inferredAssetCategory(ticker){
+ const symbol=ticker.toUpperCase().replace('_','/');
+ if(otherAssetInstruments.some(a=>a.symbol===symbol))return 'other';
+ const compact=symbol.replace('/',''),currencies=['USD','EUR','GBP','JPY','CHF','CAD','AUD','NZD'];
+ if(compact.length===6&&currencies.includes(compact.slice(0,3))&&currencies.includes(compact.slice(3))&&compact.slice(0,3)!==compact.slice(3))return 'forex';
+ if(/^(BTC|ETH|XBT)\/?(USD|USDT|USDC|EUR|GBP)$/.test(symbol))return 'crypto';
+ return '';
+}
+async function openAssetSetup(ticker,existingId=null){
+ const generation=++assetManagerGeneration,dialog=$('asset-dialog'),panel=$('asset-content');
+ if(!dialog.open)dialog.showModal();$('asset-title').textContent=existingId?'Set up asset':'Add asset';panel.replaceChildren(node('p','Loading asset settings…'));
+ try{
+  let settings=await request('/api/assets');if(generation!==assetManagerGeneration||!dialog.open)return;
+  const existing=existingId?settings.config.assets.find(a=>a.id===existingId):null;
+  if(existingId&&!existing)throw Error('This asset was removed. Reopen Assets to refresh.');
+  const form=node('form'),symbolLabel=node('label','Asset symbol'),symbol=node('input');symbol.value=ticker.trim().toUpperCase();symbol.maxLength=100;symbol.required=true;symbolLabel.append(symbol);
+  const categoryLabel=node('label','What category is this asset?'),category=node('select');category.setAttribute('aria-label','Asset category');
+  for(const [value,label] of [['','Choose a category'],['stock','Stock / ETF (US-listed)'],['crypto','Crypto'],['forex','Forex'],['other','Other']]){const o=node('option',label);o.value=value;category.append(o);}category.value=inferredAssetCategory(symbol.value);categoryLabel.append(category);
+  const otherLabel=node('label','Which instrument?'),other=node('select');other.setAttribute('aria-label','Exact instrument');
+  const empty=node('option','Choose an instrument');empty.value='';other.append(empty);
+  for(const a of otherAssetInstruments){const o=node('option',`${a.name} · ${a.symbol}`);o.value=a.symbol;other.append(o);}other.value=otherAssetInstruments.find(a=>a.symbol===symbol.value)?.symbol||'';otherLabel.append(other);
+  const preview=node('div'),error=node('p');error.className='error';error.setAttribute('role','alert');const save=node('button',existing?'Save asset':'Add asset');save.type='submit';
+  const actions=node('div');actions.className='asset-modal-actions';actions.append(save,button('Cancel',()=>dialog.close()));form.append(symbolLabel,categoryLabel,otherLabel,preview,error,actions);panel.replaceChildren(form);
+  let candidate=null,frameControls,strategyControls,enabled,addedDraft=false,busy=false;
+  function render(){
+   preview.replaceChildren();error.textContent='';otherLabel.hidden=category.value!=='other';candidate=null;
+   try{
+    const normalized=symbol.value.trim().toUpperCase();
+    const matches=settings.config.assets.filter(a=>a.id!==existingId&&[a.id,a.symbol].filter(Boolean).some(v=>v.toUpperCase().replace('/','')===normalized.replace('/','')));
+    if(matches.length)throw Error('This asset is already in your portfolio: '+matches.map(a=>a.id).join(', ')+'. Edit it there.');
+    const resolved=automaticAsset(normalized,category.value,other.value);
+    const duplicate=settings.config.assets.find(a=>a.id!==existingId&&a.symbol===resolved.symbol&&a.provider===resolved.provider);
+    if(duplicate)throw Error('This instrument is already in your portfolio: '+duplicate.id+'. Edit it there.');
+    candidate=resolved;
+    if(existing){candidate.id=existing.id;candidate.enabled=existing.enabled;candidate.scan_strategies=existing.scan_strategies||candidate.scan_strategies;candidate.timeframes=(existing.timeframes||defaultAssetFrames).filter(f=>assetFrameAvailable(candidate,f));}
+    preview.append(node('p',`${candidate.name||candidate.symbol} · ${marketCategory(candidate)}`),node('p','Data source: Automatic · '+assetProviderNames[candidate.provider]),node('p','The scanner will check candle data after saving. Missing access or an unavailable instrument will appear in the asset’s data status.'));
+    if(candidate.provider==='alpaca')preview.append(node('small','US-listed stocks and ETFs only. Stock candles use the configured Alpaca feed with a 16-minute delay.'));
+    if(candidate.provider==='kraken')preview.append(node('small','Calendar-month candles are unavailable on this connection. The exact quote currency is preserved.'));
+    if(existing&&existing.provider!=='csv')preview.append(node('p','Changing the data connection starts a new alert baseline.'));
+    enabled=node('input');enabled.type='checkbox';enabled.checked=candidate.enabled;const enabledLabel=node('label','Scan enabled');enabledLabel.append(enabled);preview.append(enabledLabel);
+    frameControls=assetTimeframeControls(candidate);strategyControls=assetStrategyControls(candidate);preview.append(frameControls.field,strategyControls.field);
+   }catch(e){if(category.value)error.textContent=e.message;else preview.append(node('p','Choose the asset category so we can set up its data connection.'));}
+   save.disabled=!candidate;
+  }
+  symbol.oninput=()=>{category.value=inferredAssetCategory(symbol.value);other.value=otherAssetInstruments.find(a=>a.symbol===symbol.value.trim().toUpperCase())?.symbol||'';render();};category.onchange=render;other.onchange=render;render();
+  form.onsubmit=async event=>{
+   event.preventDefault();if(busy||!candidate)return;
+   const selectedFrames=assetFrames.filter(f=>frameControls.inputs[f].checked),strategies=Object.keys(strategyControls.inputs).filter(s=>strategyControls.inputs[s].checked);
+   if(!selectedFrames.length||!strategies.length){error.textContent='Choose at least one timeframe and one strategy.';return;}
+   const asset={...candidate,enabled:enabled.checked,timeframes:selectedFrames,scan_strategies:strategies};busy=true;save.disabled=true;symbol.disabled=true;category.disabled=true;other.disabled=true;error.textContent='Saving…';
+   try{
+    if(!existing&&!addedDraft){settings=await request('/api/assets',{action:'bulk',revision:settings.revision,tickers:asset.id});addedDraft=true;}
+    // Revisions protect both steps against concurrent edits; a failed second step leaves a disabled draft.
+    const result=await request('/api/assets',{action:'save',revision:settings.revision,asset});
+    if(generation!==assetManagerGeneration)return;
+    state=result;dialog.close();await loadAssets();message(`${asset.id}: saved · ${asset.enabled?'awaiting scanner data check':'scanning disabled'}`);
+   }catch(e){error.textContent=e.message+(addedDraft?' A disabled draft remains in Assets. Retry saving or reopen it to finish setup.':' Reopen setup to refresh if the asset changed.');}
+   finally{busy=false;save.disabled=false;symbol.disabled=addedDraft;category.disabled=addedDraft;other.disabled=addedDraft;}
+  };
+ }catch(e){if(generation===assetManagerGeneration)panel.replaceChildren(node('p',e.message),button('Close',()=>dialog.close()));}
+}
+
 async function loadAssets(){state=await request('/api/assets');content.replaceChildren();
- content.append(node('h2','Live assets'),node('p',`Configuration ${state.revision}; scanner applied ${state.applied_revision}. New tickers are disabled drafts until you configure their data feed.`));
- const form=node('form'),input=node('input');input.name='tickers';input.placeholder='NVDA, EURUSD, BTCUSD';input.required=true;input.maxLength=10000;form.append(input,node('button','Add tickers'));form.onsubmit=async e=>{e.preventDefault();await mutate({action:'bulk',tickers:input.value});};if(state.sync?.error)content.append(node('p','Sync: '+state.sync.error));
+ content.append(node('h2','Live assets'),node('p',`Configuration ${state.revision}; scanner applied ${state.applied_revision}. Add an asset and we’ll set up its data connection. Choose a category only when needed.`));
+ const form=node('form'),input=node('input');input.name='ticker';input.setAttribute('aria-label','Asset symbol');input.placeholder='Symbol, e.g. MU, EURUSD or BTC/USD';input.required=true;input.maxLength=100;form.className='asset-add';form.append(input,node('button','Add asset'));form.onsubmit=async e=>{e.preventDefault();await openAssetSetup(input.value);};if(state.sync?.error)content.append(node('p','Sync: '+state.sync.error));
  if(!online&&state.configuration_conflict)content.append(button('Use online configuration',()=>mutate({action:'accept_online'})));
  if(!online&&state.conflicts)content.append(node('p',`${state.conflicts} sync conflicts retained for review. Pending local edits are preserved.`));
  content.append(form,node('p',`Candle timeframes are independent per asset. Polling interval: ${state.config.poll_seconds/3600} hours.`));
@@ -173,14 +307,22 @@ async function loadAssets(){state=await request('/api/assets');content.replaceCh
  const groups=new Map();for(const a of state.config.assets){const category=marketCategory(a);if(!groups.has(category)){const section=node('section');section.className='asset-group';section.append(node('h4',category));groups.set(category,section);}}for(const category of ['Stocks & ETFs','Forex','Futures','Crypto','Other assets'])if(groups.has(category))content.append(groups.get(category));
  for(const asset of state.config.assets){const scanStrategies=asset.scan_strategies||['rsi','pin-bars','rsi-pb'],strategyName=scanStrategies.map(s=>({'rsi':'RSI','pin-bars':'Pin-Bars','bb-pin-bars':'BB Pin-Bars','rsi-pb':'RSI + PB'})[s]).join(' + ');const warning=coverageWarning(asset),row=node('details'),summary=node('summary',`${asset.id}${asset.name?' · '+asset.name:''} · ${asset.enabled?'Enabled':'Disabled'} · ${strategyName} · ${(asset.timeframes||frames.filter(f=>f!=='1h')).join(', ')}${warning?' · Data unavailable':''}`);row.className='asset-row'+(warning?' asset-unavailable':'');row.append(summary);summary.title=warning;row.ontoggle=()=>row.classList.toggle('selected-row',row.open);const field=node('fieldset');if(warning){const note=node('p',warning);note.className='error';field.append(note);}
  const enabled=node('input');enabled.type='checkbox';enabled.checked=asset.enabled;const enablelabel=node('label','Scan enabled');enablelabel.append(enabled);field.append(enablelabel);
- const strategies={},strategyField=node('fieldset');strategyField.append(node('legend','Scan strategies'));for(const [key,title] of [['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB']]){const input=node('input');input.type='checkbox';input.value=key;input.checked=scanStrategies.includes(key);input.setAttribute('aria-label',asset.id+' '+title);strategies[key]=input;const label=node('label',title);label.append(input);strategyField.append(label);}field.append(strategyField,node('p','Applies to all selected candle timeframes for this asset. Save asset to apply.'));
- const provider=node('select');for(const p of ['csv','twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo']){const o=node('option',p==='csv'?'Candle CSV files':p==='kraken'?'Kraken spot':p==='oanda'?'OANDA forex':p==='tiingo'?'Tiingo FX / commodities':p==='alpaca'?'Alpaca US equities':p==='fmp'?'FMP cash indices':p==='yahoo'?'Yahoo indices / futures (delayed)':'Twelve Data');o.value=p;provider.append(o);}provider.value=asset.provider;field.append(provider);
- const inputs={};for(const [key,title] of [['symbol','Provider symbol'],['exchange','Provider exchange'],['tradingview_symbol','TradingView exchange:ticker']]){const l=node('label',title),i=node('input');i.value=asset[key]||'';i.maxLength=100;inputs[key]=i;l.append(i);field.append(l);}
- const confirmed=node('input');confirmed.type='checkbox';confirmed.checked=asset.feed_confirmed===true;const cl=node('label','I verified this provider feed');cl.append(confirmed);field.append(cl);
- const selected={},sources={};for(const f of frames){const l=node('label',f),i=node('input');i.type='checkbox';i.checked=(asset.timeframes||frames.filter(f=>f!=='1h')).includes(f);selected[f]=i;l.append(i);field.append(l);const source=node('select');source.setAttribute('aria-label',f+' candle provider');for(const [value,label] of [['','Primary provider'],['twelvedata','Twelve Data'],['oanda','OANDA forex'],['tiingo','Tiingo FX / commodities'],['alpaca','Alpaca US equities'],['fmp','FMP cash indices'],['yahoo','Yahoo indices / futures (delayed)'],...(f==='monthly'?[]:[['kraken','Kraken spot']])]){const o=node('option',label);o.value=value;source.append(o);}source.value=asset.timeframe_providers?.[f]||'';sources[f]=source;field.append(source);}
- field.append(node('p',asset.provider==='csv'?`CSV: ${asset.path||'data/candles/{asset}-{timeframe}.csv'}`:'Provider entitlement and native intervals must be verified.'));
- field.append(node('p','OANDA supports forex on all five timeframes; its token and account ID stay in the local .env. Kraken supports crypto 1h, 4h, daily and weekly; monthly crypto stays on Twelve Data. Changing the venue starts a new alert baseline. Hourly is optional.'));
- field.append(button('Save asset',()=>mutate({action:'save',asset:{id:asset.id,market:asset.market,provider:provider.value,enabled:enabled.checked,scan_strategies:Object.keys(strategies).filter(key=>strategies[key].checked),timeframes:frames.filter(f=>selected[f].checked),feed_confirmed:confirmed.checked,timeframe_providers:Object.fromEntries(frames.filter(f=>sources[f].value).map(f=>[f,sources[f].value])),...Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value.trim()]))}})),button('Disable',()=>mutate({action:'save',asset:{...asset,enabled:false}})),button('Remove asset',()=>mutate({action:'remove',ticker:asset.id})));row.append(field);groups.get(marketCategory(asset)).append(row);
+ field.append(node('p',`Category: ${marketCategory(asset)}`),node('p',`Data source: ${assetProviderNames[asset.provider]||asset.provider}`),node('p',assetDataStatus(asset,state)));
+ const selected=assetTimeframeControls(asset),strategies=assetStrategyControls(asset);field.append(selected.field,strategies.field);
+ const advanced=node('details');advanced.className='asset-connection-details';advanced.append(node('summary','Connection details'),node('p',`Symbol: ${asset.symbol||asset.id} · Exchange: ${asset.exchange||'Automatic'}`));
+ if(asset.tradingview_symbol)advanced.append(node('p','TradingView: '+asset.tradingview_symbol));
+ if(asset.provider==='csv')advanced.append(node('p',`CSV: ${asset.path||'data/candles/{asset}-{timeframe}.csv'}`));
+ if(Object.keys(asset.timeframe_providers||{}).length)advanced.append(node('p','Existing timeframe routing is managed automatically and retained when you save.'));
+ for(const r of (state.coverage||[]).filter(r=>r.asset===asset.id))advanced.append(node('small',`${assetFrameNames[r.timeframe]||r.timeframe}: ${r.status}${r.last_closed_at?' · latest candle '+displayTime(r.last_closed_at):''}${r.reason?' · '+r.reason:''}`));
+ field.append(advanced);
+ if(asset.provider==='csv'||!asset.feed_confirmed)field.append(button('Set up automatic data',()=>openAssetSetup(asset.symbol||asset.id,asset.id)));
+ const error=node('p');error.className='error';error.setAttribute('role','alert');field.append(error);
+ field.append(button('Save asset',async()=>{
+  const timeframes=assetFrames.filter(f=>selected.inputs[f].checked),scan_strategies=Object.keys(strategies.inputs).filter(s=>strategies.inputs[s].checked);
+  if(!timeframes.length||!scan_strategies.length){error.textContent='Choose at least one timeframe and one strategy.';return;}
+  if(enabled.checked&&asset.provider!=='csv'&&!asset.feed_confirmed){error.textContent='Set up automatic data before enabling scanning.';return;}
+  error.textContent='';await mutate({action:'save',asset:{...asset,enabled:enabled.checked,timeframes,scan_strategies}});
+ }),button('Remove asset',()=>mutate({action:'remove',ticker:asset.id})));row.append(field);groups.get(marketCategory(asset)).append(row);
  }
 }
 async function mutate(body){try{message('Saving…');const result=await request('/api/assets',{...body,revision:state.revision});await loadAssets();message(result.results.map(r=>r.ticker+': '+r.status).join('; ')+(online?' — pending local scanner':' — saved locally'));}catch(e){message(e.message,true);}}
