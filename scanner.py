@@ -440,6 +440,16 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 if is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
                     row.update(status='excluded',candles=len(candles),reason='Stock below $5 minimum; no signals generated')
                 elif 'rsi' not in strategies:
+                    # Publish opposing evidence for PB consumers from the sole
+                    # scanner's existing candles; this creates no Telegram alert.
+                    if 'rsi-pb' in strategies and not catchup:
+                        from shared_kraken import detect as cached_detect
+                        from signal_service import publish,reconcile_provisional
+                        with store.connect() as db:
+                            source=f"{asset['provider']}:{asset.get('exchange') or 'configured'}:{asset.get('symbol') or asset['id']}"
+                            for finding in cached_detect(candles,rules,source,timeframe,now):
+                                publish(db,'rsi',finding | dict(market=asset.get('market','unknown')))
+                            reconcile_provisional(db,source,timeframe,candles,rules)
                     # Top-level counts belong to RSI; Pin-Bars counts stay nested.
                     primary = row['pin_bars'] if 'pin-bars' in strategies else row['bb_pin_bars'] if 'bb-pin-bars' in strategies else row['rsi_pb']
                     row.update({k: v for k, v in primary.items() if k not in ('new_signals', 'historical_matches')})
@@ -475,6 +485,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     pending = sorted((s for s in matches if s['confirmed_at'] > cutoff), key=lambda s:(s['confirmed_at'],s.get('signal_status')!='provisional'))
                     new = sum(store.insert(validate_signal(s, rules) | {'market': asset.get('market') or 'unknown', 'detected_at': now}, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
                     with store.connect() as db:
+                        from signal_service import reconcile_provisional
+                        reconcile_provisional(db,source_id,timeframe,candles,rules)
                         db.execute('INSERT INTO scan_state AS saved(asset,timeframe,last_end) VALUES(%s,%s,%s) ON CONFLICT(asset,timeframe) DO UPDATE SET last_end=GREATEST(saved.last_end,excluded.last_end)',
                                    (state_id, timeframe, candles[-1].end))
                     row.update(status='scanned' if state else 'baseline set', candles=len(candles), last_closed_at=candles[-1].end,

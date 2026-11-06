@@ -1,3 +1,5 @@
+> Historical pre-separation execution notes. Current execution lives in the separate `idodidodi/trading-executor` repository; use `SIGNAL_SERVICE_MIGRATION.md` for cutover and `TELEGRAM_ALERT_LOGIC.md` for current alert behavior. Do not activate legacy policies using these instructions.
+
 # Bybit demo execution
 
 The existing paper-execution worker also reads fresh crypto signals for Bybit's

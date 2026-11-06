@@ -5,8 +5,6 @@ from test_postgres_support import PostgresTestCase,TestStore
 from divergence_chasing import create,step
 from test_divergence_chasing import signal
 import chasing_runtime as c
-from test_demo_execution import CONFIG,signal as demo_signal
-from demo_execution import intent
 USER='00000000-0000-0000-0000-000000000001'
 INST='00000000-0000-0000-0000-000000000002'
 
@@ -24,11 +22,6 @@ class SuspensionTests(unittest.TestCase):
                 c.callback(store,'fake',dict(id='q',data='chase:'+action+':old'))
                 self.assertIn('suspended',api.call_args.args[2]['text'])
         store.connect.assert_not_called()
-
-    def test_chase_order_intent_disabled_but_pb_kept(self):
-        now=1000000
-        self.assertIsNone(intent('chase-4h-5m',demo_signal(now,'5m'),'NEARUSD','c',CONFIG,now-1000,now,demo_signal(now-10000)))
-        self.assertIsNotNone(intent('rsi-pb',demo_signal(now),'NEARUSD','p',CONFIG,now-1000,now))
 
 @patch('chasing_runtime.CHASING_SUSPENDED',True)
 class DurableSuspensionTests(PostgresTestCase):
