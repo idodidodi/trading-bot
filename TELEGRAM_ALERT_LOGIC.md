@@ -40,9 +40,11 @@ Sources: `chasing_runtime.py` (`enabled`, `cancel_unentered`, `tick`, `callback`
 
 ## Production verification
 
-The source changes above are local and not deployed. Read-only production
-inspection on 2026-11-06 found 113 active chases, 27 completed unentered chases,
-no open demo trade records, and 317 already-sent chase outbox entries.
-Automatic approval review blocked the requested production cancellation; no
-production mutation was applied during this inspection. Immediate runtime
-cancellation and code publication remain subject to explicit approval.
+The source suspension is awaiting deployment. Following explicit owner approval,
+production runtime cancellation was verified on 2026-11-06: all 140 unentered
+chases were retired (156 expired including previous history), zero active or
+completed-unentered chases remained, manual and automatic chase preferences were
+off, and the demo entry policy retained only RSI + PB. The 317 sent messages and
+historical groups were retained. Live-position notification preferences remained
+on; there were no open demo trade records at verification. No test alerts/orders
+were sent and the existing worker was not stopped for this cancellation.
