@@ -134,10 +134,10 @@ class RSIPBTests(PostgresTestCase):
         legacy=dict(assets=[self.asset|dict(scan_strategies=['rsi']),self.asset|dict(id='PINS',scan_strategies=['pin-bars'])],timeframes=['4h'])
         with self.store.connect() as db:db.execute('INSERT INTO managed_config VALUES(1,7,7,%s)',(json.dumps(legacy),))
         upgraded=managed_assets.get(self.store)
-        self.assertEqual(upgraded['revision'],8)
-        a,b=upgraded['config']['assets'];self.assertEqual(a['scan_strategies'],['rsi','rsi-pb']);self.assertEqual(b['scan_strategies'],['pin-bars'])
+        self.assertEqual(upgraded['revision'],9)
+        a,b=upgraded['config']['assets'];self.assertEqual(a['scan_strategies'],['rsi','rsi-pb','ma-cross']);self.assertEqual(b['scan_strategies'],['pin-bars','ma-cross'])
         a['scan_strategies']=['rsi']
-        managed_assets.change(self.store,dict(action='save',revision=8,asset=a))
+        managed_assets.change(self.store,dict(action='save',revision=9,asset=a))
         self.assertEqual(managed_assets.get(Store(self.store.path))['config']['assets'][0]['scan_strategies'],['rsi'])
 
     def test_scanner_runs_with_standalone_rsi_disabled(self):

@@ -339,7 +339,7 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             key,text,attempts=note
             try:
                 # Strategy alerts share RSI's sound policy, even overnight.
-                is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:', 'rsi-pb:'))
+                is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:', 'rsi-pb:', 'ma-cross:'))
                 outcome = 'dry-run' if current_dry_run else deliver_routed(store, token, chat_id, text, 'notification:' + key, send_telegram, silent=not is_signal and quiet_hours(), notification_key=key)
                 with store.connect() as db:db.execute('UPDATE notification_queue SET status=%s WHERE id=%s',(outcome,key))
                 store.log('Queued notification delivered',outcome)
@@ -440,7 +440,7 @@ def handler_factory(store, rules, secret, dry_run, dashboard=False):
                 from local_settings import read
                 self.respond(200, read(store))
                 return
-            if route in ('/api/telegram-routing', '/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/bb-pin-bars', '/api/rsi-pb', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions','/api/stock-reports'):
+            if route in ('/api/telegram-routing', '/api/assets', '/api/findings', '/api/momentum', '/api/pin-bars', '/api/bb-pin-bars', '/api/rsi-pb', '/api/ma-cross', '/api/csv-backtests', '/api/candles', '/api/followup', '/api/logs', '/api/backtests','/api/catchup','/api/updates','/api/versions','/api/stock-reports'):
                 from dashboard_api import read
                 try:
                     self.respond(200, read(store, self.path))

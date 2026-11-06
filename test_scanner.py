@@ -156,7 +156,8 @@ class EngineTests(PostgresTestCase):
                 dict(id=s, provider='twelvedata', symbol=s, feed_confirmed=True) for s in ['EUR/USD', 'BTC/USD']])
             with patch('scanner.fetch_twelve_data', return_value=fixture()), patch('scanner.time.monotonic', return_value=10), patch('scanner.time.sleep') as sleep:
                 result = scan_once(store, config, load_rules(), fixture()[-1].end)
-            sleep.assert_called_once_with(8)
+            self.assertEqual(len(result),4)  # 4h strategies plus daily crosses for both assets
+            self.assertEqual([call.args for call in sleep.call_args_list],[(8,)]*3)
             self.assertTrue(all(r['status'] == 'baseline set' for r in result))
             self.assertEqual(store.rows(), [])
 

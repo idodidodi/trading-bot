@@ -46,7 +46,8 @@
       "scan_strategies": [
         "rsi",
         "pin-bars",
-        "rsi-pb"
+        "rsi-pb",
+        "ma-cross"
       ]
     },
     {
@@ -224,7 +225,8 @@
       "scan_strategies": [
         "rsi",
         "pin-bars",
-        "rsi-pb"
+        "rsi-pb",
+        "ma-cross"
       ]
     },
     {
@@ -442,7 +444,8 @@
       "tradingview_symbol": "NYSE:RDW",
       "portfolio": true,
       "scan_strategies": [
-        "rsi"
+        "rsi",
+        "ma-cross"
       ]
     },
     {
@@ -467,7 +470,8 @@
       "scan_strategies": [
         "rsi",
         "pin-bars",
-        "rsi-pb"
+        "rsi-pb",
+        "ma-cross"
       ]
     },
     {
@@ -491,7 +495,8 @@
       "scan_strategies": [
         "rsi",
         "pin-bars",
-        "rsi-pb"
+        "rsi-pb",
+        "ma-cross"
       ]
     },
     {
@@ -539,7 +544,8 @@
       "scan_strategies": [
         "rsi",
         "pin-bars",
-        "rsi-pb"
+        "rsi-pb",
+        "ma-cross"
       ]
     }
   ],

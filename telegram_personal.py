@@ -12,6 +12,8 @@ def recipients(store):
 
 
 def route_for(market, strategy):
+    if strategy == 'ma-cross':
+        return 'other-signals'
     if not market or not strategy:
         return 'general'
     strategy = 'pin-bars' if strategy in ('pin-bars', 'bb-pin-bars') else strategy

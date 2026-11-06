@@ -7,7 +7,7 @@ import urllib.request
 
 _cache_lock = RLock()
 
-ROUTES = ('general',) + tuple(f'{m}.{s}' for m in ('forex', 'crypto', 'stocks', 'other') for s in ('rsi', 'pin-bars', 'rsi-pb'))
+ROUTES = ('general', 'other-signals',) + tuple(f'{m}.{s}' for m in ('forex', 'crypto', 'stocks', 'other') for s in ('rsi', 'pin-bars', 'rsi-pb'))
 
 
 def validate(routes):
@@ -74,17 +74,19 @@ def select(store, event, general, payload=None, notification_key=None):
             strategy, market = strategy or 'rsi', recover(db, payload)
         if notification_key and (not strategy or market in (None, '', 'unknown')):
             prefix, _, key = notification_key.partition(':')
-            if prefix in ('pin-bars', 'bb-pin-bars', 'rsi-pb'):
-                table = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals','rsi-pb':'rsi_pb_signals'}[prefix]
+            if prefix in ('pin-bars', 'bb-pin-bars', 'rsi-pb', 'ma-cross'):
+                table = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals','rsi-pb':'rsi_pb_signals','ma-cross':'ma_cross_signals'}[prefix]
                 exists = db.execute('SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=%s', (table,)).fetchone()
                 signal = db.execute(f'SELECT payload FROM {table} WHERE id=%s', (key,)).fetchone() if exists else None
                 if signal:
                     strategy, market = prefix, recover(db, json.loads(signal[0]))
         fallback = routes['general'] or general
         route = f'{market_group(market)}.{"pin-bars" if strategy in ("pin-bars", "bb-pin-bars") else "rsi-pb" if strategy=="rsi-pb" else "rsi"}' if strategy and market else 'general'
+        if strategy == 'ma-cross':
+            route, fallback = 'other-signals', ''
         chat = routes.get(route) or fallback
         if not chat:
-            raise RuntimeError('Configure a General Telegram destination')
+            raise RuntimeError('Configure the Other Signals Telegram destination' if strategy == 'ma-cross' else 'Configure a General Telegram destination')
         db.execute('INSERT INTO telegram_event_routes VALUES(%s,%s,%s,%s,%s) ON CONFLICT(event)\n            DO UPDATE SET market=excluded.market,strategy=excluded.strategy,chat=excluded.chat,general=excluded.general', (event, market, strategy, chat, fallback))
         return chat, fallback
 

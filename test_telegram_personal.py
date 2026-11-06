@@ -38,7 +38,7 @@ class PersonalTelegramTests(PostgresTestCase):
 
     def test_defaults_and_viewer_can_change_only_own_preferences(self):
         original=self.api(OTHER)
-        self.assertEqual(len(original['enabled']),13)
+        self.assertEqual(len(original['enabled']),14)
         self.assertTrue(all(original['enabled'].values()))
         changed=self.api(OTHER,dict(action='save',revision=0,enabled={'forex.rsi':False}))
         self.assertFalse(changed['enabled']['forex.rsi'])

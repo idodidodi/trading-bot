@@ -46,7 +46,7 @@ class AssetsTests(PostgresTestCase):
     def test_strategy_defaults_validation_and_sync(self):
         from managed_assets import validate_asset
         asset=get(self.store)['config']['assets'][0]
-        self.assertEqual(asset['scan_strategies'],['rsi','pin-bars','rsi-pb'])
+        self.assertEqual(asset['scan_strategies'],['rsi','pin-bars','rsi-pb','ma-cross'])
         for choices in (['rsi'],['pin-bars'],['rsi','pin-bars']):
             asset['scan_strategies']=choices
             saved=change(self.store,dict(action='save',revision=get(self.store)['revision'],asset=asset))
@@ -59,7 +59,7 @@ class AssetsTests(PostgresTestCase):
         validate_asset(legacy)
         with self.store.connect() as db:
             db.execute('UPDATE managed_config SET payload=%s WHERE id=1',(json.dumps(dict(self.config,assets=[legacy])),))
-        self.assertEqual(get(self.store)['config']['assets'][0]['scan_strategies'],['rsi','pin-bars','rsi-pb'])
+        self.assertEqual(get(self.store)['config']['assets'][0]['scan_strategies'],['rsi','pin-bars','rsi-pb','ma-cross'])
 
     def test_strategy_selection_gates_scanners_and_invalidates_schedule(self):
         from test_pin_bars import bars
@@ -92,10 +92,12 @@ class AssetsTests(PostgresTestCase):
         change(self.store,{'action':'save','asset':asset,'revision':1})
         with patch('scanner.read_csv',return_value=fixture()):
             coverage=scan_once(self.store,self.config,load_rules(),fixture()[-1].end)
-        self.assertEqual([r['timeframe'] for r in coverage],['4h'])
+        self.assertEqual([r['timeframe'] for r in coverage],['4h','daily'])
+        self.assertEqual(coverage[1]['scan_strategies'],['ma-cross'])
+        self.assertEqual(coverage[1]['rsi_status'],'disabled')
         self.assertEqual(get(self.store)['applied_revision'],2)
         self.assertEqual(self.store.rows(),[])
-        with self.store.connect() as db:self.assertEqual(db.execute('SELECT count(*) FROM candle_cache').fetchone()[0],260)
+        with self.store.connect() as db:self.assertEqual(db.execute('SELECT count(*) FROM candle_cache').fetchone()[0],520)
     def test_live_confirmation_uses_candle_end_and_pivot_links(self):
         signal=example();signal.pop('secret');bars=fixture()
         signal.update(symbol='csv:configured:EURUSD',timeframe='4h',pivot1=bars[250].start,pivot2=bars[256].start,confirmed_at=bars[258].end)

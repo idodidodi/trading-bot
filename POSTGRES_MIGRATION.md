@@ -361,3 +361,7 @@ Also stop any foreground or separately launched worker. Leave the old worker sto
 For post-write recovery, restore copies from the reviewed export into a **separate recovery data directory**, configure the preserved release to use it, and keep the original fallback data unchanged. Keep the fallback updater/autostart disabled and its mirror credentials empty until intentionally reconciling the old dashboard store. Never restart stale original SQLite after Postgres has accepted new writes.
 
 If the Mac's recovery review cannot account for required history or ambiguous external effects, keep both workers stopped and repair the Postgres installation instead.
+
+### Daily SMA crossover upgrade
+
+Apply `cloud/ma-cross.sql` after the existing runtime, worker-role and personal-Telegram migrations, before deploying the matching worker and dashboard. The migration is repeatable and preserves later asset opt-outs. Prepare the installation route with `scripts/configure-other-signals.py` (read-only by default); use `--apply` only with publication authorization. It sets the dedicated route from the ignored local group map and clears the same shared destination from other shared/personal route keys. Publish the UI with the existing Cloudflare `family-trading-bot` destination and update the existing Linux worker, without starting an additional scanner. Verify hosted settings, the daily signal endpoint, asset defaults, and the existing worker's coverage after publication without test alerts/orders. Signal semantics remain documented only in `TELEGRAM_ALERT_LOGIC.md`.

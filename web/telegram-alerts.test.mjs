@@ -19,8 +19,8 @@ function setup(online=true){
 test('personal checkboxes default on, preserve explicit off, and save without a user override',async()=>{
  const {ctx,calls,panel}=setup();await ctx.personalTelegramControls(panel,()=>true);
  const checkboxes=descendants(panel).filter(e=>e.tag==='input');
- assert.equal(checkboxes.length,13);
- assert.equal(checkboxes.filter(e=>e.checked).length,12);
+ assert.equal(checkboxes.length,14);
+ assert.equal(checkboxes.filter(e=>e.checked).length,13);
  assert.equal(checkboxes.find(e=>e.attributes['aria-label']==='Receive Crypto · RSI alerts').checked,false);
  checkboxes[0].checked=false;
  const save=descendants(panel).find(e=>e.tag==='button');await save.onclick();
