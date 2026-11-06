@@ -18,7 +18,7 @@ function setup(){
  }});vm.runInContext(fn,ctx);return {ctx,calls,panel};
 }
 test('personal numeric stop and message preferences save together without a supplied user ID',async()=>{
- const {ctx,calls,panel}=setup();await ctx.chasingControls(panel,()=>true);
+ const {ctx,calls,panel}=setup();await ctx.archivedChasingControls(panel,()=>true);
  const pct=descendants(panel).find(e=>e.tag==='input'&&e.type==='number');
  assert.equal(pct.value,.5);pct.value='1.25';
  await descendants(panel).find(e=>e.tag==='button').onclick();
@@ -26,7 +26,7 @@ test('personal numeric stop and message preferences save together without a supp
  assert.equal(save.body.revision,1);assert.equal('user_id' in save.body,false);
 });
 test('invalid percentage is rejected before saving',async()=>{
- const {ctx,calls,panel}=setup();await ctx.chasingControls(panel,()=>true);
+ const {ctx,calls,panel}=setup();await ctx.archivedChasingControls(panel,()=>true);
  const pct=descendants(panel).find(e=>e.tag==='input'&&e.type==='number');pct.value='0';
  await descendants(panel).find(e=>e.tag==='button').onclick();
  assert.equal(calls.filter(c=>c.body).length,0);
@@ -34,7 +34,7 @@ test('invalid percentage is rejected before saving',async()=>{
 test('automatic crypto Chase saves its own destination and revision',async()=>{
  const {ctx,calls,panel}=setup();
  ctx.request=async(path,body)=>{calls.push({path,body});return body?{revision:3,...body}:{revision:2,enabled:false,chat:'-10003'};};
- await ctx.cryptoAutoChaseControls(panel,()=>true);
+ await ctx.archivedCryptoAutoChaseControls(panel,()=>true);
  const controls=descendants(panel),enabled=controls.find(e=>e.tag==='input'&&e.type==='checkbox'),chat=controls.find(e=>e.tag==='input'&&e.type==='text');
  enabled.checked=true;chat.value='-10005';
  await controls.find(e=>e.tag==='button').onclick();
@@ -43,9 +43,16 @@ test('automatic crypto Chase saves its own destination and revision',async()=>{
 });
 test('automatic crypto Chase validates enabled destination and discards stale responses',async()=>{
  const {ctx,calls,panel}=setup();ctx.request=async()=>({revision:0,enabled:false,chat:''});
- await ctx.cryptoAutoChaseControls(panel,()=>true);
+ await ctx.archivedCryptoAutoChaseControls(panel,()=>true);
  const controls=descendants(panel);controls.find(e=>e.tag==='input'&&e.type==='checkbox').checked=true;
  await controls.find(e=>e.tag==='button').onclick();assert.equal(calls.length,0);
- const stale=new Element('section');await ctx.cryptoAutoChaseControls(stale,()=>false);
+ const stale=new Element('section');await ctx.archivedCryptoAutoChaseControls(stale,()=>false);
  assert.equal(descendants(stale).filter(e=>e.tag==='input').length,0);
+});
+
+test('suspended settings expose no activation or chat controls',async()=>{
+ const {ctx,calls,panel}=setup();
+ await ctx.chasingControls(panel,()=>true);await ctx.cryptoAutoChaseControls(panel,()=>true);
+ assert.equal(calls.length,0);assert.equal(descendants(panel).filter(e=>e.tag==='input'||e.tag==='button').length,0);
+ assert.match(descendants(panel).map(e=>e.textContent).join(' '),/suspended/);
 });

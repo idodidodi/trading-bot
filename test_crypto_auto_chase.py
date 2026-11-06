@@ -21,6 +21,7 @@ def crypto(frame='4h',at=START,direction='bullish'):
     return signal(frame,at,direction)|dict(symbol=SYMBOL,market='crypto',signal_status='provisional',rules={})
 
 
+@patch('chasing_runtime.CHASING_SUSPENDED',False)
 class DescendingTests(unittest.TestCase):
     def watch(self,frame='4h'):
         return create(USER,crypto(frame),START,watch_policy=POLICY)
@@ -126,6 +127,7 @@ class DescendingTests(unittest.TestCase):
         self.assertEqual((completed['stage'],completed['status'],completed['next_due']),('5m','complete_first',None))
 
 
+@patch('chasing_runtime.CHASING_SUSPENDED',False)
 class SharedDataTests(unittest.TestCase):
     def setUp(self):
         from shared_kraken import candles,divergences
@@ -180,6 +182,7 @@ class SharedDataTests(unittest.TestCase):
 
 
 @patch.dict('os.environ',{'DIVERGENCE_CHASING_ENABLED':'true'})
+@patch('chasing_runtime.CHASING_SUSPENDED',False)
 class RuntimeTests(PostgresTestCase):
     def setUp(self):
         self.store=TestStore()

@@ -6,6 +6,7 @@ from test_divergence_chasing import signal
 from chasing_runtime import enroll, tick, deliver_pending, callback, market
 
 
+@patch('chasing_runtime.CHASING_SUSPENDED',False)
 class MarketTests(unittest.TestCase):
     def setUp(self):
         from chasing_runtime import _market_cache
@@ -48,6 +49,7 @@ USER='00000000-0000-0000-0000-000000000001'
 INST='00000000-0000-0000-0000-000000000002'
 
 
+@patch('chasing_runtime.CHASING_SUSPENDED',False)
 class RuntimeTests(PostgresTestCase):
     def setUp(self):
         self.store=TestStore()

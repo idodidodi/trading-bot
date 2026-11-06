@@ -53,6 +53,8 @@ def policy_valid(config):
 
 
 def intent(strategy, signal, asset, source_id, config, activated_at, now, root=None):
+    from chasing_runtime import CHASING_SUSPENDED
+    if CHASING_SUSPENDED and strategy=='chase-4h-5m':return None
     if strategy not in config['strategies'] or asset not in config['symbols']:
         return None
     at = signal.get('confirmed_at', 0)

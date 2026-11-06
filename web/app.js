@@ -398,6 +398,11 @@ async function telegramRoutingControls(panel,isCurrent){
 }
 async function chasingControls(panel,isCurrent){
  if(!online)return;
+ panel.append(node('p','Chasing is suspended. Chasing Telegram groups are inactive; historical settings are retained.'));
+}
+// Preserved for a future reviewed reactivation; not called by settings.
+async function archivedChasingControls(panel,isCurrent){
+ if(!online)return;
  const section=node('section');section.append(node('h3','Chasing'));panel.append(section);
  try{
   let value=await request('/api/chasing-settings');if(!isCurrent())return;
@@ -431,6 +436,11 @@ async function chasingControls(panel,isCurrent){
  }catch{/* Registration is owner-only. Personal settings remain available. */}
 }
 async function cryptoAutoChaseControls(panel,isCurrent){
+ if(!online)return;
+ panel.append(node('p','Automatic RSI + 5m RSI chasing is suspended.'));
+}
+// Preserved for a future reviewed reactivation; not called by settings.
+async function archivedCryptoAutoChaseControls(panel,isCurrent){
  if(!online)return;
  const section=node('section');section.append(node('h3','Automatic crypto Chase'));panel.append(section);
  try{

@@ -9,8 +9,13 @@ from divergence_chasing import create, step, FRAMES, CHASE_FRAMES, DURATIONS
 from shared_kraken import candles as _market_cache
 
 
+# Suspended by owner on 2026-11-06. Preserve the engine for future review;
+# reactivation requires a reviewed code change, not an old environment flag.
+CHASING_SUSPENDED = True
+
+
 def enabled():
-    return os.environ.get('DIVERGENCE_CHASING_ENABLED','false').lower()=='true'
+    return not CHASING_SUSPENDED and os.environ.get('DIVERGENCE_CHASING_ENABLED','false').lower()=='true'
 
 
 def people(store):
@@ -237,9 +242,30 @@ def history(root,now):
     return bars['1m'],signals_for(root,bars,now)
 
 
+def cancel_unentered(store):
+    """Retire watch-only state; never stop or close an entered position."""
+    with activity_connection(store) as db:
+        db.execute("""UPDATE chasing_sessions SET state=state||jsonb_build_object(
+            'status','expired','next_due',null,'cancellation_reason','Chasing suspended by owner',
+            'revision',coalesce((state->>'revision')::int,0)+1)||
+            CASE WHEN state->'lookback'->>'status'='pending'
+              THEN jsonb_build_object('lookback',state->'lookback'||'{"status":"cancelled","reason":"Chasing suspended"}'::jsonb)
+              ELSE '{}'::jsonb END
+            WHERE state->>'status' IN ('chasing','complete_first')
+              AND state->>'entry_at' IS NULL AND state->'position' IS NULL
+              AND bot_runtime.chasing_is_owner(installation,user_id)""")
+        db.execute("""UPDATE chasing_outbox o SET status='suppressed'
+            FROM chasing_sessions s WHERE s.id=o.session_id AND o.status='pending'
+            AND bot_runtime.chasing_is_owner(s.installation,s.user_id)
+            AND coalesce(o.event->>'destination','chasing') IN ('chasing','crypto_auto_chase')
+            AND o.event->>'kind' NOT IN ('opposite','entered','position_reference','position_extended',
+                'position_trail','exit_signal','reported_exit','position_data_delayed','position_data_resumed','demo_exit')""")
+
+
 def tick(store,now,fetch=market,clock=None,lookback_fetch=history):
     from postgres_store import assert_worker
     assert_worker(store)
+    if CHASING_SUSPENDED:cancel_unentered(store)
     with activity_connection(store) as db:
         rows=db.execute("SELECT id,state FROM chasing_sessions WHERE bot_runtime.chasing_is_owner(installation,user_id) AND (state->>'next_due')::bigint<=%s ORDER BY (state->>'next_due')::bigint LIMIT 100",(now,)).fetchall()
     cache={}
@@ -404,10 +430,11 @@ def deliver_pending(store,token):
         rows=db.execute("SELECT o.id,o.event,s.state FROM chasing_outbox o JOIN chasing_sessions s ON s.id=o.session_id WHERE o.status='pending' AND o.retry_at<=%s ORDER BY o.event->>'at' LIMIT 100",(int(time.time()*1000),)).fetchall()
     for key,event,s in rows:
         person=recipients.get(s['user']);route=event.get('destination') or ('live_positions' if event['kind'] in ('opposite','entered','position_reference','position_extended','position_trail','exit_signal','reported_exit','position_data_delayed','position_data_resumed') else 'chasing')
+        suspended=CHASING_SUSPENDED and route in ('chasing','crypto_auto_chase')
         stale=event['kind'] in ('started','return_to_close','chase') and s['status']!='chasing' and not(event['kind']=='chase' and s['status']=='complete_first')
         if s.get('watch_policy') and route in ('chasing','crypto_auto_chase') and event['kind'] in ('started','chase','expired') and route not in s.get('destinations',[]):stale=True
         if route=='live_positions' and s.get('position',{}).get('status')=='closed' and event['kind']!='reported_exit':stale=True
-        if not person or not person.get(route) or not person['routes'].get(route) or stale:
+        if not person or not person.get(route) or not person['routes'].get(route) or stale or suspended:
             with activity_connection(store) as db:db.execute("UPDATE chasing_outbox SET status='suppressed' WHERE id=%s",(key,))
             continue
         if event['kind']=='return_to_close':
@@ -457,6 +484,9 @@ def callback(store,token,query):
     action=parts[1];key=parts[2];leaving=action=='exit'
     message=query.get('message') or {};user=query.get('from',{}).get('id')
     assert_worker(store)
+    if CHASING_SUSPENDED and action!='exit':
+        api(token,'answerCallbackQuery',dict(callback_query_id=query['id'],text='Chasing is suspended. This action is disabled.'))
+        return
     answer='Entry unavailable for this message.'
     with activity_connection(store) as db:
         binding=db.execute('SELECT 1 FROM chasing_outbox o JOIN telegram_personal_messages m ON m.id=o.dismissal_id WHERE o.session_id=%s AND o.bot=%s AND o.chat=%s AND o.message_id=%s AND o.telegram_user_id=%s AND m.state::jsonb->>\'phase\'=\'active\'',
@@ -546,8 +576,8 @@ def callback(store,token,query):
 
 def worker(store,token,dry_run,stop):
     from local_settings import delivery_dry_run
-    if not enabled():return
-    upgrade_watches(store,int(time.time()*1000))
+    if not enabled() and not CHASING_SUSPENDED:return
+    if not CHASING_SUSPENDED:upgrade_watches(store,int(time.time()*1000))
     while not stop.is_set():
         if not delivery_dry_run(store,dry_run):
             tick(store,int(time.time()*1000),clock=lambda:int(time.time()*1000))

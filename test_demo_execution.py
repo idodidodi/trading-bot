@@ -28,6 +28,7 @@ def trade(now):
     return d.intent('rsi-pb',signal(now),'NEARUSD','pb1',CONFIG,now-1000,now)
 
 
+@patch('chasing_runtime.CHASING_SUSPENDED',False)
 class PolicyTests(unittest.TestCase):
     def test_independent_strategies_and_chase_root_filter(self):
         now=1000000; root=signal(now-10000)
@@ -83,6 +84,7 @@ class PolicyTests(unittest.TestCase):
         self.assertLessEqual(len(body['orderLinkId']),36)
 
 
+@patch('chasing_runtime.CHASING_SUSPENDED',False)
 class DurableTests(PostgresTestCase):
     def setUp(self):
         self.store=TestStore();self.now=int(time.time()*1000)
@@ -205,6 +207,7 @@ class DurableTests(PostgresTestCase):
         self.assertEqual(self.broker.entry.call_count,1)
 
 
+@patch('chasing_runtime.CHASING_SUSPENDED',False)
 class DivergenceExitTests(PostgresTestCase):
     setUp = DurableTests.setUp
     add_pb = DurableTests.add_pb
