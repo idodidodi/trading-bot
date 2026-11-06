@@ -297,3 +297,12 @@ test('add-new and management sections are distinct while saved cards stay unchan
  assert.ok(all.some(e=>e.tag==='h3'&&e.textContent==='Add a new asset'));assert.ok(all.some(e=>e.tag==='h3'&&e.textContent==='Manage existing assets'));
  assert.equal(all.filter(e=>e.tag==='article').length,1);assert.equal(all.filter(e=>e.attrs['aria-label']==='Search assets').length,1);assert.equal(all.filter(e=>e.attrs.role==='combobox').length,0);
 });
+
+test('CRCL and Circle resolve to the same cached stock and use the stock provider',async()=>{
+ const {context,get,requests}=setup(emptyLibrary);await vm.runInContext('openAssetSetup()',context);chooseCategory(get,'Stock / ETF');
+ const input=descendants(formFor(get)).find(e=>e.attrs.role==='combobox');
+ for(const query of ['crcl','Circle']){input.value=query;input.oninput();const matches=descendants(formFor(get)).filter(e=>e.attrs.role==='option');assert.ok(matches.some(e=>text(e).includes('CRCL')&&text(e).includes('Circle Internet Group')));}
+ descendants(formFor(get)).find(e=>e.attrs.role==='option'&&text(e).includes('CRCL')).onclick();await submit(formFor(get));await submit(formFor(get));
+ const saved=requests.find(r=>r.body?.action==='save').body.asset;assert.equal(saved.symbol,'CRCL');assert.equal(saved.market,'stock');assert.equal(saved.provider,'alpaca');
+ assert.equal(vm.runInContext("assetSuggestions('CRCL','crypto').length",context),0);
+});
