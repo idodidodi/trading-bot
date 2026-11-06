@@ -122,3 +122,16 @@ until its code deployment is verified.
 Source: `platform_app.py` (`main` startup/shutdown), `paper_trading.py` (`worker`),
 `demo_execution.py` (`_cycle`), `chasing_runtime.py` (`worker`). Do not restore
 trading worker startup here when reactivating a separate trading service.
+
+
+## Rebuilt asset library (2026-11-06, local implementation)
+
+`web/app.js` (`renderAssetLibrary`, `openAssetSetup`) replaces the old asset settings page with searchable cards and a two-step identify/scanning flow. Shared Colmex forex requests and the automatic weekly stock screen occupy separate collections; their backend eligibility and ownership behavior are unchanged. Existing configured assets retain their provider, exchange, symbols, timeframe overrides, enabled state and strategy choices on normal edits. Removal requires a second explicit confirmation and retains stored signal history. No asset configuration is mutated merely by opening, searching, filtering, cancelling, or changing setup steps.
+
+New instruments use category-based automatic defaults: US stocks/ETFs use Alpaca, spot crypto uses Kraken, forex uses OANDA, and Other requires an exact supported Yahoo/Tiingo instrument selection. Unclear symbols require the user to choose their category. Quote currencies are preserved. New crypto defaults to weekly/daily/4h; other categories default to supported monthly/weekly/daily/4h. Lower intervals remain opt-in and subject to the existing Kraken/CSV restrictions. Monthly Kraken, intraday FMP, and unsupported Colmex frames cannot be newly selected. Existing selected unsupported frames remain removable rather than silently discarded.
+
+New assets default to scan enabled with a visible pause toggle. Existing paused CSV drafts retain their paused state when explicitly converted to automatic data. `feed_confirmed=true` records the selected instrument mapping, not a successful data-access test. The normal scanner validates response identity, candle availability and signal eligibility. Status labels distinguish setup required, paused, awaiting a scanner check, data received, and data problems; data received requires coverage for each selected timeframe, matching symbol/provider and applied revision. A paused asset is not represented as a live connection.
+
+Saving a new asset uses revision-checked disabled-draft creation followed by a separate save. If final save fails, the draft stays paused and the dialog can retry without adding a duplicate. Revision conflicts retain the user's edits; the user can reopen to refresh. Normal first-scan baselines, alert qualification, routing, deduplication and delivery controls still apply. UI checks use fake data; no test alerts, orders or additional production scanner are started.
+
+Sources: `web/app.js` (`automaticAsset`, `assetFrameAvailable`, `assetDataStatus`, `assetHealth`, `openAssetSetup`, `renderAssetLibrary`), `managed_assets.py` (`change`, `validate_asset`, `for_timeframe`), `yahoo_feed.py` (`INSTRUMENTS`), `tiingo_feed.py` (`validate_feed`), provider fetch functions and `scanner.py`. This rebuild has not yet been deployed.

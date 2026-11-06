@@ -24,6 +24,8 @@ function setup(settings,saveError=null,hosted=false){
   if(url==='/api/assets'){
    if(body?.action==='bulk'){settings={...settings,revision:settings.revision+1,config:{...settings.config,assets:[...settings.config.assets,{id:body.tickers,provider:'csv',enabled:false,timeframes:['daily']}]}};}
    if(body?.action==='save'&&saveError)return {ok:false,json:async()=>({error:saveError})};
+   if(body?.action==='save')settings={...settings,revision:settings.revision+1,config:{...settings.config,assets:settings.config.assets.map(a=>a.id===body.asset.id?{...a,...body.asset}:a)},results:[{ticker:body.asset.id,status:'saved'}]};
+   if(body?.action==='remove')settings={...settings,revision:settings.revision+1,config:{...settings.config,assets:settings.config.assets.filter(a=>a.id!==body.ticker)},results:[{ticker:body.ticker,status:'removed'}]};
    return {ok:true,json:async()=>structuredClone(settings)};
   }
   return {ok:true,json:async()=>({rows:[]})};
@@ -186,4 +188,84 @@ test('stale Colmex catalogue allows existing pair removal but hides new pair cho
  await vm.runInContext("loadColmexRequests(document.getElementById('content'))",context);
  assert.equal(descendants(get('content')).filter(e=>e.tag==='input').length,1);
  assert.match(text(get('content')),/unavailable or stale/);
+});
+
+const emptyLibrary={revision:1,applied_revision:1,config:{assets:[],poll_seconds:3600},coverage:[]};
+const chooseCategory=(get,label)=>descendants(get('asset-content')).find(e=>e.attrs['aria-label']===label).onclick();
+const findButton=(root,title)=>descendants(root).find(e=>e.tag==='button'&&e.textContent===title);
+
+test('rebuilt library shows cards with a focused edit action, not embedded settings',async()=>{
+ const {context,get,requests}=setup(settings);await vm.runInContext('loadAssets()',context);
+ const elements=descendants(get('content'));assert.equal(elements.filter(e=>e.tag==='article').length,1);
+ assert.equal(elements.filter(e=>e.tag==='fieldset'||e.tag==='select').length,0);
+ assert.doesNotMatch(text(get('content')),/Primary provider|Provider symbol|I verified|Configuration 17/);
+ await findButton(get('content'),'Edit asset').onclick();assert.equal(get('asset-dialog').open,true);
+ const form=formFor(get);assert.match(text(form),/ASSET SETTINGS/);await submit(form);
+ const saved=requests.find(r=>r.body?.action==='save').body.asset;
+ assert.deepEqual(saved.timeframe_providers,asset.timeframe_providers);assert.equal(saved.provider,asset.provider);assert.equal(saved.path,asset.path);assert.equal(saved.tradingview_symbol,asset.tradingview_symbol);
+});
+
+test('search and category filters combine; clear filters restores all cards without writes',async()=>{
+ const current={...settings,config:{assets:[asset,{id:'MU',symbol:'MU',name:'Micron',market:'stock',provider:'alpaca',enabled:false,timeframes:['daily']}]}};
+ const {context,get,requests}=setup(current);await vm.runInContext('loadAssets()',context);
+ const search=descendants(get('content')).find(e=>e.attrs['aria-label']==='Search assets');search.value='Micron';search.oninput();
+ assert.equal(descendants(get('content')).filter(e=>e.tag==='article').length,1);assert.match(text(get('content')),/MU/);
+ findButton(get('content'),'Crypto').onclick();assert.match(text(get('content')),/No matching assets/);
+ findButton(get('content'),'Clear filters').onclick();assert.equal(descendants(get('content')).filter(e=>e.tag==='article').length,2);assert.ok(!requests.some(r=>r.body));
+});
+
+test('empty library offers setup without creating anything until final confirmation',async()=>{
+ const {context,get,requests}=setup(emptyLibrary);await vm.runInContext('loadAssets()',context);assert.match(text(get('content')),/Start with your first asset/);
+ await findButton(get('content'),'Add an asset').onclick();assert.match(text(formFor(get)),/STEP 1 OF 2/);
+ findButton(get('asset-content'),'Cancel').onclick();assert.ok(!requests.some(r=>r.body));
+});
+
+test('two-step add asks for category and configures one default provider only on final save',async()=>{
+ const {context,get,requests}=setup(emptyLibrary);await vm.runInContext("openAssetSetup('MU')",context);
+ await submit(formFor(get));assert.match(text(formFor(get)),/What category is this asset/);assert.ok(!requests.some(r=>r.body));
+ chooseCategory(get,'Stock / ETF');await submit(formFor(get));assert.match(text(formFor(get)),/STEP 2 OF 2/);assert.match(text(formFor(get)),/Alpaca/);assert.equal(descendants(formFor(get)).filter(e=>e.tag==='select').length,0);assert.ok(!requests.some(r=>r.body));
+ await submit(formFor(get));const saved=requests.find(r=>r.body?.action==='save').body;
+ assert.equal(saved.revision,2);assert.equal(saved.asset.symbol,'MU');assert.equal(saved.asset.provider,'alpaca');assert.deepEqual(saved.asset.timeframes,['monthly','weekly','daily','4h']);assert.equal(get('asset-dialog').open,false);
+});
+
+test('back preserves scanning choices; inferred crypto preserves quote currency and excludes monthly',async()=>{
+ const {context,get,requests}=setup(emptyLibrary);await vm.runInContext("openAssetSetup('BTCUSDT')",context);await submit(formFor(get));
+ let inputs=descendants(formFor(get)).filter(e=>e.tag==='input');assert.equal(inputs.find(e=>e.value==='monthly').disabled,true);
+ for(const i of inputs.filter(e=>e.value&&['weekly','daily','4h'].includes(e.value)))i.checked=i.value==='daily';
+ findButton(get('asset-content'),'Back').onclick();await submit(formFor(get));await submit(formFor(get));
+ const saved=requests.find(r=>r.body?.action==='save').body.asset;assert.equal(saved.symbol,'BTC/USDT');assert.equal(saved.provider,'kraken');assert.deepEqual(saved.timeframes,['daily']);
+});
+
+test('missing quote and duplicate assets cannot advance; exact Other mapping is explicit',async()=>{
+ const {context,get,requests}=setup(settings);await vm.runInContext("openAssetSetup('BTC/USD')",context);await submit(formFor(get));assert.match(text(formFor(get)),/Already in your assets/);assert.ok(!requests.some(r=>r.body));
+ const other=setup(emptyLibrary);await vm.runInContext("openAssetSetup('SOL')",other.context);chooseCategory(other.get,'Crypto');await submit(formFor(other.get));assert.match(text(formFor(other.get)),/quote currency/);
+ chooseCategory(other.get,'Other');await submit(formFor(other.get));assert.match(text(formFor(other.get)),/exact supported instrument/);
+ const select=descendants(formFor(other.get)).find(e=>e.attrs['aria-label']==='Exact instrument');select.value='CL=F';await submit(formFor(other.get));assert.match(text(formFor(other.get)),/CL=F/);await submit(formFor(other.get));assert.equal(other.requests.find(r=>r.body?.action==='save').body.asset.market,'futures');
+});
+
+test('failed final save leaves paused draft and retries without duplicate creation',async()=>{
+ const {context,get,requests}=setup(emptyLibrary,'Changed elsewhere');await vm.runInContext("openAssetSetup('EURUSD')",context);await submit(formFor(get));await submit(formFor(get));
+ assert.match(text(formFor(get)),/paused draft remains/);assert.equal(get('asset-dialog').open,true);assert.equal(findButton(get('asset-content'),'Back'),undefined);
+ await submit(formFor(get));assert.equal(requests.filter(r=>r.body?.action==='bulk').length,1);assert.equal(requests.filter(r=>r.body?.action==='save').length,2);
+});
+
+test('remove requires explicit confirmation; cancelling retains the asset',async()=>{
+ const {context,get,requests}=setup(settings);await vm.runInContext("openAssetSetup('BTCUSD','BTCUSD')",context);
+ findButton(get('asset-content'),'Remove asset').onclick();assert.match(text(formFor(get)),/Stored signal history will remain/);assert.ok(!requests.some(r=>r.body));
+ findButton(get('asset-content'),'Keep asset').onclick();assert.ok(!requests.some(r=>r.body));
+ findButton(get('asset-content'),'Remove asset').onclick();await findButton(get('asset-content'),'Yes, remove').onclick();const removed=requests.find(r=>r.body?.action==='remove').body;assert.equal(removed.ticker,'BTCUSD');assert.equal(removed.revision,17);assert.equal(get('asset-dialog').open,false);
+});
+
+test('existing CSV draft starts at identification and retains paused state and strategies',async()=>{
+ const draft={id:'MU',provider:'csv',enabled:false,timeframes:['daily'],scan_strategies:['bb-pin-bars']};const {context,get,requests}=setup({...emptyLibrary,config:{assets:[draft]}});
+ await vm.runInContext("openAssetSetup('MU','MU')",context);assert.match(text(formFor(get)),/What would you like/);chooseCategory(get,'Stock / ETF');await submit(formFor(get));await submit(formFor(get));
+ assert.ok(!requests.some(r=>r.body?.action==='bulk'));const saved=requests.find(r=>r.body?.action==='save').body.asset;assert.equal(saved.enabled,false);assert.deepEqual(saved.scan_strategies,['bb-pin-bars']);assert.deepEqual(saved.timeframes,['daily']);
+});
+
+test('empty scanning selection blocks save and stale coverage cannot imply data readiness',async()=>{
+ const {context,get,requests}=setup(settings);await vm.runInContext("openAssetSetup('BTCUSD','BTCUSD')",context);
+ for(const input of descendants(formFor(get)).filter(e=>e.tag==='input'&&e.value))input.checked=false;
+ await submit(formFor(get));assert.match(text(formFor(get)),/at least one timeframe and one strategy/);assert.ok(!requests.some(r=>r.body));
+ context.sample={...asset,timeframe_providers:{},timeframes:['daily']};context.snapshot={revision:2,applied_revision:1,coverage:[{asset:asset.id,symbol:asset.symbol,provider:asset.provider,timeframe:'daily',status:'ready',last_closed_at:123}]};
+ assert.equal(vm.runInContext('assetHealth(sample,snapshot).label',context),'Checking data');context.snapshot.applied_revision=2;assert.equal(vm.runInContext('assetHealth(sample,snapshot).label',context),'Data received');
 });

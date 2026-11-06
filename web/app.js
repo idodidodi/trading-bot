@@ -158,7 +158,7 @@ async function openAssetManager(signal){
  }catch(e){if(generation===assetManagerGeneration&&dialog.open){error.textContent=e.message;panel.replaceChildren(error,button('Retry',()=>openAssetManager(signal)));}}
 }
 $('close-asset').onclick=()=>$('asset-dialog').close();
-$('asset-dialog').addEventListener('close',()=>{assetManagerGeneration++;});
+$('asset-dialog').addEventListener('close',()=>{assetManagerGeneration++;$('asset-dialog').className='';});
 async function loadColmexRequests(parent){
  const section=node('section');section.className='colmex-requests';parent.append(section);
  section.append(node('h3','Colmex MT4 · requested forex pairs'));
@@ -185,34 +185,234 @@ async function loadColmexRequests(parent){
   else section.append(node('p','Scanner readiness has not been checked yet.'));
  }catch(error){section.append(node('p','Colmex requests unavailable: '+error.message));}
 }
-async function loadAssets(){state=await request('/api/assets');content.replaceChildren();
- content.append(node('h2','Live assets'),node('p',`Configuration ${state.revision}; scanner applied ${state.applied_revision}. New tickers are disabled drafts until you configure their data feed.`));
- const form=node('form'),input=node('input');input.name='tickers';input.placeholder='NVDA, EURUSD, BTCUSD';input.required=true;input.maxLength=10000;form.append(input,node('button','Add tickers'));form.onsubmit=async e=>{e.preventDefault();await mutate({action:'bulk',tickers:input.value});};if(state.sync?.error)content.append(node('p','Sync: '+state.sync.error));
- if(!online&&state.configuration_conflict)content.append(button('Use online configuration',()=>mutate({action:'accept_online'})));
- if(!online&&state.conflicts)content.append(node('p',`${state.conflicts} sync conflicts retained for review. Pending local edits are preserved.`));
- await loadColmexRequests(content);
- content.append(form,node('p',`Candle timeframes are independent per asset. Polling interval: ${state.config.poll_seconds/3600} hours.`));
- if(state.config.weekly_stock_screen?.enabled){
-  const stocks=state.weekly_stock_selection;
-  content.append(node('h3','Daily weekly-candle stock screen'),node('p','Ten S&P 400/500 stocks touching the upper Bollinger Band and ten touching the lower band in the last five completed weekly candles are selected at 08:00 Israel time. Picks stay unique on weekdays within each calendar week; the same stock can return next week. Only actual band touches qualify.'));
-  if(stocks){content.append(node('p',`${stocks.day} · week of ${stocks.week} · ${stocks.status}${stocks.reason?' · '+stocks.reason:''}`));for(const side of ['upper','lower'])content.append(selectionTable([side==='upper'?'Upper BB':'Lower BB','Ticker','Distance from band (%)'],(stocks.selected?.[side]||[]).map(row=>[side,row.symbol,row.distance_pct.toFixed(3)]),(stocks.selected?.[side]||[]).map(row=>'STOCK-'+row.symbol)));}
-  else content.append(node('p','The weekly stock screen will appear after the local worker refreshes it.'));
- }
- content.append(node('h3','Permanent portfolio'));
- const groups=new Map();for(const a of state.config.assets){const category=marketCategory(a);if(!groups.has(category)){const section=node('section');section.className='asset-group';section.append(node('h4',category));groups.set(category,section);}}for(const category of ['Stocks & ETFs','Forex','Futures','Crypto','Other assets'])if(groups.has(category))content.append(groups.get(category));
- for(const asset of state.config.assets){const scanStrategies=asset.scan_strategies||['rsi','pin-bars','rsi-pb'],strategyName=scanStrategies.map(s=>({'rsi':'RSI','pin-bars':'Pin-Bars','bb-pin-bars':'BB Pin-Bars','rsi-pb':'RSI + PB'})[s]).join(' + ');const warning=coverageWarning(asset),row=node('details'),summary=node('summary',`${asset.id}${asset.name?' · '+asset.name:''} · ${asset.enabled?'Enabled':'Disabled'} · ${strategyName} · ${(asset.timeframes||defaultAssetFrames).join(', ')}${warning?' · Data unavailable':''}`);row.className='asset-row'+(warning?' asset-unavailable':'');row.append(summary);summary.title=warning;row.ontoggle=()=>row.classList.toggle('selected-row',row.open);const field=node('fieldset');if(warning){const note=node('p',warning);note.className='error';field.append(note);}
- const enabled=node('input');enabled.type='checkbox';enabled.checked=asset.enabled;const enablelabel=node('label','Scan enabled');enablelabel.append(enabled);field.append(enablelabel);
- const strategies={},strategyField=node('fieldset');strategyField.append(node('legend','Scan strategies'));for(const [key,title] of [['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB']]){const input=node('input');input.type='checkbox';input.value=key;input.checked=scanStrategies.includes(key);input.setAttribute('aria-label',asset.id+' '+title);strategies[key]=input;const label=node('label',title);label.append(input);strategyField.append(label);}field.append(strategyField,node('p','Applies to all selected candle timeframes for this asset. Save asset to apply.'));
- const provider=node('select');for(const p of ['csv','twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo','colmex']){const o=node('option',p==='csv'?'Candle CSV files':p==='kraken'?'Kraken spot':p==='oanda'?'OANDA forex':p==='tiingo'?'Tiingo FX / commodities':p==='alpaca'?'Alpaca US equities':p==='fmp'?'FMP cash indices':p==='colmex'?'Colmex MT4':p==='yahoo'?'Yahoo indices / futures (delayed)':'Twelve Data');o.value=p;provider.append(o);}provider.value=asset.provider;field.append(provider);
- const inputs={};for(const [key,title] of [['symbol','Provider symbol'],['exchange','Provider exchange'],['tradingview_symbol','TradingView exchange:ticker']]){const l=node('label',title),i=node('input');i.value=asset[key]||'';i.maxLength=100;inputs[key]=i;l.append(i);field.append(l);}
- const confirmed=node('input');confirmed.type='checkbox';confirmed.checked=asset.feed_confirmed===true;const cl=node('label','I verified this provider feed');cl.append(confirmed);field.append(cl);
- const selected={},sources={};for(const f of assetFrames){const l=node('label',f),i=node('input');i.type='checkbox';i.checked=(asset.timeframes||defaultAssetFrames).includes(f);selected[f]=i;l.append(i);field.append(l);const source=node('select');source.setAttribute('aria-label',f+' candle provider');for(const [value,label] of [['','Primary provider'],['twelvedata','Twelve Data'],['oanda','OANDA forex'],['tiingo','Tiingo FX / commodities'],['alpaca','Alpaca US equities'],['fmp','FMP cash indices'],['yahoo','Yahoo indices / futures (delayed)'],...(f==='monthly'?[]:[['kraken','Kraken spot']])]){const o=node('option',label);o.value=value;source.append(o);}source.value=asset.timeframe_providers?.[f]||'';sources[f]=source;field.append(source);}
- field.append(node('p',asset.provider==='csv'?`CSV: ${asset.path||'data/candles/{asset}-{timeframe}.csv'}`:'Provider entitlement and native intervals must be verified.'));
- field.append(node('p','OANDA supports forex on all five timeframes; its token and account ID stay in the local .env. Kraken supports crypto 5m, 15m, 30m, 1h, 4h, daily and weekly; monthly crypto stays on Twelve Data. Changing the venue starts a new alert baseline. Intraday timeframes are optional; 5m, 15m and 30m require Kraken or CSV.'));
- field.append(node('p','Colmex uses exact broker symbols (including #), exchange Colmex-MT4, and 1h, 4h or daily UTC candles. Use a dedicated primary provider without TradingView mapping.'));
- field.append(button('Save asset',()=>mutate({action:'save',asset:{id:asset.id,market:asset.market,provider:provider.value,enabled:enabled.checked,scan_strategies:Object.keys(strategies).filter(key=>strategies[key].checked),timeframes:assetFrames.filter(f=>selected[f].checked),feed_confirmed:confirmed.checked,timeframe_providers:Object.fromEntries(assetFrames.filter(f=>sources[f].value).map(f=>[f,sources[f].value])),...Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value.trim()]))}})),button('Disable',()=>mutate({action:'save',asset:{...asset,enabled:false}})),button('Remove asset',()=>mutate({action:'remove',ticker:asset.id})));row.append(field);groups.get(marketCategory(asset)).append(row);
- }
+// Asset setup owns feed defaults; users select instruments, timeframes and strategies.
+const assetProviderNames={csv:'CSV files',twelvedata:'Twelve Data',kraken:'Kraken',oanda:'OANDA',tiingo:'Tiingo',alpaca:'Alpaca',fmp:'FMP',yahoo:'Yahoo (delayed)',colmex:'Colmex MT4'};
+const assetFrameNames={monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'1 hour','30m':'30 minutes','15m':'15 minutes','5m':'5 minutes'};
+// Exact supported instruments from yahoo_feed.INSTRUMENTS and tiingo_feed.validate_feed.
+const otherAssetInstruments=[
+ {symbol:'^GSPC',name:'S&P 500 cash index',market:'index',provider:'yahoo',exchange:'SNP'},
+ {symbol:'^GDAXI',name:'DAX cash index',market:'index',provider:'yahoo',exchange:'XETRA'},
+ {symbol:'DX-Y.NYB',name:'US Dollar Index',market:'index',provider:'yahoo',exchange:'NYB'},
+ {symbol:'ES=F',name:'E-mini S&P 500 futures',market:'futures',provider:'yahoo',exchange:'CME'},
+ {symbol:'CL=F',name:'WTI crude oil futures',market:'futures',provider:'yahoo',exchange:'NYMEX'},
+ {symbol:'XAU/USD',name:'Gold / USD',market:'commodity',provider:'tiingo',exchange:'Tiingo'},
+ {symbol:'USOIL/USD',name:'WTI oil / USD',market:'commodity',provider:'tiingo',exchange:'Tiingo'},
+];
+function assetFrameAvailable(asset,frame){
+ const provider=asset.timeframe_providers?.[frame]||asset.provider;
+ if(provider==='csv')return true;
+ if(['30m','15m','5m'].includes(frame))return provider==='kraken';
+ if(provider==='kraken')return frame!=='monthly';
+ if(provider==='fmp')return ['monthly','weekly','daily'].includes(frame);
+ if(provider==='colmex')return ['daily','4h','1h'].includes(frame);
+ return frames.includes(frame);
 }
+function assetTimeframeControls(asset){
+ const field=node('fieldset'),inputs={};field.className='asset-choices';field.append(node('legend','Timeframes'));
+ for(const f of assetFrames){
+  const label=node('label',assetFrameNames[f]),input=node('input');input.type='checkbox';input.value=f;input.checked=(asset.timeframes||defaultAssetFrames).includes(f);
+  // Keep existing selections removable, including legacy unsupported selections.
+  input.disabled=!assetFrameAvailable(asset,f)&&!input.checked;
+  if(!assetFrameAvailable(asset,f)){label.title='Not available with this asset’s data connection';label.append(node('small','Unavailable'));}
+  label.append(input);field.append(label);inputs[f]=input;
+ }
+ return {field,inputs};
+}
+function assetStrategyControls(asset){
+ const field=node('fieldset'),inputs={};field.className='asset-choices';field.append(node('legend','Scan strategies'));
+ for(const [key,title] of [['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB']]){
+  const label=node('label',title),input=node('input');input.type='checkbox';input.value=key;input.checked=(asset.scan_strategies||['rsi','pin-bars','rsi-pb']).includes(key);input.setAttribute('aria-label',asset.id+' '+title);label.append(input);field.append(label);inputs[key]=input;
+ }
+ return {field,inputs};
+}
+function assetDataStatus(asset,settings){
+ if(asset.provider==='csv')return 'CSV files · live data not configured';
+ if(settings.revision!==settings.applied_revision)return 'Awaiting scanner data check';
+ const rows=(settings.coverage||[]).filter(r=>r.asset===asset.id&&r.symbol===(asset.symbol||asset.id)&&(asset.timeframes||defaultAssetFrames).includes(r.timeframe)&&r.provider===(asset.timeframe_providers?.[r.timeframe]||asset.provider));
+ if(rows.some(r=>/unavailable|insufficient|partial/.test(r.status)))return 'Data needs attention';
+ return rows.length&&(asset.timeframes||defaultAssetFrames).every(f=>rows.some(r=>r.timeframe===f&&r.last_closed_at))?'Candle data received · see latest checks below':'Awaiting scanner data check';
+}
+function automaticAsset(ticker,category,instrument=''){
+ const id=ticker.trim().toUpperCase();
+ if(!/^[A-Z0-9_^=:.!/\-]{1,100}$/.test(id))throw Error('Enter one asset symbol, such as MU, EURUSD or BTC/USD.');
+ let mapping;
+ if(category==='stock'){
+  if(!/^[A-Z][A-Z0-9.\-]{0,14}$/.test(id))throw Error('Enter the US-listed stock or ETF ticker, without an exchange prefix.');
+  mapping={symbol:id,market:'stock',provider:'alpaca',exchange:''};
+ }else if(category==='forex'||category==='crypto'){
+  let symbol=id.replace('_','/');
+  if(!symbol.includes('/')){
+   const quote=['USDT','USDC','USD','EUR','GBP','JPY','CHF','CAD','AUD','NZD','BTC','ETH'].find(q=>symbol.endsWith(q)&&symbol.length>q.length);
+   if(quote)symbol=symbol.slice(0,-quote.length)+'/'+quote;
+  }
+  if(!(category==='forex'?/^[A-Z]{3}\/[A-Z]{3}$/:/^[A-Z0-9]+\/[A-Z0-9]+$/).test(symbol)||symbol.split('/')[0]===symbol.split('/')[1])throw Error('Enter the exact pair including its quote currency, such as '+(category==='forex'?'EUR/USD.':'SOL/USD or SOL/USDT.'));
+  mapping={symbol,market:category,provider:category==='forex'?'oanda':'kraken',exchange:category==='forex'?'OANDA':'Kraken'};
+ }else if(category==='other'){
+  mapping=otherAssetInstruments.find(a=>a.symbol===(instrument||id));
+  if(!mapping)throw Error('Choose the exact supported instrument. If it is not listed, its data connection needs to be added first.');
+ }else throw Error('What category is this asset? Choose Stock / ETF, Crypto, Forex or Other.');
+ const asset={...mapping,id,enabled:true,feed_confirmed:true,tradingview_symbol:'',timeframe_providers:{},scan_strategies:['rsi','pin-bars','rsi-pb']};
+ asset.timeframes=defaultAssetFrames.filter(f=>assetFrameAvailable(asset,f));
+ return asset;
+}
+function inferredAssetCategory(ticker){
+ const symbol=ticker.toUpperCase().replace('_','/');
+ if(otherAssetInstruments.some(a=>a.symbol===symbol))return 'other';
+ const compact=symbol.replace('/',''),currencies=['USD','EUR','GBP','JPY','CHF','CAD','AUD','NZD'];
+ if(compact.length===6&&currencies.includes(compact.slice(0,3))&&currencies.includes(compact.slice(3))&&compact.slice(0,3)!==compact.slice(3))return 'forex';
+ if(/^(BTC|ETH|XBT)\/?(USD|USDT|USDC|EUR|GBP)$/.test(symbol))return 'crypto';
+ return '';
+}
+const assetStrategyNames={'rsi':'RSI divergence','pin-bars':'Pin-Bars','bb-pin-bars':'BB Pin-Bars','rsi-pb':'RSI + PB'};
+const assetLibrary={category:'all',query:'',view:'portfolio'};
+let assetPageGeneration=0;
+function assetGroup(asset){const group=marketCategory(asset);return group==='Stocks & ETFs'?'stock':group==='Crypto'?'crypto':group==='Forex'?'forex':'other';}
+function assetHealth(asset,settings){
+ if(asset.provider==='csv'&&!asset.enabled&&!asset.feed_confirmed)return {label:'Needs setup',tone:'attention',detail:'Choose a category to connect this asset.'};
+ if(asset.enabled===false)return {label:'Paused',tone:'neutral',detail:'Scanning is paused. Your settings are saved.'};
+ if(asset.provider==='csv')return {label:'File data',tone:'neutral',detail:'Uses your configured candle files.'};
+ const status=assetDataStatus(asset,settings);
+ if(status==='Data needs attention')return {label:'Check data',tone:'attention',detail:'The latest data check needs attention. Open the asset for details.'};
+ if(status.startsWith('Candle data received'))return {label:'Data received',tone:'ready',detail:'Candle data is available for the selected timeframes.'};
+ return {label:'Checking data',tone:'pending',detail:'Waiting for the scanner to check this connection.'};
+}
+function assetBadge(label,tone='neutral'){const badge=node('span',label);badge.className='library-badge '+tone;return badge;}
+function assetConnectionDetails(asset,settings){
+ const detail=node('details');detail.className='library-diagnostics';detail.append(node('summary','Data connection details'));
+ detail.append(node('p',`Source: ${assetProviderNames[asset.provider]||asset.provider} · ${asset.symbol||asset.id}`));
+ if(asset.exchange)detail.append(node('p','Exchange: '+asset.exchange));
+ if(asset.tradingview_symbol)detail.append(node('p','Chart: '+asset.tradingview_symbol));
+ if(asset.provider==='csv')detail.append(node('p','Files: '+(asset.path||'data/candles/{asset}-{timeframe}.csv')));
+ const rows=(settings.coverage||[]).filter(r=>r.asset===asset.id);
+ if(!rows.length)detail.append(node('p','No scanner check recorded yet.'));
+ for(const row of rows)detail.append(node('p',`${assetFrameNames[row.timeframe]||row.timeframe}: ${row.status}${row.last_closed_at?' · last candle '+displayTime(row.last_closed_at):''}${row.reason?' · '+row.reason:''}`));
+ if(asset.unavailable_reason)detail.append(node('p',asset.unavailable_reason));
+ return detail;
+}
+async function openAssetSetup(ticker='',existingId=null){
+ const generation=++assetManagerGeneration,dialog=$('asset-dialog'),panel=$('asset-content');dialog.className='asset-workflow';
+ if(!dialog.open)dialog.showModal();$('asset-title').textContent=existingId?'Edit asset':'Add an asset';panel.replaceChildren(node('p','Loading asset settings…'));
+ const active=()=>generation===assetManagerGeneration&&dialog.open;
+ try{
+  let settings=await request('/api/assets');if(!active())return;
+  const existing=existingId?settings.config.assets.find(a=>a.id===existingId):null;
+  if(existingId&&!existing)throw Error('This asset was removed. Refresh the page.');
+  let draft=existing?{...existing,timeframes:[...(existing.timeframes||defaultAssetFrames)],scan_strategies:[...(existing.scan_strategies||['rsi','pin-bars','rsi-pb'])]}:null;
+  let step=existing&&!(existing.provider==='csv'&&!existing.enabled&&!existing.feed_confirmed)?2:1,category=inferredAssetCategory(ticker),symbol=ticker.trim().toUpperCase(),instrument='',addedDraft=false,busy=false,converted=false;
+  function render(){
+   const form=node('form');form.className='library-form';const error=node('p');error.className='error';error.setAttribute('role','alert');
+   const progress=node('p',existing?'ASSET SETTINGS':step===1?'STEP 1 OF 2 · IDENTIFY':'STEP 2 OF 2 · SCANNING');progress.className='library-kicker';form.append(progress);
+   const controls=[];let selected,strategyInputs,enabled,symbolInput,other;
+   if(step===1){
+    form.append(node('h3','What would you like to follow?'),node('p','Enter a symbol. We’ll handle the data connection.'));
+    const label=node('label','Symbol');label.className='library-input-label';symbolInput=node('input');symbolInput.value=symbol;symbolInput.placeholder='e.g. MU, EUR/USD, BTC/USD';symbolInput.maxLength=100;symbolInput.required=true;symbolInput.setAttribute('aria-label','Asset symbol');label.append(symbolInput);form.append(label);controls.push(symbolInput);
+    const categories=node('fieldset');categories.className='library-categories';categories.append(node('legend','Asset category'));
+    const categoryButtons=[];
+    for(const [value,title,subtitle] of [['stock','Stock / ETF','US-listed'],['crypto','Crypto','Spot pairs'],['forex','Forex','Currency pairs'],['other','Other','Indices, futures & commodities']]){
+     const choice=button('',()=>{category=value;refreshCategory();});choice.append(node('strong',title),node('small',subtitle));choice.setAttribute('aria-label',title);choice.dataset.category=value;categories.append(choice);categoryButtons.push(choice);controls.push(choice);
+    }
+    const hint=node('p');hint.className='library-help';form.append(categories,hint);
+    const otherLabel=node('label','Exact instrument');otherLabel.className='library-input-label';other=node('select');other.setAttribute('aria-label','Exact instrument');const blank=node('option','Select an instrument');blank.value='';other.append(blank);
+    for(const a of otherAssetInstruments){const option=node('option',a.name+' · '+a.symbol);option.value=a.symbol;other.append(option);}other.value=instrument||otherAssetInstruments.find(a=>a.symbol===symbol)?.symbol||'';otherLabel.append(other);form.append(otherLabel);controls.push(other);
+    function refreshCategory(){for(const choice of categoryButtons)choice.setAttribute('aria-pressed',String(choice.dataset.category===category));otherLabel.hidden=category!=='other';hint.textContent=category?'Category selected. You can change it before continuing.':'We’re not sure yet. Choose the category for this symbol.';error.textContent='';}
+    symbolInput.oninput=()=>{symbol=symbolInput.value.trim().toUpperCase();category=inferredAssetCategory(symbol);other.value=otherAssetInstruments.find(a=>a.symbol===symbol)?.symbol||'';refreshCategory();};refreshCategory();
+   }else{
+    const title=node('div');title.className='library-instrument';title.append(node('h3',draft.symbol||draft.id),assetBadge(marketCategory(draft)));form.append(title);
+    form.append(node('p','Choose when to scan and what to look for.'));
+    const connection=node('div');connection.className='library-connection';connection.append(node('span','Data source'),node('strong',assetProviderNames[draft.provider]||draft.provider),node('small',existing&&!converted?assetHealth(draft,settings).detail:'Selected automatically. Candle access is checked by the scanner after saving.'));form.append(connection);
+    if(draft.provider==='alpaca')form.append(node('small','US-listed stocks and ETFs · candles delayed by 16 minutes.'));
+    if(draft.provider==='kraken')form.append(node('small','Monthly candles are unavailable on this connection.'));
+    if(existing&&(draft.provider==='csv'||!draft.feed_confirmed))form.append(button('Connect automatic data',()=>{step=1;symbol=existing.symbol||existing.id;category=inferredAssetCategory(symbol);render();}));
+    enabled=node('input');enabled.type='checkbox';enabled.checked=draft.enabled!==false;enabled.setAttribute('aria-label','Scan this asset');const toggle=node('label');toggle.className='library-toggle';toggle.append(enabled,node('strong','Scan this asset'),node('small','Turn off to pause without removing it.'));form.append(toggle);controls.push(enabled);
+    const frameControls=assetTimeframeControls(draft),strategyControls=assetStrategyControls(draft);selected=frameControls.inputs;strategyInputs=strategyControls.inputs;controls.push(...Object.values(selected),...Object.values(strategyInputs));form.append(frameControls.field,strategyControls.field);
+    if(existing&&!converted)form.append(assetConnectionDetails(existing,settings));
+    if(converted)form.append(node('p','This replaces the current connection with an automatic data source.'));
+   }
+   const actions=node('div');actions.className='library-form-actions';
+   const back=button(step===2&&!existing&&!addedDraft?'Back':'Cancel',()=>{if(step===2&&!existing&&!addedDraft){draft={...draft,enabled:enabled.checked,timeframes:assetFrames.filter(f=>selected[f].checked),scan_strategies:Object.keys(strategyInputs).filter(s=>strategyInputs[s].checked)};step=1;render();}else dialog.close();});
+   const submit=node('button',step===1?'Continue':existing?'Save changes':'Add asset');submit.type='submit';submit.className='library-primary';actions.append(back,submit);form.append(error,actions);controls.push(back,submit);
+   if(existing&&step===2){
+    const removeBox=node('div');removeBox.className='library-remove';const remove=button('Remove asset',()=>{removeBox.replaceChildren(node('p',`Remove ${existing.id} from your assets? Stored signal history will remain.`),button('Keep asset',render),button('Yes, remove',async()=>{if(busy)return;busy=true;removeBox.replaceChildren(node('p','Removing…'));try{await request('/api/assets',{action:'remove',revision:settings.revision,ticker:existing.id});if(!active())return;dialog.close();await loadAssets();message(existing.id+' removed.');}catch(e){if(active()){busy=false;removeBox.replaceChildren(node('p',e.message),button('Back to settings',render));}}finally{busy=false;}}));});removeBox.append(remove);form.append(removeBox);controls.push(remove);
+   }
+   panel.replaceChildren(form);symbolInput?.focus?.();
+   form.onsubmit=async event=>{
+    event.preventDefault();if(busy)return;error.textContent='';
+    if(step===1){
+     try{
+      symbol=symbolInput.value.trim().toUpperCase();instrument=other.value;
+      const candidate=automaticAsset(symbol,category,instrument);
+      const key=v=>String(v||'').toUpperCase().replaceAll('/','');
+      const duplicate=settings.config.assets.find(a=>a.id!==existingId&&(key(a.id)===key(candidate.id)||(a.symbol&&key(a.symbol)===key(candidate.symbol))));
+      if(duplicate)throw Error('Already in your assets: '+duplicate.id+'. Edit it from the library.');
+      const same=draft&&draft.symbol===candidate.symbol&&draft.provider===candidate.provider;
+      if(existing){candidate.id=existing.id;candidate.enabled=draft.enabled;candidate.scan_strategies=draft.scan_strategies;candidate.timeframes=draft.timeframes.filter(f=>assetFrameAvailable(candidate,f));converted=true;}
+      else if(same){candidate.enabled=draft.enabled;candidate.timeframes=draft.timeframes;candidate.scan_strategies=draft.scan_strategies;}
+      draft=candidate;step=2;render();
+     }catch(e){error.textContent=e.message;}return;
+    }
+    const timeframes=assetFrames.filter(f=>selected[f].checked),scan_strategies=Object.keys(strategyInputs).filter(s=>strategyInputs[s].checked);
+    if(!timeframes.length||!scan_strategies.length){error.textContent='Choose at least one timeframe and one strategy.';return;}
+    if(enabled.checked&&draft.provider!=='csv'&&!draft.feed_confirmed){error.textContent='This connection is not configured. Check its data connection details.';return;}
+    const asset={...draft,enabled:enabled.checked,timeframes,scan_strategies};busy=true;const disabled=controls.map(c=>c.disabled);controls.forEach(c=>c.disabled=true);submit.textContent='Saving…';
+    try{
+     if(!existing&&!addedDraft){settings=await request('/api/assets',{action:'bulk',revision:settings.revision,tickers:asset.id});addedDraft=true;}
+     await request('/api/assets',{action:'save',revision:settings.revision,asset});
+     if(!active())return;if(!existing){assetLibrary.category='all';assetLibrary.query='';assetLibrary.view='portfolio';}dialog.close();await loadAssets();message(asset.id+' saved. '+(asset.enabled?'Data checks will follow the scanner schedule.':'Scanning is paused.'));
+    }catch(e){if(active()){error.textContent=e.message+(addedDraft?' A paused draft remains in your assets. Retry saving or reopen it to finish.':' Your edits are still here. Reopen the asset if its settings changed elsewhere.');if(addedDraft)back.textContent='Cancel';}}
+    finally{busy=false;controls.forEach((c,i)=>c.disabled=disabled[i]);submit.textContent=existing?'Save changes':'Add asset';}
+   };
+  }
+  render();
+ }catch(e){if(active())panel.replaceChildren(node('p',e.message),button('Retry',()=>openAssetSetup(ticker,existingId)));}
+}
+async function loadAssets(){
+ const generation=++assetPageGeneration;content.replaceChildren(node('p','Loading your assets…'));
+ try{const settings=await request('/api/assets');if(generation!==assetPageGeneration)return;state=settings;renderAssetLibrary(settings);}
+ catch(e){if(generation===assetPageGeneration)content.replaceChildren(node('h2','Assets'),node('p','Your assets could not be loaded. '+e.message),button('Try again',loadAssets));}
+}
+function renderAssetLibrary(settings){
+ const assets=settings.config.assets,page=node('section');page.className='asset-library';
+ const header=node('div');header.className='library-heading';const intro=node('div');intro.append(node('span','YOUR MARKET WATCHLIST'),node('h2','Assets'),node('p','One place for everything you follow.'));
+ const add=button('+ Add asset',()=>openAssetSetup());add.className='library-primary';header.append(intro,add);page.append(header);
+ const summary=node('div');summary.className='library-summary';
+ for(const [value,label] of [[assets.length,'assets'],[assets.filter(a=>a.enabled!==false).length,'scan enabled'],[assets.filter(a=>['attention'].includes(assetHealth(a,settings).tone)).length,'need attention']]){const stat=node('div');stat.append(node('strong',String(value)),node('span',label));summary.append(stat);}page.append(summary);
+ const views=node('div');views.className='library-views';views.setAttribute('role','group');views.setAttribute('aria-label','Asset collections');const body=node('div');body.className='library-body';let viewGeneration=0;
+ const options=[['portfolio','My assets'],['forex','Shared forex'],...(settings.config.weekly_stock_screen?.enabled?[['stocks','Stock screen']]:[])];if(!options.some(([key])=>key===assetLibrary.view))assetLibrary.view='portfolio';
+ const viewButtons=[];for(const [key,title] of options){const choice=button(title,()=>{assetLibrary.view=key;renderView();});choice.dataset.view=key;views.append(choice);viewButtons.push(choice);}page.append(views,body);
+ function renderView(){
+  const current=++viewGeneration;for(const choice of viewButtons)choice.setAttribute('aria-pressed',String(choice.dataset.view===assetLibrary.view));body.replaceChildren();
+  if(assetLibrary.view==='forex'){const panel=node('div');panel.className='library-service';body.append(panel);loadColmexRequests(panel);return;}
+  if(assetLibrary.view==='stocks'){
+   const panel=node('div');panel.className='library-service';const stocks=settings.weekly_stock_selection;panel.append(node('h3','Automatic stock selection'),node('p','S&P 400/500 stocks touching the weekly Bollinger Bands, selected at 08:00 Israel time. These selections are separate from your saved assets.'));
+   if(stocks){panel.append(node('p',`${stocks.day} · ${stocks.status}${stocks.reason?' · '+stocks.reason:''}`));for(const side of ['upper','lower'])panel.append(selectionTable([side==='upper'?'Upper band':'Lower band','Ticker','Distance (%)'],(stocks.selected?.[side]||[]).map(r=>[side,r.symbol,r.distance_pct.toFixed(3)]),(stocks.selected?.[side]||[]).map(r=>'STOCK-'+r.symbol)));}else panel.append(node('p','Waiting for the next stock screen.'));body.append(panel);return;
+  }
+  const toolbar=node('div');toolbar.className='library-toolbar';const search=node('input');search.type='search';search.placeholder='Search symbol or name';search.value=assetLibrary.query;search.setAttribute('aria-label','Search assets');
+  const filters=node('div');filters.className='library-filters';filters.setAttribute('role','group');filters.setAttribute('aria-label','Filter asset category');const filterButtons=[];
+  for(const [key,title] of [['all','All'],['stock','Stocks'],['crypto','Crypto'],['forex','Forex'],['other','Other']]){const choice=button(title,()=>{assetLibrary.category=key;renderCards();});choice.dataset.category=key;filterButtons.push(choice);filters.append(choice);}
+  toolbar.append(search,filters);const count=node('p');count.className='library-count';count.setAttribute('aria-live','polite');const grid=node('div');grid.className='library-grid';body.append(toolbar,count,grid);
+  search.oninput=()=>{assetLibrary.query=search.value;renderCards();};
+  function renderCards(){
+   if(current!==viewGeneration)return;
+   for(const choice of filterButtons)choice.setAttribute('aria-pressed',String(choice.dataset.category===assetLibrary.category));
+   const query=assetLibrary.query.trim().toLowerCase();const visible=assets.filter(a=>(assetLibrary.category==='all'||assetGroup(a)===assetLibrary.category)&&[a.id,a.symbol,a.name].some(v=>String(v||'').toLowerCase().includes(query)));
+   count.textContent=`${visible.length} of ${assets.length} assets`;grid.replaceChildren();
+   if(!visible.length){const empty=node('div');empty.className='library-empty';empty.append(node('span',assets.length?'⌕':'+'),node('h3',assets.length?'No matching assets':'Start with your first asset'),node('p',assets.length?'Try another symbol or clear your filters.':'Add a stock, crypto pair or currency pair. We’ll take care of the data source.'),button(assets.length?'Clear filters':'Add an asset',()=>{if(assets.length){assetLibrary.query='';assetLibrary.category='all';search.value='';renderCards();}else return openAssetSetup();}));grid.append(empty);return;}
+   for(const asset of visible){
+    const card=node('article');card.className='library-card';card.setAttribute('aria-label',asset.id);const health=assetHealth(asset,settings),top=node('div');top.className='library-card-top';top.append(node('span',marketCategory(asset)),assetBadge(health.label,health.tone));
+    const title=node('h3',asset.symbol||asset.id),name=node('p',asset.name||(asset.symbol&&asset.symbol!==asset.id?asset.id:marketCategory(asset)));name.className='library-name';card.append(top,title,name);
+    const chips=node('div');chips.className='library-frame-chips';for(const frame of asset.timeframes||defaultAssetFrames)chips.append(node('span',assetFrameNames[frame]||frame));card.append(chips);
+    const strategies=node('p',(asset.scan_strategies||['rsi','pin-bars','rsi-pb']).map(s=>assetStrategyNames[s]||s).join(' · '));strategies.className='library-strategies';card.append(strategies);
+    const footer=node('div');footer.className='library-card-footer';footer.append(node('small',health.detail));const edit=button(health.label==='Needs setup'?'Set up asset':'Edit asset',()=>openAssetSetup(asset.symbol||asset.id,asset.id));edit.setAttribute('aria-label',`Edit ${asset.id}`);footer.append(edit);card.append(footer);grid.append(card);
+   }
+  }
+  renderCards();
+ }
+ renderView();
+ if(settings.sync?.error||settings.configuration_conflict||settings.conflicts){const note=node('aside');note.className='library-notice';note.append(node('p',settings.sync?.error?'Configuration sync needs attention: '+settings.sync.error:'There are configuration changes to reconcile.'));
+ if(!online&&settings.configuration_conflict)note.append(button('Use online configuration',()=>mutate({action:'accept_online'})));page.append(note);}
+ content.replaceChildren(page);
+}
+
 async function mutate(body){try{message('Saving…');const result=await request('/api/assets',{...body,revision:state.revision});await loadAssets();message(result.results.map(r=>r.ticker+': '+r.status).join('; ')+(online?' — pending local scanner':' — saved locally'));}catch(e){message(e.message,true);}}
 function displayTime(ms){return new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Jerusalem',dateStyle:'medium',timeStyle:'short'}).format(new Date(ms));}
 function table(headers,rows){const t=node('table'),head=node('tr');for(const h of headers){const th=node('th');th.append(h instanceof Node?h:node('span',h));if(h instanceof Node&&h.dataset.sortState)th.setAttribute('aria-sort',h.dataset.sortState);head.append(th);}t.append(head);for(const row of rows){const tr=node('tr');for(const value of row){const td=node('td');td.append(value instanceof Node?value:node('span',String(value??'')));tr.append(td);}t.append(tr);}const wrap=node('div');wrap.className='scroll';wrap.append(t);return wrap;}
