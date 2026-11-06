@@ -125,3 +125,40 @@ class ColmexRequests(PostgresTestCase):
         with self.store.connect() as db:
             db.execute("UPDATE colmex_status SET payload=jsonb_set(payload,'{catalogue}',%s::jsonb)",(json.dumps([dict(symbol='GOOGLE#',export_supported=True,forex=False)]),))
         with self.assertRaises(Exception):self.api(VIEWER,dict(action='set',revision=0,symbols=['GOOGLE#']))
+
+class ColmexBridgeHeartbeat(unittest.TestCase):
+    def test_refreshes_current_requests_without_waiting_for_a_scan(self):
+        from unittest.mock import Mock, call
+        from colmex_runtime import worker
+        store = Mock()
+        stop = Mock()
+        stop.is_set.side_effect = [False, False, True]
+        with patch('managed_assets.effective', side_effect=[({'assets': ['first']}, 1), ({'assets': ['next']}, 2)]), patch('colmex_runtime.refresh') as refresh:
+            worker(store, {'assets': []}, stop)
+        self.assertEqual(refresh.call_args_list, [call(store, {'assets': ['first']}), call(store, {'assets': ['next']})])
+        self.assertEqual(stop.wait.call_args_list, [call(30), call(30)])
+        self.assertEqual(store.guard.check.call_count, 2)
+
+    def test_scan_and_heartbeat_cannot_publish_concurrently(self):
+        import threading
+        from colmex_runtime import refresh
+        first_entered, release_first, second_entered = [threading.Event() for _ in range(3)]
+        def publish(store, config):
+            if config == 'scan':
+                first_entered.set()
+                release_first.wait(2)
+            else:
+                second_entered.set()
+        with patch('colmex_runtime._refresh', side_effect=publish):
+            first = threading.Thread(target=refresh, args=(None, 'scan'))
+            second = threading.Thread(target=refresh, args=(None, 'heartbeat'))
+            first.start()
+            self.assertTrue(first_entered.wait(1))
+            second.start()
+            try:
+                self.assertFalse(second_entered.wait(.05))
+            finally:
+                release_first.set()
+                first.join(2)
+                second.join(2)
+            self.assertTrue(second_entered.is_set())

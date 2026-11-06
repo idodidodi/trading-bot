@@ -30,3 +30,7 @@ No current production provider choices have been changed. Owner-managed assets c
 select Colmex MT4, exchange `Colmex-MT4`, exact symbol (e.g. `SPX500#`) and 1h/4h/daily.
 There is no verified identical TradingView mapping. Current history gaps block signal
 readiness; do not treat collection success or a user request as a successful activation.
+
+The existing worker runs a separate collection bridge every 30 seconds so long scans
+do not expire the dashboard feed status or delay manifest requests. Reconciliation
+is serialized with scan-start refresh; new scan assets enter on the next scan.

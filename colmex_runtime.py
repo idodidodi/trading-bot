@@ -3,11 +3,28 @@ import copy
 import json
 import os
 import time
+import threading
 from pathlib import Path
 from colmex_feed import bridge, directory
 
 
+_refresh_lock = threading.Lock()
+
 def refresh(store, config):
+    # The scanner and heartbeat share one manifest/status writer.
+    with _refresh_lock:
+        return _refresh(store, config)
+
+def worker(store, config, stop):
+    """Keep collection requests/status fresh independently of scan duration."""
+    from managed_assets import effective
+    while not stop.is_set():
+        store.guard.check()
+        current, _ = effective(store, config)
+        refresh(store, current)
+        stop.wait(30)
+
+def _refresh(store, config):
     if not os.environ.get('COLMEX_FILES_DIR'):
         return config
     result = copy.deepcopy(config)

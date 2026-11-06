@@ -669,12 +669,18 @@ def main():
     replay_thread.start()
     host = os.environ.get('HOST', '127.0.0.1')
     scanner_thread = None
+    colmex_thread = None
     if not legacy_webhook:
         from scanner import load_config, scanner_worker, prepare_store
         config = load_config()
         prepare_store(store)
         scanner_thread = threading.Thread(target=resilient_worker(scanner_worker, 'scanner'), args=(store, config, rules, stop), daemon=True)
         scanner_thread.start()
+        if os.environ.get("COLMEX_FILES_DIR"):
+            from colmex_runtime import worker as colmex_worker
+            colmex_thread = threading.Thread(target=resilient_worker(colmex_worker, "colmex"),
+                args=(store, config, stop), name="colmex-bridge", daemon=True)
+            colmex_thread.start()
     server = LocalHTTPServer((host, int(os.environ.get('PORT', '8080'))), handler_factory(store, rules, secret, dry_run, dashboard=True))
     from windows_update import worker as update_worker
     def update_shutdown():
@@ -709,6 +715,8 @@ def main():
         paper_thread.join(timeout=16)
         replay_thread.join(timeout=16)
         chasing_thread.join(timeout=21)
+        if colmex_thread:
+            colmex_thread.join(timeout=5)
         if scanner_thread:
             scanner_thread.join(timeout=21)
 

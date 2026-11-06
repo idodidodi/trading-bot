@@ -81,7 +81,10 @@ revision checks, 10 requested exact broker-classified catalogue forex pairs per 
 shared collection capacity. Removal works offline. No arbitrary owner IDs or paths
 are accepted. `colmex_runtime.py` reconciles active members' requests plus enabled
 configured assets under one exporter owner named `scanner`, preserving the existing
-portfolio and other exporter owners. Revoked members cease contributing demand;
+portfolio and other exporter owners. A separate bridge thread in the existing worker
+refreshes requests/status every 30 seconds, independent of long scans; it emits no
+signals or alerts. The scanner takes the reconciled request set at each scan start.
+Revoked members cease contributing demand;
 an explicitly disabled configured Colmex symbol takes precedence over requests.
 Requested pairs are scanned as shared 4H forex assets using RSI, Pin Bars and RSI+PB.
 Existing alert routing and personal category preferences apply: requesting a pair
