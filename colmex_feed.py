@@ -38,10 +38,13 @@ def fetch_colmex(asset, timeframe):
         raise ValueError('Colmex historical timezone mapping is not verified')
     now = time.time()
     try:
-        bars = reader.candles(directory(),asset['symbol'],timeframe,reader.read_json(policy_path,65536),now)
+        bars = reader.candles(directory(),asset['symbol'],timeframe,reader.read_json(policy_path,65536),now,
+            history_directory=os.environ.get('COLMEX_HISTORY_DIR') or None)
     except (OSError, KeyError, TypeError) as exc:
         raise ValueError('Colmex files unavailable or malformed; awaiting terminal/bridge') from exc
     result = ProviderCandles([Candle(int(a*1000),int(b*1000),o,h,l,c) for a,b,o,h,l,c in bars],
-        ['Colmex MT4 bid candles; verified UTC mapping; complete contiguous M1 buckets only'])
+        ['Colmex MT4 bid candles; UTC boundaries; native H1/M5 backfill with verified session coverage'
+         if os.environ.get('COLMEX_HISTORY_DIR') else
+         'Colmex MT4 bid candles; verified UTC mapping; complete contiguous M1 buckets only'])
     result.next_close_at = (int(now)//reader.FRAMES[timeframe]+1)*reader.FRAMES[timeframe]*1000
     return result

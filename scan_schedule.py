@@ -19,6 +19,13 @@ def identity(asset, timeframe, rules):
         path=Path(os.environ.get('COLMEX_TIME_POLICY','/nonexistent'))
         try:fields['time_policy']=hashlib.sha256(path.read_bytes()).hexdigest()
         except OSError:fields['time_policy']='unconfigured'
+        history=os.environ.get('COLMEX_HISTORY_DIR')
+        if history:
+            fields['history_policy']='colmex-terminal-2026-11-06-v1'
+            for period in (300,3600):
+                path=Path(history)/f"{asset['symbol']}-{period}.json"
+                try:fields[f'history_{period}']=hashlib.sha256(path.read_bytes()).hexdigest()
+                except OSError:fields[f'history_{period}']='unavailable'
     if asset['provider']=='csv' and asset.get('path'):
         from pathlib import Path
         from platform_app import ROOT

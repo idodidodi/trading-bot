@@ -122,3 +122,27 @@ until its code deployment is verified.
 Source: `platform_app.py` (`main` startup/shutdown), `paper_trading.py` (`worker`),
 `demo_execution.py` (`_cycle`), `chasing_runtime.py` (`worker`). Do not restore
 trading worker startup here when reactivating a separate trading service.
+
+## Colmex native backfill
+
+When `COLMEX_HISTORY_DIR` is configured, the three reviewed index symbols use
+operator-imported, hash-checked Colmex H1/M5 archives plus current native H1/M5
+and M1 exports. Archive imports discard the forming final row. Broker candles
+retain their original timestamps; a shifted GER40 H1 candle is never relabelled
+or split to fit a UTC boundary. Whole source intervals tile each UTC bucket.
+Fresh native source revisions replace equal historical intervals. Native H1 is
+authoritative when available; M5/M1 fill only intervals they actually cover.
+
+Quote sessions were read from the live TGLColmex terminal on 2026-11-06: SPX
+Mon–Thu 00:00–21:15, 21:30–22:00, 23:05–24:00 UTC, Friday without the final session;
+GER40 weekdays 01:10–21:00 UTC; USDINDEX weekdays 01:00–22:00 UTC. Seasonal rules
+use New York for SPX/USDINDEX and Berlin for GER40, corroborated by the native
+archive across October/November transitions. These calendars distinguish regular
+closed time only; holidays, outages and absent trading-session bars are not filled.
+A missing open interval resets eligible history. Fully closed buckets are skipped;
+partly open buckets retain exact UTC boundaries and only actual quoted OHLC.
+
+Live identity, revision, freshness and UTC-policy checks still apply. New/unreviewed
+symbols retain the strict M1 path. Existing minimum-history, first-scan baseline and
+alert routing rules remain. Importing archives does not by itself select a provider,
+activate an asset or emit historical/test alerts.

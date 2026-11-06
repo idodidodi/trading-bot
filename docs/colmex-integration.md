@@ -34,3 +34,10 @@ readiness; do not treat collection success or a user request as a successful act
 The existing worker runs a separate collection bridge every 30 seconds so long scans
 do not expire the dashboard feed status or delay manifest requests. Reconciliation
 is serialized with scan-start refresh; new scan assets enter on the next scan.
+
+Native history backfill uses exporter v2.20 / package 2.2.0 and the operator-only
+`COLMEX_HISTORY_DIR` path. Install reviewed archives using the exporter repository’s
+`python -m colmex_mt4.history` CLI and source hashes. Archives remain outside Git.
+The scanner hashes archive revisions into its schedule identity. Native history
+remains subject to live-feed health and complete trading-session coverage. See
+TELEGRAM_ALERT_LOGIC.md for session, UTC alignment and signal eligibility rules.

@@ -1,7 +1,7 @@
 name: Colmex integration
 on:
   push:
-    branches: ['main', 'codex/colmex-scanner-integration']
+    branches: ['main', 'codex/colmex-scanner-integration', 'codex/colmex-history-backfill']
   pull_request:
 permissions:
   contents: read
