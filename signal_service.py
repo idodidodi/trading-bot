@@ -16,6 +16,10 @@ def publish(db, strategy, signal, **kwargs):
     db.execute('SELECT value FROM signal_stream_clock WHERE id=1 FOR UPDATE').fetchone()
     if db.execute('SELECT 1 FROM signal_events WHERE event_id=%s',(event['event_id'],)).fetchone():return
     cursor=db.execute('UPDATE signal_stream_clock SET value=value+1 WHERE id=1 RETURNING value').fetchone()[0]
+    # Context is an immutable publication snapshot, excluded from event identity.
+    # A retry after the cache changes must not create another signal event.
+    if strategy=='rsi' and signal.get('timeframe')=='5m' and 'higher_timeframe_context' in signal:
+        event['higher_timeframe_context']=signal['higher_timeframe_context']
     now=int(time.time()*1000)
     event.update(cursor=cursor,published_at=now)
     db.execute('INSERT INTO signal_events VALUES(%s,%s,%s,%s,%s)',

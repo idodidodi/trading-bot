@@ -342,6 +342,9 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
         scan_frames = list(selected_frames)
         if 'ma-cross' in selected_strategies and 'daily' not in scan_frames:
             scan_frames.append('daily')
+        from rsi_context import target as context_target
+        if context_target(configured_asset):
+            scan_frames.sort(key=lambda frame: frame=='5m')
         for timeframe in scan_frames:
             asset = for_timeframe(configured_asset, timeframe)
             strategies = list(selected_strategies) if timeframe in selected_frames else ['ma-cross']
@@ -503,7 +506,12 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     if asset.get('max_data_age_seconds') and age_seconds > asset['max_data_age_seconds']:
                         raise ValueError('Latest closed candle is older than the configured freshness limit')
                     pending = sorted((s for s in matches if s['confirmed_at'] > cutoff), key=lambda s:(s['confirmed_at'],s.get('signal_status')!='provisional'))
-                    new = sum(store.insert(validate_signal(s, rules) | {'market': asset.get('market') or 'unknown', 'detected_at': now}, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
+                    from rsi_context import refresh as refresh_context, read as read_context
+                    if not catchup:
+                        refresh_context(store,asset,timeframe,candles,matches,rules,now)
+                    context = ({'higher_timeframe_context':read_context(store,configured_asset,rules,now)}
+                               if context_target(configured_asset) and timeframe=='5m' and not catchup else {})
+                    new = sum(store.insert(validate_signal(s, rules) | {'market': asset.get('market') or 'unknown', 'detected_at': now} | context, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
                     with store.connect() as db:
                         from signal_service import reconcile_provisional
                         reconcile_provisional(db,source_id,timeframe,candles,rules)

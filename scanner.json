@@ -63,15 +63,24 @@
         "weekly": "kraken",
         "daily": "kraken",
         "4h": "kraken",
-        "1h": "kraken"
+        "1h": "kraken",
+        "5m": "kraken"
       },
       "timeframes": [
         "monthly",
         "weekly",
         "daily",
-        "4h"
+        "4h",
+        "1h",
+        "5m"
       ],
-      "portfolio": true
+      "portfolio": true,
+      "scan_strategies": [
+        "rsi",
+        "pin-bars",
+        "rsi-pb",
+        "ma-cross"
+      ]
     },
     {
       "id": "NVDA",
