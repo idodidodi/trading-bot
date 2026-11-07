@@ -88,3 +88,5 @@ The [archived SQLite documentation](https://github.com/idodidodi/trading-bot/tre
 ## Scheduled stock PDF reports
 
 Full S&P 500 weekly reports run Sunday at 08:00 Israel time; monthly reports run on the first calendar day at 08:00. PDFs are grouped by strategy and direction, with shared candle times and columns for ticker, company, candle open/close prices, and sector. Permanent portfolio alerts continue. See [installation, delivery, and coverage details](docs/stock-reports.md); apply `cloud/stock-reports.sql` before activating the updated worker.
+
+Read-only discovery is implemented separately from event delivery; see [the discovery contract and manual provisioning steps](SIGNAL_API.md#read-only-discovery-local-implementation-requires-manual-deployment). It is default-denied, searches existing published findings, requires reviewed session calendars, and does not start scans or authorize trades.

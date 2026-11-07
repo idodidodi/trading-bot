@@ -116,6 +116,7 @@ def administer(store,project,action):
 
 
 def handler(store,admin_token):
+    from signal_discovery import DiscoveryError, discover, administer as discovery_administer
     from http.server import BaseHTTPRequestHandler
     from urllib.parse import urlsplit,parse_qs
     class Handler(BaseHTTPRequestHandler):
@@ -140,14 +141,22 @@ def handler(store,admin_token):
                     elif url.path=='/v1/projects/credentials':
                         if not hmac.compare_digest(token,admin_token):raise PermissionError()
                         result=administer(store,body['project'],body['action'])
+                    elif url.path=='/v1/projects/discovery':
+                        if not hmac.compare_digest(token,admin_token):raise PermissionError()
+                        result=discovery_administer(store,body['project'],body['discovery'])
                     elif url.path=='/v1/execution-events':result=execution_notice(store,token,body)
                     elif url.path=='/v1/ack':result=acknowledge(store,token,body['cursor'])
                     else:self.respond(404,{'error':'Not found'});return
+                elif url.path=='/v1/discovery' or url.path.startswith('/v1/discovery/'):
+                    route='catalogue' if url.path=='/v1/discovery/catalogue' else 'search'
+                    identity=None if url.path in ('/v1/discovery','/v1/discovery/catalogue') else url.path.removeprefix('/v1/discovery/')
+                    result=discover(store,token,parse_qs(url.query,keep_blank_values=True),admin_token,route=route,signal_id=identity)
                 elif url.path=='/v1/events':
                     query=parse_qs(url.query)
                     result=consume(store,token,int(query['after'][0]) if 'after' in query else None,int(query.get('limit',['100'])[0]))
                 else:self.respond(404,{'error':'Not found'});return
                 self.respond(200,result)
+            except DiscoveryError as exc:self.respond(exc.status,{'error':exc.code})
             except PermissionError:self.respond(401,{'error':'Unauthorized'})
             except (ValueError,KeyError,TypeError):self.respond(400,{'error':'Invalid request'})
             except Exception:self.respond(503,{'error':'Service unavailable'})
