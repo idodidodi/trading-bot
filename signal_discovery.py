@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from signal_contract import canonical
 
 CATEGORIES = ('Stocks & ETFs', 'Forex', 'Futures', 'Crypto', 'Other assets')
-STRATEGIES = ('rsi', 'pin-bars', 'bb-pin-bars', 'rsi-pb', 'momentum', 'chase-4h-5m')
+STRATEGIES = ('rsi', 'pin-bars', 'bb-pin-bars', 'rsi-pb', 'ma-cross', 'momentum', 'chase-4h-5m')
 FRAMES = ('5m', '15m', '30m', '1h', '4h', 'daily', 'weekly', 'monthly')
 FILTERS = {'marketCategory', 'strategy', 'strategy_version', 'timeframe', 'source', 'symbol', 'direction'}
 MAX_ROWS = 10000
@@ -119,6 +119,12 @@ def source(asset):
     return f"{asset.get('provider','')}:{asset.get('exchange') or 'configured'}:{asset.get('symbol') or asset.get('id','')}"
 
 
+def asset_frames(asset, config):
+    frames=list(asset.get('timeframes',config.get('timeframes',[])))
+    if 'ma-cross' in asset.get('scan_strategies',[]) and 'daily' not in frames:frames.append('daily')
+    return frames
+
+
 def universe(config, status):
     """Latest scanner universe plus enabled static assets with missing coverage."""
     configured={a['id']:a for a in config.get('assets',[])}
@@ -126,7 +132,7 @@ def universe(config, status):
     for row in status.get('coverage',[]):
         if not isinstance(row,dict) or not all(row.get(k) for k in ('asset','provider','symbol','timeframe')):continue
         asset=configured.get(row['asset'])
-        if asset and (not asset.get('enabled',True) or row['timeframe'] not in asset.get('timeframes',config.get('timeframes',[]))):continue
+        if asset and (not asset.get('enabled',True) or row['timeframe'] not in asset_frames(asset,config)):continue
         if asset:
             expected=asset.get('timeframe_providers',{}).get(row['timeframe'],asset.get('provider'))
             if row['provider']!=expected and not (row['provider']=='alpaca' and row.get('fallback_from')==expected):continue
@@ -139,7 +145,7 @@ def universe(config, status):
         result[(info['source'],info['timeframe'])]=info
     for asset in configured.values():
         if not asset.get('enabled',True):continue
-        for frame in asset.get('timeframes',config.get('timeframes',[])):
+        for frame in asset_frames(asset,config):
             if any(i['asset_id']==asset['id'] and i['timeframe']==frame for i in result.values()):continue
             info={k:asset.get(k) for k in ('provider','symbol','exchange','market')}
             info['provider']=asset.get('timeframe_providers',{}).get(frame,info['provider'])
@@ -150,7 +156,7 @@ def universe(config, status):
 
 
 def feed_status(info, strategy, now):
-    row=info['coverage'];key={'pin-bars':'pin_bars','bb-pin-bars':'bb_pin_bars','rsi-pb':'rsi_pb'}.get(strategy)
+    row=info['coverage'];key={'pin-bars':'pin_bars','bb-pin-bars':'bb_pin_bars','rsi-pb':'rsi_pb','ma-cross':'ma_cross'}.get(strategy)
     state=row.get(key,{}) if key else row
     checked=row.get('checked_at');closed=row.get('last_closed_at');due=row.get('next_close_at')
     valid_time=lambda t: type(t) is int and 0<t<=now
@@ -227,7 +233,7 @@ def discover(store, token, params, secret, *, route='search', signal_id=None, no
     # Only metadata visible under both grant and requested filters is returned.
     for info in assets.values():
         for strategy in info['strategies']:
-            if strategy not in STRATEGIES:continue
+            if strategy not in STRATEGIES or strategy=='ma-cross' and info['timeframe']!='daily':continue
             flat=info|dict(strategy=strategy)
             metadata_filters=lambda f:{k:v for k,v in f.items() if k not in ('direction','strategy_version')}
             if not match(flat,metadata_filters(scope)) or not match(flat,metadata_filters(requested)):continue

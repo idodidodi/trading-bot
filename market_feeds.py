@@ -48,14 +48,23 @@ def verify(assets, now):
     import pin_bars
     import bb_pin_bars
     import rsi_pb
+    import ma_cross
     required = {'rsi': minimum_history(load_rules()),
                 'pin-bars': pin_bars.minimum_history(pin_bars.load_rules()),
                 'bb-pin-bars': bb_pin_bars.minimum_history(bb_pin_bars.load_rules()),
-                'rsi-pb': rsi_pb.minimum_history(rsi_pb.load_rules())}
+                'rsi-pb': rsi_pb.minimum_history(rsi_pb.load_rules()),
+                'ma-cross': ma_cross.minimum_history(ma_cross.load_rules())}
     history = {}
     for asset in assets:
-        need = max(required[s] for s in asset['scan_strategies'])
-        for frame in asset['timeframes']:
+        frames = list(asset['timeframes'])
+        if 'ma-cross' in asset['scan_strategies'] and 'daily' not in frames:
+            frames.append('daily')
+        for frame in frames:
+            strategies = asset['scan_strategies'] if frame in asset['timeframes'] else ['ma-cross']
+            strategies = [s for s in strategies if s != 'ma-cross' or frame == 'daily']
+            if not strategies:
+                continue
+            need = max(required[s] for s in strategies)
             feed = for_timeframe(asset, frame)
             bars = {'yahoo': fetch_yahoo, 'tiingo': fetch_tiingo}[feed['provider']](feed, frame)
             if len(check_candles(bars, now)) < need:

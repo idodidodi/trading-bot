@@ -36,7 +36,7 @@ class FamilyUpgradeTests(PostgresTestCase):
             with patch('scanner.fetch_twelve_data',return_value=bars) as feed:
                 first=scan_once(self.store,cfg,load_rules(),ms(now))
                 second=scan_once(Store(self.path),cfg,load_rules(),ms(now)+3600000)
-                self.assertEqual(feed.call_count,1)
+                self.assertEqual(feed.call_count,2)  # Selected frame plus independent daily crossover check
                 self.assertEqual(first[0]['status'],'insufficient history')
                 self.assertEqual(second[0]['check_state'],'waiting for candle close')
 

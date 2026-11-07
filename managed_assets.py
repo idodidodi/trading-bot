@@ -9,7 +9,7 @@ LOWER_TIMEFRAMES = ('5m', '15m', '30m')
 SUPPORTED_TIMEFRAMES = DEFAULTS + ['1h', *LOWER_TIMEFRAMES]
 LIMIT = 100
 PROVIDERS = ('csv', 'twelvedata', 'kraken', 'oanda', 'tiingo', 'alpaca', 'fmp', 'yahoo', 'colmex')
-SCAN_STRATEGIES = ['rsi', 'pin-bars', 'rsi-pb']
+SCAN_STRATEGIES = ['rsi', 'pin-bars', 'rsi-pb', 'ma-cross']
 SUPPORTED_SCAN_STRATEGIES = SCAN_STRATEGIES + ['bb-pin-bars']
 TOKEN = re.compile(r'[A-Za-z0-9#_^=:.!/\-]{1,100}')
 
@@ -27,6 +27,10 @@ def ensure(store, config):
         asset.setdefault('enabled', True)
         asset.setdefault('scan_strategies', SCAN_STRATEGIES.copy())
         asset.setdefault('tradingview_symbol', '')
+    value['ma_cross_defaults_applied'] = True
+    for asset in value['assets']:
+        if 'ma-cross' not in asset['scan_strategies']:
+            asset['scan_strategies'].append('ma-cross')
     value['rsi_pb_defaults_applied'] = True
     for asset in value['assets']:
         if 'rsi' in asset['scan_strategies'] and 'rsi-pb' not in asset['scan_strategies']:
@@ -39,6 +43,7 @@ def ensure(store, config):
 
 def get(store):
     migrate_rsi_pb(store)
+    migrate_ma_cross(store)
     with store.connect() as db:
         row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
     if not row:
@@ -69,6 +74,26 @@ def migrate_rsi_pb(store):
         db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1',(revision,payload))
         db.execute('INSERT INTO config_history VALUES(%s,%s,%s)',(revision,payload,time.time()))
 
+
+
+def migrate_ma_cross(store):
+    """Enable crosses once for existing assets; preserve subsequent opt-outs."""
+    with store.connect() as db:
+        db.execute('SELECT pg_advisory_xact_lock(714269001)')
+        row = db.execute('SELECT revision,payload FROM managed_config WHERE id=1').fetchone()
+        if not row:
+            return
+        config = json.loads(row[1])
+        if config.get('ma_cross_defaults_applied'):
+            return
+        for asset in config['assets']:
+            strategies = asset.setdefault('scan_strategies', SCAN_STRATEGIES.copy())
+            if 'ma-cross' not in strategies:
+                strategies.append('ma-cross')
+        config['ma_cross_defaults_applied'] = True
+        revision, payload = row[0]+1, json.dumps(config)
+        db.execute('UPDATE managed_config SET revision=%s,payload=%s WHERE id=1', (revision,payload))
+        db.execute('INSERT INTO config_history VALUES(%s,%s,%s)', (revision,payload,time.time()))
 
 
 def validate_asset(asset):

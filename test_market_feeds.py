@@ -55,6 +55,15 @@ class MarketFeedsTests(PostgresTestCase):
             self.assertEqual(feeds,{'yahoo:SNP:^GSPC','yahoo:XETRA:^GDAXI','yahoo:NYB:DX-Y.NYB',
                                     'tiingo:Tiingo-UTC:XAU/USD','tiingo:Tiingo-UTC:USOIL/USD'})
 
+    def test_cross_history_is_daily_only_even_for_intraday_portfolios(self):
+        asset=candidates(self.config())[0]|dict(timeframes=['4h'],scan_strategies=['rsi','ma-cross'])
+        def history(asset,frame):
+            return fixture() if frame=='daily' else fixture()[-70:]
+        with patch('yahoo_feed.fetch_yahoo',side_effect=history) as fetch:
+            result=verify([asset],fixture()[-1].end)
+        self.assertEqual(set(result),{('SPX','4h'),('SPX','daily')})
+        self.assertEqual([c.args[1] for c in fetch.call_args_list],['4h','daily'])
+
     def test_short_history_still_cannot_generate_indicator_signals(self):
         assets = candidates(self.config())
         with patch('yahoo_feed.fetch_yahoo',return_value=fixture()[:10]),\

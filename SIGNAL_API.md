@@ -30,7 +30,7 @@ Delivery is at least once; broker actions cannot be exactly-once across a networ
 
 `examples/signal_subscriber.py` is a dependency-free inbox/cursor example, exercised against this API by integration tests. The separate [Trading Executor repository](https://github.com/idodidodi/trading-executor) implements the production consumer contract without importing this service. The Signal Service desktop window can register a live subscriber and display its token once.
 
-## Read-only discovery (local implementation; requires manual deployment)
+## Read-only discovery
 
 Discovery is a separate contract, `discovery_version=1`. It does not call `/v1/events`, acquire subscription row locks, update `floor`/`ack`/`delivered`, publish events, fetch provider history, start scanning or authorize orders. Database reads use one repeatable-read, read-only transaction. Discovery never grants `delivery_mode=live` to a finding.
 
@@ -54,7 +54,7 @@ Discovery grants are independent of execution subscription filters and registrat
 | `/v1/discovery` | Eligible published findings, newest observation first, then stable signal ID |
 | `/v1/discovery/{signal_id}` | Revalidate one visible finding; returns its latest lifecycle and explicit eligibility reason, including invalidation/closure/staleness; invisible/unconfigured identities return 404 |
 
-All three use the project's bearer token. Search accepts repeated `marketCategory`, `strategy`, `strategy_version`, `timeframe`, `source`, `symbol`, and `direction` parameters. Different dimensions are AND; values are OR. Missing/empty values remove the request restriction but cannot widen the grant. Exact category labels are `Stocks & ETFs`, `Forex`, `Futures`, `Crypto`, `Other assets`. Unsupported category/strategy/frame values, unknown keys and repeated scalar parameters return 400. Supported strategy names do not imply enabled production scanning; the catalogue reports the combinations actually configured/observed.
+All three use the project's bearer token. Search accepts repeated `marketCategory`, `strategy`, `strategy_version`, `timeframe`, `source`, `symbol`, and `direction` parameters. Different dimensions are AND; values are OR. Missing/empty values remove the request restriction but cannot widen the grant. Exact category labels are `Stocks & ETFs`, `Forex`, `Futures`, `Crypto`, `Other assets`. Unsupported category/strategy/frame values, unknown keys and repeated scalar parameters return 400. Daily `ma-cross` discovery includes the extra daily frame scheduled by the scanner even when the asset otherwise selects intraday frames. Supported strategy names do not imply enabled production scanning; the catalogue reports the combinations actually configured/observed.
 
 `max_age_minutes` defaults to the smaller of 60 and the grant allowance, with bounds 1–10080. `limit` defaults to 100, with bounds 1–200. Both original signal age and latest lifecycle observation must fit the requested age; a recent publication/update never refreshes an old signal. Future or missing timestamps fail closed. The matching feed must have a successful strategy check within five minutes, a completed candle at least as recent as the signal observation, no reported limited-history condition, and no next-check deadline overdue by more than five minutes. These conservative checks can exclude a long-timeframe finding even though its signal age is acceptable. No on-demand scan is triggered to overcome that exclusion.
 

@@ -103,12 +103,12 @@ async function openAssetManager(signal){
     const selectionMarket=Object.entries(settings.daily_selection?.selected||{}).find(([,rows])=>rows.some(r=>r.symbol===base.symbol))?.[0];
     if(['twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo'].includes(base.provider)&&base.symbol){
      const exchange=base.provider==='oanda'?'OANDA':base.provider==='tiingo'?'Tiingo':base.exchange;
-     matches=[{...base,exchange,market:signal.market||selectionMarket||({alpaca:'stock',kraken:'crypto',oanda:'forex',tiingo:'forex'})[base.provider],enabled:true,feed_confirmed:true,timeframes:[...new Set(settings.coverage.filter(r=>r.asset===base.id).map(r=>r.timeframe))],timeframe_providers:Object.fromEntries(settings.coverage.filter(r=>r.asset===base.id&&r.provider!==base.provider).map(r=>[r.timeframe,r.provider])),scan_strategies:settings.coverage.find(r=>r.asset===base.id)?.scan_strategies||['rsi','pin-bars','rsi-pb'],tradingview_symbol:''}];newAsset=true;
+     matches=[{...base,exchange,market:signal.market||selectionMarket||({alpaca:'stock',kraken:'crypto',oanda:'forex',tiingo:'forex'})[base.provider],enabled:true,feed_confirmed:true,timeframes:[...new Set(settings.coverage.filter(r=>r.asset===base.id).map(r=>r.timeframe))],timeframe_providers:Object.fromEntries(settings.coverage.filter(r=>r.asset===base.id&&r.provider!==base.provider).map(r=>[r.timeframe,r.provider])),scan_strategies:settings.coverage.find(r=>r.asset===base.id)?.scan_strategies||['rsi','pin-bars','rsi-pb','ma-cross'],tradingview_symbol:''}];newAsset=true;
     }
    }
   }
   if(!matches.length&&signal.strategy==='momentum'&&signal.market==='stock'){
-   matches=[{id:'STOCK-'+signal.symbol,provider:'alpaca',symbol:signal.symbol,exchange:'Alpaca-sip-split',market:'stock',enabled:true,feed_confirmed:true,timeframes:['daily'],scan_strategies:['rsi','pin-bars','rsi-pb'],tradingview_symbol:''}];newAsset=true;
+   matches=[{id:'STOCK-'+signal.symbol,provider:'alpaca',symbol:signal.symbol,exchange:'Alpaca-sip-split',market:'stock',enabled:true,feed_confirmed:true,timeframes:['daily'],scan_strategies:['rsi','pin-bars','rsi-pb','ma-cross'],tradingview_symbol:''}];newAsset=true;
   }
   panel.replaceChildren();
   if(!matches.length){
@@ -128,11 +128,11 @@ async function openAssetManager(signal){
    form.append(node('p',`${asset.id} · ${asset.provider} · ${asset.symbol||asset.id}`),enableLabel);
    const field=node('fieldset');field.append(node('legend','Scanner timeframes'));
    const selected={};for(const f of assetFrames){const label=node('label',({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'1 hour','30m':'30 minutes','15m':'15 minutes','5m':'5 minutes'})[f]),input=node('input');input.type='checkbox';input.value=f;input.checked=(asset.timeframes||settings.config.timeframes||defaultAssetFrames).includes(f);selected[f]=input;label.append(input);field.append(label);}
-   form.append(field,node('p','Select one or more timeframes. Uncheck a timeframe to remove it, or replace it by selecting another. These settings apply across this asset’s candle strategies. Momentum always uses daily candles.'));
+   form.append(field,node('p','Select one or more timeframes. Uncheck a timeframe to remove it, or replace it by selecting another. These settings apply to RSI and pin-bar strategies. SMA crosses and Momentum use daily candles.'));
    const strategyField=node('fieldset');strategyField.append(node('legend','Scan strategies'));
-   const strategyInputs={},strategyOptions=[['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB']];
-   for(const [key,title] of strategyOptions){const label=node('label',title),input=node('input');input.type='checkbox';input.value=key;input.checked=(asset.scan_strategies||['rsi','pin-bars','rsi-pb']).includes(key);strategyInputs[key]=input;label.append(input);strategyField.append(label);}
-   form.append(strategyField,node('p','Selected strategies run on every selected timeframe for this asset. Momentum is managed separately by the daily scanner.'));
+   const strategyInputs={},strategyOptions=[['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB'],['ma-cross','Daily SMA 50/200 crosses']];
+   for(const [key,title] of strategyOptions){const label=node('label',title),input=node('input');input.type='checkbox';input.value=key;input.checked=(asset.scan_strategies||['rsi','pin-bars','rsi-pb','ma-cross']).includes(key);strategyInputs[key]=input;label.append(input);strategyField.append(label);}
+   form.append(strategyField,node('p','RSI and pin-bar strategies use the selected timeframes. SMA crosses always scan daily, even when daily is not selected above. Momentum is managed separately.'));
    if(newAsset)form.append(node('p','Saving keeps this rotating selection in your permanent assets so its scanner settings persist.'));
    if(asset.provider==='csv')form.append(node('p','Each selected timeframe needs its own configured candle CSV file.'));
    const save=node('button','Save changes');save.type='submit';
@@ -200,9 +200,9 @@ async function loadAssets(){state=await request('/api/assets');content.replaceCh
  }
  content.append(node('h3','Permanent portfolio'));
  const groups=new Map();for(const a of state.config.assets){const category=marketCategory(a);if(!groups.has(category)){const section=node('section');section.className='asset-group';section.append(node('h4',category));groups.set(category,section);}}for(const category of ['Stocks & ETFs','Forex','Futures','Crypto','Other assets'])if(groups.has(category))content.append(groups.get(category));
- for(const asset of state.config.assets){const scanStrategies=asset.scan_strategies||['rsi','pin-bars','rsi-pb'],strategyName=scanStrategies.map(s=>({'rsi':'RSI','pin-bars':'Pin-Bars','bb-pin-bars':'BB Pin-Bars','rsi-pb':'RSI + PB'})[s]).join(' + ');const warning=coverageWarning(asset),row=node('details'),summary=node('summary',`${asset.id}${asset.name?' · '+asset.name:''} · ${asset.enabled?'Enabled':'Disabled'} · ${strategyName} · ${(asset.timeframes||defaultAssetFrames).join(', ')}${warning?' · Data unavailable':''}`);row.className='asset-row'+(warning?' asset-unavailable':'');row.append(summary);summary.title=warning;row.ontoggle=()=>row.classList.toggle('selected-row',row.open);const field=node('fieldset');if(warning){const note=node('p',warning);note.className='error';field.append(note);}
+ for(const asset of state.config.assets){const scanStrategies=asset.scan_strategies||['rsi','pin-bars','rsi-pb','ma-cross'],strategyName=scanStrategies.map(s=>({'rsi':'RSI','pin-bars':'Pin-Bars','bb-pin-bars':'BB Pin-Bars','rsi-pb':'RSI + PB','ma-cross':'SMA crosses'})[s]).join(' + ');const warning=coverageWarning(asset),row=node('details'),summary=node('summary',`${asset.id}${asset.name?' · '+asset.name:''} · ${asset.enabled?'Enabled':'Disabled'} · ${strategyName} · ${(asset.timeframes||defaultAssetFrames).join(', ')}${warning?' · Data unavailable':''}`);row.className='asset-row'+(warning?' asset-unavailable':'');row.append(summary);summary.title=warning;row.ontoggle=()=>row.classList.toggle('selected-row',row.open);const field=node('fieldset');if(warning){const note=node('p',warning);note.className='error';field.append(note);}
  const enabled=node('input');enabled.type='checkbox';enabled.checked=asset.enabled;const enablelabel=node('label','Scan enabled');enablelabel.append(enabled);field.append(enablelabel);
- const strategies={},strategyField=node('fieldset');strategyField.append(node('legend','Scan strategies'));for(const [key,title] of [['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB']]){const input=node('input');input.type='checkbox';input.value=key;input.checked=scanStrategies.includes(key);input.setAttribute('aria-label',asset.id+' '+title);strategies[key]=input;const label=node('label',title);label.append(input);strategyField.append(label);}field.append(strategyField,node('p','Applies to all selected candle timeframes for this asset. Save asset to apply.'));
+ const strategies={},strategyField=node('fieldset');strategyField.append(node('legend','Scan strategies'));for(const [key,title] of [['rsi','RSI divergence'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB'],['ma-cross','Daily SMA 50/200 crosses']]){const input=node('input');input.type='checkbox';input.value=key;input.checked=scanStrategies.includes(key);input.setAttribute('aria-label',asset.id+' '+title);strategies[key]=input;const label=node('label',title);label.append(input);strategyField.append(label);}field.append(strategyField,node('p','RSI and pin bars use the selected timeframes. SMA crosses always use daily candles. Save asset to apply.'));
  const provider=node('select');for(const p of ['csv','twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo','colmex']){const o=node('option',p==='csv'?'Candle CSV files':p==='kraken'?'Kraken spot':p==='oanda'?'OANDA forex':p==='tiingo'?'Tiingo FX / commodities':p==='alpaca'?'Alpaca US equities':p==='fmp'?'FMP cash indices':p==='colmex'?'Colmex MT4':p==='yahoo'?'Yahoo indices / futures (delayed)':'Twelve Data');o.value=p;provider.append(o);}provider.value=asset.provider;field.append(provider);
  const inputs={};for(const [key,title] of [['symbol','Provider symbol'],['exchange','Provider exchange'],['tradingview_symbol','TradingView exchange:ticker']]){const l=node('label',title),i=node('input');i.value=asset[key]||'';i.maxLength=100;inputs[key]=i;l.append(i);field.append(l);}
  const confirmed=node('input');confirmed.type='checkbox';confirmed.checked=asset.feed_confirmed===true;const cl=node('label','I verified this provider feed');cl.append(confirmed);field.append(cl);
@@ -220,9 +220,9 @@ function selectionTable(headers,rows,ids){const grid=table(headers,rows);for(con
 let page=0,showArchived=false;
 const backtestSort={key:'confirmed_at',order:'asc'};
 const strategyViews={live:'rsi',backtest:'rsi'};
-function strategySelector(source){const label=node('label','Strategy '),select=node('select');select.setAttribute('aria-label','Strategy view');for(const [key,name] of [['rsi','RSI divergence'],['momentum','Daily momentum'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB']]){const option=node('option',name);option.value=key;select.append(option);}select.value=strategyViews[source];select.onchange=()=>{strategyViews[source]=select.value;page=0;if(source==='backtest'){csvReportId=null;csvPage=0;}findings(source).catch(e=>message(e.message,true));};label.append(select);return label;}
+function strategySelector(source){const label=node('label','Strategy '),select=node('select');select.setAttribute('aria-label','Strategy view');for(const [key,name] of [['rsi','RSI divergence'],['momentum','Daily momentum'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB'],['ma-cross','Daily SMA 50/200 crosses']]){if(key==='ma-cross'&&source!=='live')continue;const option=node('option',name);option.value=key;select.append(option);}select.value=strategyViews[source];select.onchange=()=>{strategyViews[source]=select.value;page=0;if(source==='backtest'){csvReportId=null;csvPage=0;}findings(source).catch(e=>message(e.message,true));};label.append(select);return label;}
 async function findings(source){
- if(['pin-bars','bb-pin-bars','rsi-pb'].includes(strategyViews[source]))return source==='live'?pinBarFindings(strategyViews[source]):csvBacktestFindings(strategyViews[source]);
+ if(['pin-bars','bb-pin-bars','rsi-pb','ma-cross'].includes(strategyViews[source]))return source==='live'?pinBarFindings(strategyViews[source]):csvBacktestFindings(strategyViews[source]);
  if(strategyViews[source]==='momentum')return momentumFindings(source);
  const result=await request(`/api/findings?source=${source}&page=${page}&archived=${showArchived}${source==='backtest'?`&sort=${backtestSort.key}&order=${backtestSort.order}`:''}`);if(strategyViews[source]!=='rsi')return;content.replaceChildren(node('h2',source==='live'?'Signal workspace':'Historical research'));
  content.append(strategySelector(source));
@@ -377,7 +377,7 @@ async function personalTelegramControls(panel,isCurrent){
   section.append(node('p','Choose which alerts you receive. Changes apply only to your personal groups. Re-enabling resumes new alerts without replaying skipped alerts.'));
   if(!value.registered)section.append(node('p','Your personal Telegram groups have not been connected yet. You can save your preferences now.'));
   const inputs={},status=node('p');status.setAttribute('role','status');
-  const categories=[['general','General'],...['forex','crypto','stocks','other'].flatMap(m=>[['rsi','RSI'],['pin-bars','Pin Bars'],['rsi-pb','RSI + PB']].map(([s,label])=>[m+'.'+s,m[0].toUpperCase()+m.slice(1)+' · '+label]))];
+  const categories=[['general','General'],['other-signals','Other Signals'],...['forex','crypto','stocks','other'].flatMap(m=>[['rsi','RSI'],['pin-bars','Pin Bars'],['rsi-pb','RSI + PB']].map(([s,label])=>[m+'.'+s,m[0].toUpperCase()+m.slice(1)+' · '+label]))];
   for(const [key,label] of categories){
    const row=node('label'),input=node('input');input.type='checkbox';input.checked=value.enabled[key]!==false;
    input.setAttribute('aria-label','Receive '+label+' alerts');inputs[key]=input;row.append(input,document.createTextNode(' '+label));section.append(row);
@@ -395,8 +395,8 @@ async function telegramRoutingControls(panel,isCurrent){
  try{
   let value=await request('/api/telegram-routing');if(!isCurrent())return;
   const inputs={},status=node('p');
-  section.append(node('p',online?'Save group chat IDs here. Scanners refresh automatically; blank categories use General.':'Cached cloud routing. Edit destinations in the online dashboard Settings.'));
-  for(const [key,label] of [['general','General'],...['forex','crypto','stocks','other'].flatMap(m=>[['rsi','RSI'],['pin-bars','Pin Bars'],['rsi-pb','RSI + PB']].map(([s,label])=>[m+'.'+s,m[0].toUpperCase()+m.slice(1)+' · '+label]))]){
+  section.append(node('p',online?'Save group chat IDs here. Scanners refresh automatically; blank market categories use General. Other Signals is dedicated and must have its own destination.':'Cached cloud routing. Edit destinations in the online dashboard Settings.'));
+  for(const [key,label] of [['general','General'],['other-signals','Other Signals'],...['forex','crypto','stocks','other'].flatMap(m=>[['rsi','RSI'],['pin-bars','Pin Bars'],['rsi-pb','RSI + PB']].map(([s,label])=>[m+'.'+s,m[0].toUpperCase()+m.slice(1)+' · '+label]))]){
    const row=node('label',label+' '),input=node('input');input.type='text';input.value=value.routes[key]||'';input.placeholder='-100…';input.disabled=!value.editable;input.setAttribute('aria-label',label+' chat ID');inputs[key]=input;row.append(input);section.append(row);
   }
   if(value.editable){
@@ -560,19 +560,19 @@ async function momentumFindings(source){
 }
 
 async function pinBarFindings(strategy='pin-bars'){
- const combined=strategy==='rsi-pb',bb=strategy==='bb-pin-bars',title=combined?'RSI + PB':bb?'BB Pin-Bars':'Pin-Bars';
+ const cross=strategy==='ma-cross',combined=strategy==='rsi-pb',bb=strategy==='bb-pin-bars',title=cross?'Daily SMA 50/200 crosses':combined?'RSI + PB':bb?'BB Pin-Bars':'Pin-Bars';
  content.replaceChildren(node('h2',`Loading ${title}…`),strategySelector('live'));
  const data=await request('/api/'+strategy+'?page='+page);if(strategyViews.live!==strategy)return;
  content.replaceChildren(node('h2',`${title} signals`),strategySelector('live'));
  const wickLimit=Number.isFinite(data.rules.max_short_wick_ratio)?` · short wick ≤ ${data.rules.max_short_wick_ratio*100}% of long wick`:'';
- content.append(node('p',combined?'RSI Divergence and PinBars · next candle only · opposite wick shape · no EMA filters · direction follows RSI.':bb?`BB ${data.rules.bb_period}/${data.rules.bb_multiplier} · wick > ${data.rules.ratio} × body${wickLimit} · bullish lower-BB touch or bearish upper-BB touch · no EMA filters.`:`EMA ${data.rules.fast}/${data.rules.slow} · wick > ${data.rules.ratio} × body${wickLimit} · touch either EMA · confirmed at the signal candle close.`));
+ content.append(node('p',cross?'50-day / 200-day close-based SMA · golden and death crosses · completed daily candles only.':combined?'RSI Divergence and PinBars · next candle only · opposite wick shape · no EMA filters · direction follows RSI.':bb?`BB ${data.rules.bb_period}/${data.rules.bb_multiplier} · wick > ${data.rules.ratio} × body${wickLimit} · bullish lower-BB touch or bearish upper-BB touch · no EMA filters.`:`EMA ${data.rules.fast}/${data.rules.slow} · wick > ${data.rules.ratio} × body${wickLimit} · touch either EMA · confirmed at the signal candle close.`));
  content.append(node('p',data.scanned_at?'Latest scan: '+displayTime(data.scanned_at):'Awaiting the first scan.'));
- if(online)content.append(node('p',`Hosted results show up to the latest ${data.mirror_limit??500} synced signals.`));
+ if(online&&strategy!=='ma-cross')content.append(node('p',`Hosted results show up to the latest ${data.mirror_limit??500} synced signals.`));
  const rows=data.signals.map(s=>{const evidence=node('details');evidence.append(node('summary','Candle evidence'),node('p',`OHLC: ${s.open} / ${s.high} / ${s.low} / ${s.close}`),node('p',pinBarEvidence(s)),node('p',`Source: ${s.source} · candle: ${displayTime(s.candle_at)} · ${s.rules.seed} · version: ${s.version}`));return [s.symbol,s.timeframe,s.direction.toUpperCase(),displayTime(s.confirmed_at),evidence,manageAssetButton(s)];});
  content.append(table(['Asset','Timeframe','Direction','Confirmed','Evidence','Actions'],rows));
  if(!rows.length)content.append(node('p',`No new ${title} signals recorded. The first successful scan establishes a baseline.`));
  const nav=node('div');if(page>0)nav.append(button('Previous',()=>{page--;pinBarFindings(strategy).catch(e=>message(e.message,true));}));if(data.has_more)nav.append(button('Next',()=>{page++;pinBarFindings(strategy).catch(e=>message(e.message,true));}));content.append(nav);
- content.append(node('h3',`${title} coverage`),table(['Asset','Timeframe','Provider','Status','Latest candle','Details'],data.coverage.map(r=>[r.asset,r.timeframe,r.provider,r.check_state||r.status,r.last_closed_at?displayTime(r.last_closed_at):'—',[r.reason||`${r.waiting_setups||0} waiting setups · ${r.candles||0} closed candles · ${r.new_signals||0} new signals${r.limited_history?' · limited indicator history':''}`,r.data_notes].filter(Boolean).join(' · ')])));
+ content.append(node('h3',`${title} coverage`),table(['Asset','Timeframe','Provider','Status','Latest candle','Details'],data.coverage.map(r=>[r.asset,r.timeframe,r.provider,r.check_state||r.status,r.last_closed_at?displayTime(r.last_closed_at):'—',[r.reason||`${cross?'':`${r.waiting_setups||0} waiting setups · `}${r.candles||0} closed candles · ${r.new_signals||0} new signals${r.limited_history?' · limited indicator history':''}`,r.data_notes].filter(Boolean).join(' · ')])));
 }
 
 let csvReportId=null,csvPage=0;
@@ -614,6 +614,7 @@ function candleDrawing(s){
 }
 
 function pinBarEvidence(s){
+ if(s.strategy==='ma-cross')return `${s.direction==='bullish'?'Golden cross':'Death cross'} · SMA50: ${s.previous_fast_sma} → ${s.fast_sma} · SMA200: ${s.previous_slow_sma} → ${s.slow_sma}`;
  if(s.strategy==='rsi-pb')return `Opposite pinbar: ${s.pinbar_direction} · body: ${s.body} · lower wick: ${s.lower_wick} · upper wick: ${s.upper_wick} · divergence candle: ${displayTime(s.pivot2)} → ${displayTime(s.pivot_closed_at)} · pinbar candle: ${displayTime(s.candle_at)} → ${displayTime(s.confirmed_at)} · `+s.divergences.map(r=>`Reference ${displayTime(r.pivot1)} → ${displayTime(r.pivot1_closed_at||r.pivot_closed_at)} · Price ${r.price1} → ${r.price2} · RSI ${r.rsi1.toFixed(2)} → ${r.rsi2.toFixed(2)} · BB ${r.band2} · touch ${r.band_touch_price}`).join(' | ');
  const location=s.strategy==='bb-pin-bars'?`Lower BB: ${s.lower_bb} · upper BB: ${s.upper_bb}`:`Fast EMA: ${s.fast_ema} · slow EMA: ${s.slow_ema}`;
  return `${location} · body: ${s.body} · lower wick: ${s.lower_wick} · upper wick: ${s.upper_wick}${Number.isFinite(s.rules?.max_short_wick_ratio)?` · short wick limit: ${s.rules.max_short_wick_ratio*100}% of long wick`:""}`;

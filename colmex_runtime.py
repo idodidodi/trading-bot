@@ -47,7 +47,7 @@ def _refresh(store, config):
                 raise ValueError('Colmex requested asset ID conflicts with a configured asset')
             result['assets'].append(dict(id='COLMEX-'+symbol,provider='colmex',symbol=symbol,
                 exchange='Colmex-MT4',market='forex',feed_confirmed=True,enabled=True,
-                timeframes=['4h'],scan_strategies=['rsi','pin-bars','rsi-pb'],tradingview_symbol=''))
+                timeframes=['4h'],scan_strategies=['rsi','pin-bars','rsi-pb','ma-cross'],tradingview_symbol=''))
         registry = reader.read_json(Path(folder)/'ColmexSubscribers.json', 1000000)
         reserved = configured | {s for owner,names in registry['subscribers'].items() if owner != 'scanner' for s in names}
         payload = dict(owner_disabled_symbols=sorted(disabled),reserved_symbols=sorted(reserved),status='collecting',server=state['server'],catalogue=catalogue['symbols'],

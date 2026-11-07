@@ -74,14 +74,14 @@ test('closing the dialog discards a pending version response',async()=>{
  assert.ok(text(get('version-content')).includes('Checking versions…'));
 });
 
-test('Telegram routing renders thirteen destinations and saves numeric strings with revision',async()=>{
+test('Telegram routing renders fourteen destinations and saves numeric strings with revision',async()=>{
  const {context,get}=setup({});
  const calls=[];
  context.request=async(path,body)=>{calls.push({path,body});return body?{revision:5,routes:body.routes,editable:true}:{revision:4,routes:{general:'-100123','forex.rsi':'-100456'},editable:true};};
  await context.telegramRoutingControls(get('routes'),()=>true);
  const controls=descendants(get('routes'));
  const inputs=controls.filter(e=>e.tag==='input');
- assert.equal(inputs.length,13);
+ assert.equal(inputs.length,14);
  assert.equal(inputs[0].value,'-100123');
  inputs[1].value=' -100789 ';
  const save=controls.find(e=>e.textContent==='Save Telegram groups');
@@ -89,7 +89,7 @@ test('Telegram routing renders thirteen destinations and saves numeric strings w
  assert.equal(calls.length,2);
  assert.equal(calls[1].path,'/api/telegram-routing');
  assert.equal(calls[1].body.revision,4);
- assert.equal(calls[1].body.routes['forex.rsi'],'-100789');
+ assert.equal(calls[1].body.routes['other-signals'],'-100789');
  assert.ok(text(get('routes')).includes('Connected scanners will refresh'));
  inputs[1].value='@invalid';await save.onclick();assert.equal(calls.length,2);
 });
@@ -99,7 +99,7 @@ test('cached Telegram routes are read only and stale dialog responses are discar
  context.request=async()=>({revision:4,routes:{general:'-100123'},editable:false});
  await context.telegramRoutingControls(get('routes'),()=>true);
  const controls=descendants(get('routes'));
- assert.equal(controls.filter(e=>e.tag==='input'&&e.disabled).length,13);
+ assert.equal(controls.filter(e=>e.tag==='input'&&e.disabled).length,14);
  assert.ok(!controls.some(e=>e.textContent==='Save Telegram groups'));
  await context.telegramRoutingControls(get('stale'),()=>false);
  assert.equal(descendants(get('stale')).filter(e=>e.tag==='input').length,0);

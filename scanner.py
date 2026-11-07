@@ -263,8 +263,10 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     from managed_assets import effective, cache_candles, for_timeframe
     import pin_bars
     import bb_pin_bars
+    import ma_cross
     import rsi_pb
     pin_rules = pin_bars.load_rules()
+    cross_rules = ma_cross.load_rules()
     bb_rules = bb_pin_bars.load_rules()
     combined_rules = rsi_pb.load_rules(rules)
     from shared_kraken import fetch as shared_kraken_fetch
@@ -334,10 +336,19 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     for configured_asset in config['assets']:
         if not configured_asset.get('enabled', True) or configured_asset['id'].replace('/','').upper()=='USDCNY':
             continue
-        for timeframe in configured_asset.get('timeframes', config['timeframes']):
+        from managed_assets import SCAN_STRATEGIES
+        selected_strategies = configured_asset.get('scan_strategies', SCAN_STRATEGIES)
+        selected_frames = configured_asset.get('timeframes', config['timeframes'])
+        scan_frames = list(selected_frames)
+        if 'ma-cross' in selected_strategies and 'daily' not in scan_frames:
+            scan_frames.append('daily')
+        for timeframe in scan_frames:
             asset = for_timeframe(configured_asset, timeframe)
-            from managed_assets import SCAN_STRATEGIES
-            strategies = configured_asset.get('scan_strategies', SCAN_STRATEGIES)
+            strategies = list(selected_strategies) if timeframe in selected_frames else ['ma-cross']
+            if timeframe != 'daily':
+                strategies = [s for s in strategies if s != 'ma-cross']
+            if not strategies:
+                continue
             provider = asset['provider']
             row = dict(asset=asset['id'], timeframe=timeframe, provider=provider,
                        exchange=asset.get('exchange', ''), symbol=asset.get('symbol', asset['id']),
@@ -353,7 +364,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 coverage.append(row|dict(status='weekday only',reason='Stock scans paused Saturday/Sunday',checked_at=now,next_close_at=next_scan(now)))
                 continue
             from scan_schedule import identity, saved, save, next_due, provider_lag
-            schedule_key=identity(asset,timeframe,rules | dict(skill_hash=rules['skill_hash'] + pin_rules['version'] + bb_rules['version'] + combined_rules['version']))
+            schedule_key=identity(asset,timeframe,rules | dict(skill_hash=rules['skill_hash'] + pin_rules['version'] + bb_rules['version'] + combined_rules['version'] + cross_rules['version']))
             previous=saved(store,schedule_key,now)
             if previous:
                 coverage.append(previous)
@@ -437,6 +448,15 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     if asset.get('weekly_screen_selected'):
                         selection_start = asset.get('weekly_screen_since',asset['weekly_screen_week_start'])
                     row['bb_pin_bars'] = bb_pin_bars.scan(store, asset, timeframe, candles, bb_rules, now, selection_start, catchup=bool(catchup))
+                if 'ma-cross' not in strategies:
+                    row['ma_cross'] = dict(status='disabled', reason='SMA crossovers use daily candles only' if timeframe != 'daily' else 'SMA crossover scanning disabled for this asset')
+                elif is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
+                    row['ma_cross'] = dict(status='excluded', reason='Stock below $5 minimum')
+                else:
+                    selection_start = selection['starts_at'] if asset.get('daily_selected') and selection and not catchup else None
+                    if asset.get('weekly_screen_selected'):
+                        selection_start = asset.get('weekly_screen_since',asset['weekly_screen_week_start'])
+                    row['ma_cross'] = ma_cross.scan(store, asset, timeframe, candles, cross_rules, now, selection_start, catchup=bool(catchup))
                 if is_stock(asset) and candles and candles[-1].close<MIN_PRICE:
                     row.update(status='excluded',candles=len(candles),reason='Stock below $5 minimum; no signals generated')
                 elif 'rsi' not in strategies:
@@ -451,7 +471,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                                 publish(db,'rsi',finding | dict(market=asset.get('market','unknown')))
                             reconcile_provisional(db,source,timeframe,candles,rules)
                     # Top-level counts belong to RSI; Pin-Bars counts stay nested.
-                    primary = row['pin_bars'] if 'pin-bars' in strategies else row['bb_pin_bars'] if 'bb-pin-bars' in strategies else row['rsi_pb']
+                    primary = row['pin_bars'] if 'pin-bars' in strategies else row['bb_pin_bars'] if 'bb-pin-bars' in strategies else row['rsi_pb'] if 'rsi-pb' in strategies else row['ma_cross']
                     row.update({k: v for k, v in primary.items() if k not in ('new_signals', 'historical_matches')})
                     row.update(candles=len(candles), new_signals=0, historical_matches=0,
                                rsi_status='disabled')

@@ -151,6 +151,18 @@ class DiscoveryTests(PostgresTestCase):
         with patch('signal_discovery.MAX_ROWS',0),self.assertRaises(d.DiscoveryError) as error:self.find()
         self.assertEqual(error.exception.code,'discovery_capacity_exceeded')
 
+    def test_daily_crossover_added_by_scanner_is_discoverable(self):
+        self.config['assets'][0]['scan_strategies']=['rsi','ma-cross']
+        cross=self.coverage|dict(timeframe='daily',scan_strategies=['ma-cross'],ma_cross=dict(status='scanned'))
+        with self.store.connect() as db:
+            db.execute('UPDATE managed_config SET payload=%s',(json.dumps(self.config),))
+            db.execute('UPDATE scanner_status SET payload=%s',(json.dumps(dict(coverage=[self.coverage,cross])),))
+            with patch('signal_service.time.time',return_value=(NOW-1000)/1000):
+                publish(db,'ma-cross',self.signal|dict(timeframe='daily'),instrument='BTC/USD')
+        result=self.find({'strategy':['ma-cross']})
+        self.assertEqual(len(result['items']),1)
+        self.assertEqual(result['items'][0]['timeframe'],'daily')
+
     def test_unapplied_or_changed_provider_configuration_cannot_reuse_old_coverage(self):
         with self.store.connect() as db:db.execute('UPDATE managed_config SET revision=2')
         result=self.find()

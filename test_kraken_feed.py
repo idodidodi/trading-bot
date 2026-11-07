@@ -55,7 +55,7 @@ class KrakenTests(PostgresTestCase):
     def test_intraday_scans_keep_cache_and_deadlines_independent(self):
         from dataclasses import replace
         from scanner import ProviderCandles
-        frames = {'5m': 5, '15m': 15, '30m': 30}
+        frames = {'5m': 5, '15m': 15, '30m': 30, 'daily': 1440}
         now = 1800000000000
         histories = {}
         for frame, minutes in frames.items():
@@ -72,12 +72,12 @@ class KrakenTests(PostgresTestCase):
             with patch('kraken_feed.fetch_kraken', side_effect=lambda a, f: histories[f]) as fetch, patch('scanner.time.sleep'):
                 baseline = scan_once(store, config, load_rules(), now)
                 repeated = scan_once(store, config, load_rules(), now+1000)
-                self.assertEqual(fetch.call_count, 3)
+                self.assertEqual(fetch.call_count, 4)
                 self.assertTrue(all(r['status']=='baseline set' for r in baseline), baseline)
                 self.assertTrue(all(r['check_state']=='waiting for candle close' for r in repeated))
                 # Only 5m is due at its next close; neither 15m nor 30m refetches.
                 due = scan_once(store, config, load_rules(), now+300000)
-                self.assertEqual(fetch.call_count, 4)
+                self.assertEqual(fetch.call_count, 5)
                 self.assertEqual(fetch.call_args.args[1], '5m')
                 self.assertEqual(due[0]['next_close_at'], now+360000)  # unchanged provider bar: retry in 1m
             with store.connect() as db:
