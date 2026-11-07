@@ -376,19 +376,23 @@ async function personalTelegramControls(panel,isCurrent){
   let value=await request('/api/telegram-alerts');if(!isCurrent())return;
   section.append(node('p','Choose which alerts you receive. Changes apply only to your personal groups. Re-enabling resumes new alerts without replaying skipped alerts.'));
   if(!value.registered)section.append(node('p','Your personal Telegram groups have not been connected yet. You can save your preferences now.'));
-  const inputs={},silentInputs={},status=node('p');status.setAttribute('role','status');
+  const inputs={},silentInputs={},status=node('p'),quietStatus=node('p');
+  for(const item of [status,quietStatus])item.setAttribute('role','status');
+  const showStatus=text=>{status.textContent=text;quietStatus.textContent=text;};
   const categories=[['general','General'],['other-signals','Other Signals'],...['forex','crypto','stocks','other'].flatMap(m=>[['rsi','RSI'],['pin-bars','Pin Bars'],['rsi-pb','RSI + PB']].map(([s,label])=>[m+'.'+s,m[0].toUpperCase()+m.slice(1)+' · '+label]))];
   const quiet=value.quiet_hours||{enabled:false,start:'22:00',end:'07:00',timezone:'UTC'};
   const quietBox=node('fieldset');quietBox.className='telegram-quiet-hours';quietBox.append(node('legend','Quiet hours · all my signals'));
   const quietLabel=node('label'),quietEnabled=node('input');quietEnabled.type='checkbox';quietEnabled.checked=quiet.enabled;
   quietLabel.append(quietEnabled,document.createTextNode(' Enable quiet hours'));quietBox.append(quietLabel);
   const quietFields={};
-  for(const [key,label,type] of [['start','Start','time'],['end','End','time'],['timezone','Timezone','text']]){
+  for(const [key,label,type] of [['start','Start','time'],['end','End','time'],['timezone','Local timezone','text']]){
    const wrapper=node('label'),input=node('input');input.type=type;input.value=quiet[key];input.setAttribute('aria-label','Quiet hours '+label.toLowerCase());
    quietFields[key]=input;wrapper.append(document.createTextNode(label+' '),input);quietBox.append(wrapper);
   }
-  quietFields.timezone.placeholder='Asia/Jerusalem';
-  quietBox.append(node('p','Messages still arrive, without sound. Overnight ranges are supported (for example 22:00–07:00). Times follow the selected timezone, including daylight saving time.'));
+  const localTimezone=Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC';
+  quietFields.timezone.value=localTimezone;quietFields.timezone.readOnly=true;
+  quietFields.timezone.setAttribute('aria-label','Quiet hours local timezone');
+  quietBox.append(node('p','Messages still arrive, without sound. Overnight ranges are supported (for example 22:00–07:00). Times follow your local timezone, including daylight saving time. Saving uses the timezone shown above.'));
   section.append(quietBox);
   const list=node('div');list.className='telegram-signal-preferences';
   for(const [key,label] of categories){
@@ -401,18 +405,22 @@ async function personalTelegramControls(panel,isCurrent){
    silentLabel.append(silentInput,document.createTextNode(' Deliver silently'));row.append(receive,silentLabel);list.append(row);
   }
   section.append(list,node('p','A signal is delivered silently when its checkbox is selected or quiet hours are active. Telegram’s own mute settings also apply.'));
-  const save=button('Save my Telegram alerts',async()=>{
-   const quietHours={enabled:quietEnabled.checked,...Object.fromEntries(Object.entries(quietFields).map(([key,input])=>[key,input.value.trim()]))};
+  let saving=false;
+  const savePreferences=async()=>{
+   if(saving)return;
+   const quietHours={enabled:quietEnabled.checked,...Object.fromEntries(Object.entries(quietFields).map(([key,input])=>[key,input.value.trim()])),timezone:localTimezone};
    try{
     if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(quietHours.start)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(quietHours.end))throw new Error('Enter valid start and end times.');
     new Intl.DateTimeFormat('en',{timeZone:quietHours.timezone});
     if(quietHours.enabled&&quietHours.start===quietHours.end)throw new Error('Choose different start and end times.');
-   }catch(e){status.textContent='Quiet hours: '+e.message;return;}
-   save.disabled=true;status.textContent='Saving…';
-   try{value=await request('/api/telegram-alerts',{action:'save',revision:value.revision,enabled:Object.fromEntries(Object.entries(inputs).map(([key,input])=>[key,input.checked])),silent:Object.fromEntries(Object.entries(silentInputs).map(([key,input])=>[key,input.checked])),quiet_hours:quietHours});status.textContent='Saved. Your personal alert preferences are updated.';}
-   catch(e){status.textContent=e.message+' Reopen Settings to reload before retrying.';}
-   finally{save.disabled=false;}
-  });section.append(save,status);
+   }catch(e){showStatus('Quiet hours: '+e.message);return;}
+   saving=true;save.disabled=true;quietSave.disabled=true;showStatus('Saving…');
+   try{value=await request('/api/telegram-alerts',{action:'save',revision:value.revision,enabled:Object.fromEntries(Object.entries(inputs).map(([key,input])=>[key,input.checked])),silent:Object.fromEntries(Object.entries(silentInputs).map(([key,input])=>[key,input.checked])),quiet_hours:quietHours});showStatus('Saved. Your personal alert preferences are updated.');}
+   catch(e){showStatus(e.message+' Reopen Settings to reload before retrying.');}
+   finally{saving=false;save.disabled=false;quietSave.disabled=false;}
+  };
+  const quietSave=button('Save my Telegram alerts',savePreferences),save=button('Save my Telegram alerts',savePreferences);
+  quietBox.append(quietSave,quietStatus);section.append(save,status);
  }catch(e){if(isCurrent())section.append(node('p','Personal Telegram settings unavailable: '+e.message));}
 }
 async function telegramRoutingControls(panel,isCurrent){

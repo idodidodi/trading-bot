@@ -12,7 +12,7 @@ const source=fs.readFileSync(new URL('app.js',import.meta.url),'utf8');
 const fn=source.slice(source.indexOf('async function personalTelegramControls('),source.indexOf('async function telegramRoutingControls('));
 function setup(online=true){
  const calls=[],panel=new Element('section');
- const ctx=vm.createContext({online,node:(tag,text)=>new Element(tag,text),document:{createTextNode:t=>t},button:(text,action)=>Object.assign(new Element('button',text),{onclick:action}),request:async(path,body)=>{calls.push({path,body});return body?{revision:2,enabled:body.enabled,registered:true}:{revision:1,enabled:{'crypto.rsi':false},registered:true};}});
+ const ctx=vm.createContext({Intl:{DateTimeFormat:Object.assign(function(...args){return args.length?new Intl.DateTimeFormat(...args):{resolvedOptions:()=>({timeZone:"Asia/Jerusalem"})};},{})},online,node:(tag,text)=>new Element(tag,text),document:{createTextNode:t=>t},button:(text,action)=>Object.assign(new Element('button',text),{onclick:action}),request:async(path,body)=>{calls.push({path,body});return body?{revision:2,enabled:body.enabled,registered:true}:{revision:1,enabled:{'crypto.rsi':false},registered:true};}});
  vm.runInContext(fn,ctx);
  return {ctx,calls,panel};
 }
@@ -43,12 +43,14 @@ test('silent choices, overnight hours and validation are saved personally',async
  const receive=find('Receive Crypto · RSI alerts'),muted=find('Deliver Crypto · RSI silently');
  assert.equal(muted.disabled,true);receive.checked=true;receive.onchange();assert.equal(muted.disabled,false);
  const enabled=elements.find(e=>e.tag==='input'&&e.type==='checkbox'&&!e.attributes['aria-label']);enabled.checked=true;
- find('Quiet hours start').value='22:00';find('Quiet hours end').value='07:00';find('Quiet hours timezone').value='Asia/Jerusalem';
+ find('Quiet hours start').value='22:00';find('Quiet hours end').value='07:00';assert.equal(find('Quiet hours local timezone').value,'Asia/Jerusalem');assert.equal(find('Quiet hours local timezone').readOnly,true);
  const save=elements.find(e=>e.tag==='button');await save.onclick();
  assert.equal(calls[1].body.silent.general,true);assert.equal(calls[1].body.quiet_hours.enabled,true);
  assert.equal(calls[1].body.quiet_hours.timezone,'Asia/Jerusalem');
  find('Quiet hours end').value='22:00';await save.onclick();assert.equal(calls.length,2);
- find('Quiet hours end').value='07:00';find('Quiet hours timezone').value='Invalid/Zone';await save.onclick();assert.equal(calls.length,2);
+ find('Quiet hours end').value='07:00';const buttons=elements.filter(e=>e.tag==='button');assert.equal(buttons.length,2);assert.equal(buttons[0].onclick,buttons[1].onclick);await buttons[1].onclick();assert.equal(calls.length,3);assert.equal(calls[2].body.revision,2);
+ assert.equal(elements.find(e=>e.tag==='fieldset').children.includes(buttons[0]),true);
+ assert.ok(elements.filter(e=>e.attributes.role==='status').every(e=>e.textContent.startsWith('Saved.')));
 });
 
 test('all new notification controls default unchecked without changing subscriptions',async()=>{
