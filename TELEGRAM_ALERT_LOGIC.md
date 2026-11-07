@@ -1,6 +1,6 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-07** for personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
 ## Qualification and timing
 
@@ -205,7 +205,7 @@ The Linux signal process does not start chase observation or position monitoring
 
 The optional authenticated discovery API (`signal_discovery.py`, routes in `signal_service.handler`) reads published signal events, scanner coverage, configuration and reviewed calendars. It never advances delivery cursors, changes scanner eligibility/baselines, invokes scanners, enqueues Telegram notifications or authorizes broker execution. Discovery session/freshness exclusions apply only to discovery results; they do not alter existing signal qualification or Telegram routing. Calendar/grant provisioning is manual and default-denied. Deploying discovery does not activate a scanner, change notification preferences or send test alerts.
 
-NEAR/USD five-minute RSI subscriber events may include informational higher-timeframe cache context (see `SIGNAL_API.md`). This does not alter Telegram destinations or the existing provisional-only Telegram alert policy. Baseline cache fills and cache refreshes produce no alerts themselves. Enabling 5m in managed assets enables ordinary strategy processing; it is an explicit deployment step, not performed by a cache read.
+NEAR/USD five-minute RSI subscriber events may include informational higher-timeframe cache context (see `SIGNAL_API.md`). This does not alter Telegram destinations; five-minute Telegram alerts are excluded as described below, independently of subscriber publication. Baseline cache fills and cache refreshes produce no alerts themselves. Enabling 5m in managed assets enables ordinary strategy processing; it is an explicit deployment step, not performed by a cache read.
 
 ### Personal notification preferences
 
@@ -218,3 +218,11 @@ NEAR/USD five-minute RSI subscriber events may include informational higher-time
 `telegram_delivery.py` (`deliver`) passes silence to the sender and does not consume the per-destination sound slot for an already-silent message. `platform_app.py` (`send_telegram`) maps it to Telegram's `disable_notification`; no message is intentionally delayed or omitted by a sound preference. Telegram/client mute settings can still suppress sound when these preferences permit it.
 
 Deployment prerequisite: apply `cloud/telegram-notification-sound.sql` after the existing dashboard/personal migrations and before publishing the UI/worker. It wraps the installed API without replacing other handlers and can be rerun. Local verification uses a disposable loopback Postgres database and mocked Telegram transport. Production activation requires verification of the migrated settings, source fingerprints and single worker owner for the deployed commit; local tests alone do not establish production state. The isolated preview uses the actual UI component with browser-local demo preferences.
+
+## Five-minute Telegram exclusion — reviewed 2026-11-07
+
+Five-minute (`5m`) signal alerts are suppressed before destination selection and delivery, for every market and strategy, including shared routes, General fallback, personal copies and queued retries. RSI uses its structured payload; EMA/BB Pin Bars, RSI + PB and SMA-cross notifications resolve their persisted signal payload. Missing queued strategy records delay delivery instead of sending without a timeframe check. Suppression is recorded by the existing worker queue status handling. Previously delivered messages are not removed. Reports, summaries and connection tests retain their existing behavior.
+
+Market scanning, five-minute candle processing, stored findings, higher-timeframe context and signal subscriber publication remain unchanged. Existing 1h/4h/daily/weekly/monthly Telegram behavior is preserved; this is not a new 1h/4h-only policy. Commit `50633b8` enabled NEAR 5m processing without adding an independent Telegram filter; its parent already routed all qualifying timeframes. Read-only production inspection on 2026-11-07 found 11 NEAR 5m deliveries to the configured Crypto RSI destination over the preceding seven days, all on November 7, and no other 5m crypto deliveries. This correction is locally verified only until separately deployed.
+
+Sources: `telegram_routing.py` (`signal_timeframe`, `deliver_routed`), `platform_app.py` (`delivery_worker`), `test_telegram_routing.py`.

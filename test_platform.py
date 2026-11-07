@@ -120,6 +120,30 @@ class ReceiverTests(PostgresTestCase):
         self.assertEqual(caught.exception.code, 404)
 
     @patch.dict(os.environ, {'DEV_TELEGRAM_ENABLED': 'true'}, clear=True)
+    def test_five_minute_backlog_is_suppressed_without_deleting_findings(self):
+        payload = validate_signal(candle_example(), load_rules()) | {'timeframe': '5m'}
+        self.store.insert(payload)
+        with self.store.connect() as db:
+            db.execute('INSERT INTO pin_bar_signals(id,payload) VALUES(%s,%s)', ('five-minute', json.dumps(payload)))
+            db.execute("INSERT INTO notification_queue(id,text) VALUES('pin-bars:five-minute','queued alert')")
+        stop = threading.Event()
+        with patch('platform_app.send_telegram') as send:
+            worker = threading.Thread(target=delivery_worker, args=(self.store, 'test-token', '123', False, stop))
+            worker.start()
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and self.store.rows()[0][1] != 'suppressed':
+                    time.sleep(0.05)
+                self.assertEqual(self.store.rows()[0][1], 'suppressed')
+                with self.store.connect() as db:
+                    self.assertEqual(db.execute("SELECT status FROM notification_queue WHERE id='pin-bars:five-minute'").fetchone()[0], 'suppressed')
+                    self.assertIsNotNone(db.execute("SELECT payload FROM pin_bar_signals WHERE id='five-minute'").fetchone())
+                send.assert_not_called()
+            finally:
+                stop.set()
+                worker.join(3)
+
+    @patch.dict(os.environ, {'DEV_TELEGRAM_ENABLED': 'true'}, clear=True)
     def test_delivery_retries_and_recovers(self):
         self.store.insert(validate_signal(candle_example(), load_rules()))
         stop = threading.Event()

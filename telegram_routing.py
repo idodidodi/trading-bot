@@ -91,7 +91,26 @@ def select(store, event, general, payload=None, notification_key=None):
         return chat, fallback
 
 
+def signal_timeframe(store, payload=None, notification_key=None):
+    """Read structured signal metadata, including notifications queued before upgrade."""
+    if payload is not None:
+        return payload.get('timeframe')
+    strategy, _, key = (notification_key or '').partition(':')
+    table = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals',
+             'rsi-pb': 'rsi_pb_signals', 'ma-cross': 'ma_cross_signals'}.get(strategy)
+    if not table:
+        return None  # Reports, summaries and connection tests are not signal alerts.
+    with store.connect() as db:
+        row = db.execute(f'SELECT payload FROM {table} WHERE id=%s', (key,)).fetchone()
+    if not row:
+        raise RuntimeError('Signal metadata unavailable for Telegram timeframe check')
+    return json.loads(row[0]).get('timeframe')
+
+
 def deliver_routed(store, token, general, text, event, send, silent=False, payload=None, notification_key=None):
+    # Scanning and subscriber publication remain independent of Telegram delivery.
+    if signal_timeframe(store, payload, notification_key) == '5m':
+        return 'suppressed'
     from telegram_delivery import deliver
     from platform_app import TelegramDestinationError
     chat, fallback = select(store, event, general, payload, notification_key)

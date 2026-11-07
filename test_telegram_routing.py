@@ -101,6 +101,60 @@ class RoutingTests(PostgresTestCase):
         self.assertEqual(routing.select(self.store, 'started', 'legacy',
             {'symbol':'alpaca:Alpaca-sip-split:RDW','market':'unknown'}), original)
 
+    def test_five_minute_rsi_never_reaches_shared_fallback_or_personal_chats(self):
+        for market in ('crypto', 'forex', 'stock', 'index'):
+            with self.subTest(market=market):
+                payload = dict(market=market, timeframe='5m', symbol='NEARUSD')
+                # Even an already pinned route/retry must pass the new guard.
+                routing.select(self.store, market, 'legacy', payload)
+                sender = Mock()
+                with patch('telegram_delivery.deliver') as shared, patch('telegram_personal.deliver_personal') as personal:
+                    result = routing.deliver_routed(self.store, 'token', 'legacy', 'text', market, sender, payload=payload)
+                self.assertEqual(result, 'suppressed')
+                shared.assert_not_called()
+                personal.assert_not_called()
+                sender.assert_not_called()
+
+    def test_queued_strategy_timeframes_use_persisted_metadata(self):
+        strategies = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals',
+                      'rsi-pb': 'rsi_pb_signals', 'ma-cross': 'ma_cross_signals'}
+        for strategy, table in strategies.items():
+            for frame in ('5m', '1h', '4h', 'daily', 'weekly', 'monthly'):
+                with self.subTest(strategy=strategy, timeframe=frame):
+                    key = strategy + frame
+                    with self.store.connect() as db:
+                        db.execute(f'INSERT INTO {table}(id,payload) VALUES(%s,%s)',
+                                   (key, json.dumps(dict(market='crypto', timeframe=frame))))
+                        routing.remember(db, key, 'crypto', strategy)
+                    with patch('telegram_delivery.deliver', return_value='sent') as shared, patch('telegram_personal.deliver_personal') as personal:
+                        result = routing.deliver_routed(self.store, 'token', 'legacy', 'unparsed text', key, Mock(),
+                                                       notification_key=strategy+':'+key)
+                    self.assertEqual(result, 'suppressed' if frame == '5m' else 'sent')
+                    self.assertEqual(shared.call_count, 0 if frame == '5m' else 1)
+                    self.assertEqual(personal.call_count, 0 if frame == '5m' else 1)
+                    with self.store.connect() as db:
+                        self.assertIsNotNone(db.execute(f'SELECT payload FROM {table} WHERE id=%s', (key,)).fetchone())
+
+    def test_existing_rsi_timeframes_and_operational_notifications_still_deliver(self):
+        for frame in ('1h', '4h', 'daily', 'weekly', 'monthly'):
+            with self.subTest(timeframe=frame), patch('telegram_delivery.deliver', return_value='sent') as shared, patch('telegram_personal.deliver_personal') as personal, patch('chasing_runtime.enroll_automatic'):
+                result = routing.deliver_routed(self.store, 'token', 'legacy', 'text', frame, Mock(),
+                                               payload=dict(market='crypto', timeframe=frame))
+                self.assertEqual(result, 'sent')
+                shared.assert_called_once()
+                personal.assert_called_once()
+        with patch('telegram_delivery.deliver', return_value='sent') as shared:
+            self.assertEqual(routing.deliver_routed(self.store, 'token', 'legacy', '5m mentioned in report', 'report', Mock(),
+                                                  notification_key='market-summary:today'), 'sent')
+            shared.assert_called_once()
+
+    def test_missing_queued_signal_metadata_does_not_send(self):
+        with patch('telegram_delivery.deliver') as shared, patch('telegram_personal.deliver_personal') as personal:
+            with self.assertRaisesRegex(RuntimeError, 'Signal metadata unavailable'):
+                routing.deliver_routed(self.store, 'token', 'legacy', 'text', 'missing', Mock(), notification_key='pin-bars:missing')
+        shared.assert_not_called()
+        personal.assert_not_called()
+
     def coordinate(self, payload):
         return {'status':{'acquire':'acquired','renew':'acquired','complete':'completed','release':'released'}[payload['action']], 'silent':False}
 
