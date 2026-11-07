@@ -1,6 +1,6 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-06** against this source tree. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-07** for personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
 ## Qualification and timing
 
@@ -204,3 +204,15 @@ The Linux signal process does not start chase observation or position monitoring
 ## Discovery boundary — reviewed 2026-11-07
 
 The optional authenticated discovery API (`signal_discovery.py`, routes in `signal_service.handler`) reads published signal events, scanner coverage, configuration and reviewed calendars. It never advances delivery cursors, changes scanner eligibility/baselines, invokes scanners, enqueues Telegram notifications or authorizes broker execution. Discovery session/freshness exclusions apply only to discovery results; they do not alter existing signal qualification or Telegram routing. Calendar/grant provisioning is manual and default-denied. Deploying discovery does not activate a scanner, change notification preferences or send test alerts.
+
+### Personal notification preferences (local implementation, not deployed)
+
+`web/app.js` (`personalTelegramControls`) offers **Deliver silently** for each subscribed route/category and one personal **Quiet hours** control with enable, start, end and timezone. This matches existing subscription granularity (for example Crypto · RSI), not individual findings or tickers. Unsubscribed categories disable the silence checkbox but retain its saved value. Messages continue to arrive during quiet hours.
+
+`cloud/telegram-notification-sound.sql` stores `silent` and `quiet_hours` in `public.telegram_alert_preferences`, keyed by installation and authenticated user. The API validates category booleans, HH:MM times and timezone names, rejects equal start/end when enabled, and uses the existing revision check and per-user transaction lock. Older clients that omit the new fields preserve saved sound settings. Defaults are no per-category silence and disabled quiet hours (22:00–07:00, UTC). Viewers may change only their own settings; the worker reads them through `bot_runtime.personal_recipients()`.
+
+`telegram_personal.py` (`personal_silent`, `deliver_personal`) evaluates wall-clock time at each personal delivery attempt using the configured IANA timezone, including daylight-saving changes. Start is inclusive and end is exclusive; start later than end crosses midnight. Repeated DST hours use the same local-time rule. Final silence is incoming silence OR per-route silence OR active personal quiet hours. Missing settings retain existing behavior; invalid manually written enabled quiet hours fail silent rather than block delivery. Retry attempts reevaluate the current preferences/time; existing eligibility, suppression and destination deduplication are unchanged. These controls affect personal copies only, not shared groups or another recipient's copies.
+
+`telegram_delivery.py` (`deliver`) passes silence to the sender and does not consume the per-destination sound slot for an already-silent message. `platform_app.py` (`send_telegram`) maps it to Telegram's `disable_notification`; no message is intentionally delayed or omitted by a sound preference. Telegram/client mute settings can still suppress sound when these preferences permit it.
+
+Deployment prerequisite: apply `cloud/telegram-notification-sound.sql` after the existing dashboard/personal migrations and before publishing the UI/worker. It wraps the installed API without replacing other handlers and can be rerun. Local verification uses a disposable loopback Postgres database and mocked Telegram transport; no live message or production settings verification was performed for this feature. The isolated preview uses the actual UI component with browser-local demo preferences.

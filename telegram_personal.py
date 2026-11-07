@@ -2,6 +2,8 @@
 from functools import partial
 import json
 import time
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from telegram_routing import market_group
 
 
@@ -19,6 +21,24 @@ def route_for(market, strategy):
         return 'general'
     strategy = 'pin-bars' if strategy in ('pin-bars', 'bb-pin-bars') else strategy
     return f'{market_group(market)}.{strategy}'
+
+
+def personal_silent(person, route, now=None):
+    """Evaluate each attempt in the recipient's timezone; start inclusive, end exclusive."""
+    if person.get('silent', {}).get(route, False):
+        return True
+    quiet = person.get('quiet_hours') or {}
+    if not quiet.get('enabled', False):
+        return False
+    try:
+        local = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(quiet['timezone']))
+        start = datetime.strptime(quiet['start'], '%H:%M').time()
+        end = datetime.strptime(quiet['end'], '%H:%M').time()
+        current = local.time().replace(tzinfo=None)
+        return start <= current < end if start < end else current >= start or current < end
+    except (KeyError, ValueError, ZoneInfoNotFoundError):
+        # Invalid legacy/manual settings must not block delivery or unexpectedly make noise.
+        return True
 
 
 def deliver_personal(store, token, text, event, send, silent=False, payload=None):
@@ -58,7 +78,7 @@ def deliver_personal(store, token, text, event, send, silent=False, payload=None
                 candidate=proposal(payload,chase_person,int(time.time()*1000)) if chase_person else None
                 if candidate:sender=partial(sender,dismissal_actions=chase_buttons(candidate['id']))
             deliver(store, token, saved_chat, text, event,
-                    sender, silent=silent)
+                    sender, silent=silent or personal_silent(person, route))
             if chase_person:
                 current=next((p for p in chasing_people(store) if str(p['user_id'])==str(person['user_id'])),None)
                 if current:enroll(store,payload,current)

@@ -34,3 +34,14 @@
 .telegram-routing label{justify-content:space-between;flex-wrap:wrap}.telegram-routing input{width:min(100%,260px);box-sizing:border-box}
 
 .settings-loading{display:flex;align-items:center;gap:8px}.loading-spinner{display:inline-block;width:14px;height:14px;border:2px solid #52657c;border-top-color:#a8caff;border-radius:50%;animation:settings-spin .8s linear infinite}@keyframes settings-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.loading-spinner{animation:none}}
+
+.telegram-quiet-hours{border:1px solid #3b526d;border-radius:10px;padding:14px;margin:20px 0;background:#142337}
+.telegram-quiet-hours legend{padding:0 8px;font-weight:600}
+.telegram-quiet-hours label{align-items:center;gap:10px;flex-wrap:wrap}
+.telegram-quiet-hours input[type=time],.telegram-quiet-hours input[type=text]{padding:8px;border:1px solid #526780;border-radius:6px;background:#0e1929;color:#edf4ff;color-scheme:dark;max-width:100%}
+.telegram-quiet-hours p,.telegram-alerts>p{color:#aebed1;line-height:1.5}
+.telegram-signal-preference{display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid #2a3d55;flex-wrap:wrap}
+.telegram-signal-preference label{align-items:center;gap:8px}
+.telegram-signal-preference label:last-child{color:#aebed1}
+.telegram-alerts input[type=checkbox]{accent-color:#54a8ff;width:17px;height:17px}
+.telegram-alerts input:disabled{opacity:.4}
