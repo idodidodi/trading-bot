@@ -1,5 +1,9 @@
 # Repository agent instructions
 
+## Publication confirmation
+
+After implementing and testing code changes, offer the user a confirmation dialog before pushing to production. Present scanner/server publication and UI publication as separate actions when both apply. Scanner/server approval covers the push and required production service/schema/configuration update. UI approval covers the push and Cloudflare redeployment; a UI push alone is not completion. When the user already explicitly authorizes pushing/deploying the current changes, proceed without asking again. Complete implementation and verification before offering publication for approval.
+
 ## Required verification after every GitHub push
 
 A successful push is not task completion. The agent that pushes owns verification:

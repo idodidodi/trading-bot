@@ -429,5 +429,13 @@ class RuntimeTests(PostgresTestCase):
             db.execute('SET LOCAL ROLE authenticated');db.execute('SELECT * FROM public.crypto_auto_chase_preferences')
         # Rerunning this additive migration must not reset preferences or wrap itself.
         with self.store.connect() as db:
-            db.execute((Path(__file__).parent/'cloud/crypto-auto-chase.sql').read_text(),prepare=False)
+            # An old wrapper migration replaces the current dispatcher. Keep the
+            # rerun isolated so later tests retain newer installed API handlers.
+            with db.transaction(force_rollback=True):
+                script=(Path(__file__).parent/'cloud/crypto-auto-chase.sql').read_text().replace('BEGIN;','').replace('COMMIT;','')
+                db.execute(script,prepare=False)
+                db.execute("SELECT set_config('test.auth_uid',%s,true)",(USER,))
+                db.execute('SET LOCAL ROLE authenticated')
+                result=db.execute('SELECT public.dashboard_api(%s,%s,%s)',(INST,'/api/crypto-auto-chase-settings','{}')).fetchone()[0]
+                self.assertTrue(result['enabled'])
         self.assertTrue(self.api()['enabled'])

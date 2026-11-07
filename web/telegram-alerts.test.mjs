@@ -18,7 +18,7 @@ function setup(online=true){
 }
 test('personal checkboxes default on, preserve explicit off, and save without a user override',async()=>{
  const {ctx,calls,panel}=setup();await ctx.personalTelegramControls(panel,()=>true);
- const checkboxes=descendants(panel).filter(e=>e.tag==='input');
+ const checkboxes=descendants(panel).filter(e=>e.tag==='input'&&e.attributes['aria-label']?.startsWith('Receive '));
  assert.equal(checkboxes.length,14);
  assert.equal(checkboxes.filter(e=>e.checked).length,13);
  assert.equal(checkboxes.find(e=>e.attributes['aria-label']==='Receive Crypto · RSI alerts').checked,false);
@@ -34,4 +34,27 @@ test('personal checkboxes default on, preserve explicit off, and save without a 
 test('local dashboard directs users to signed-in online settings',async()=>{
  const {ctx,calls,panel}=setup(false);await ctx.personalTelegramControls(panel,()=>true);
  assert.equal(calls.length,0);assert.equal(descendants(panel).filter(e=>e.tag==='input').length,0);
+});
+
+test('silent choices, overnight hours and validation are saved personally',async()=>{
+ const {ctx,calls,panel}=setup();await ctx.personalTelegramControls(panel,()=>true);
+ const elements=descendants(panel), find=label=>elements.find(e=>e.attributes['aria-label']===label);
+ const silent=find('Deliver General silently');silent.checked=true;
+ const receive=find('Receive Crypto · RSI alerts'),muted=find('Deliver Crypto · RSI silently');
+ assert.equal(muted.disabled,true);receive.checked=true;receive.onchange();assert.equal(muted.disabled,false);
+ const enabled=elements.find(e=>e.tag==='input'&&e.type==='checkbox'&&!e.attributes['aria-label']);enabled.checked=true;
+ find('Quiet hours start').value='22:00';find('Quiet hours end').value='07:00';find('Quiet hours timezone').value='Asia/Jerusalem';
+ const save=elements.find(e=>e.tag==='button');await save.onclick();
+ assert.equal(calls[1].body.silent.general,true);assert.equal(calls[1].body.quiet_hours.enabled,true);
+ assert.equal(calls[1].body.quiet_hours.timezone,'Asia/Jerusalem');
+ find('Quiet hours end').value='22:00';await save.onclick();assert.equal(calls.length,2);
+ find('Quiet hours end').value='07:00';find('Quiet hours timezone').value='Invalid/Zone';await save.onclick();assert.equal(calls.length,2);
+});
+
+test('all new notification controls default unchecked without changing subscriptions',async()=>{
+ const {ctx,panel}=setup();await ctx.personalTelegramControls(panel,()=>true);
+ const boxes=descendants(panel).filter(e=>e.tag==='input'&&e.type==='checkbox');
+ const newBoxes=boxes.filter(e=>!e.attributes['aria-label']?.startsWith('Receive '));
+ assert.equal(newBoxes.length,15);assert.ok(newBoxes.every(e=>!e.checked));
+ assert.equal(boxes.filter(e=>e.attributes['aria-label']?.startsWith('Receive ')&&e.checked).length,13);
 });
