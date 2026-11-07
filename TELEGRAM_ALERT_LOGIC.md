@@ -205,7 +205,7 @@ The Linux signal process does not start chase observation or position monitoring
 
 The optional authenticated discovery API (`signal_discovery.py`, routes in `signal_service.handler`) reads published signal events, scanner coverage, configuration and reviewed calendars. It never advances delivery cursors, changes scanner eligibility/baselines, invokes scanners, enqueues Telegram notifications or authorizes broker execution. Discovery session/freshness exclusions apply only to discovery results; they do not alter existing signal qualification or Telegram routing. Calendar/grant provisioning is manual and default-denied. Deploying discovery does not activate a scanner, change notification preferences or send test alerts.
 
-### Personal notification preferences (local implementation, not deployed)
+### Personal notification preferences
 
 `web/app.js` (`personalTelegramControls`) offers **Deliver silently** for each subscribed route/category and one personal **Quiet hours** control with enable, start, end and timezone. This matches existing subscription granularity (for example Crypto · RSI), not individual findings or tickers. Unsubscribed categories disable the silence checkbox but retain its saved value. Messages continue to arrive during quiet hours.
 
@@ -215,4 +215,4 @@ The optional authenticated discovery API (`signal_discovery.py`, routes in `sign
 
 `telegram_delivery.py` (`deliver`) passes silence to the sender and does not consume the per-destination sound slot for an already-silent message. `platform_app.py` (`send_telegram`) maps it to Telegram's `disable_notification`; no message is intentionally delayed or omitted by a sound preference. Telegram/client mute settings can still suppress sound when these preferences permit it.
 
-Deployment prerequisite: apply `cloud/telegram-notification-sound.sql` after the existing dashboard/personal migrations and before publishing the UI/worker. It wraps the installed API without replacing other handlers and can be rerun. Local verification uses a disposable loopback Postgres database and mocked Telegram transport; no live message or production settings verification was performed for this feature. The isolated preview uses the actual UI component with browser-local demo preferences.
+Deployment prerequisite: apply `cloud/telegram-notification-sound.sql` after the existing dashboard/personal migrations and before publishing the UI/worker. It wraps the installed API without replacing other handlers and can be rerun. Local verification uses a disposable loopback Postgres database and mocked Telegram transport. Production activation requires verification of the migrated settings, source fingerprints and single worker owner for the deployed commit; local tests alone do not establish production state. The isolated preview uses the actual UI component with browser-local demo preferences.
