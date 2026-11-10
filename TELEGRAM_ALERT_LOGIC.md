@@ -1,6 +1,6 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-10** for Done listener connection recovery; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
 ## Qualification and timing
 
@@ -99,6 +99,8 @@ on; there were no open demo trade records at verification. No test alerts/orders
 were sent and the existing worker was not stopped for this cancellation.
 
 ## Done/Undo dismissal and recovery
+
+The listener retries direct HTTP/socket failures (including `RemoteDisconnected`, connection resets and incomplete response bodies) and malformed JSON responses using its existing 1–30-second backoff. Error messages omit credentials and response content. On retry it reloads the durable update offset and pending deletion deadlines. This prevents an unexpected closed Telegram connection from permanently stopping Done/Undo handling while the main service remains healthy. Read-only production diagnosis on 2026-11-10 confirmed that an uncaught `RemoteDisconnected` had terminated the listener; this recovery change is locally tested and not yet deployed.
 
 
 Personal alerts and shared alerts with group dismissal enabled use a server-side three-second grace period. Leaving a Telegram chat/folder does not cancel it. Pending deadlines survive worker restarts; dry-run pauses external effects. Personal callbacks require the enrolled user; shared-group callbacks require the matching message/chat.

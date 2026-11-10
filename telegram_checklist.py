@@ -1,5 +1,6 @@
 """Optional Telegram checklist; collapsing preserves a durable Undo action."""
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -41,8 +42,12 @@ def api(token, method, body):
             from telegram_dismissal import MessageCannotBeDeleted
             raise MessageCannotBeDeleted('Telegram cannot delete this message') from None
         raise RuntimeError(f'Telegram checklist HTTP {exc.code}') from None
-    except (urllib.error.URLError, TimeoutError):
+    except (OSError, http.client.HTTPException):
+        # urllib can expose disconnects and incomplete reads directly instead
+        # of wrapping them in URLError. Keep the listener's retry loop alive.
         raise RuntimeError('Telegram checklist connection failed') from None
+    except ValueError:
+        raise RuntimeError('Telegram checklist invalid response') from None
     if not result.get('ok'):
         raise RuntimeError('Telegram checklist request rejected')
     return result.get('result')
