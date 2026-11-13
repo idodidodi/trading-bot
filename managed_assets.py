@@ -258,7 +258,6 @@ def effective(store, fallback):
 
 def cache_candles(store, asset, timeframe, candles):
     feed=f"{asset['provider']}:{asset.get('exchange') or 'configured'}:{asset.get('symbol') or asset['id']}"
-    with store.connect() as db:
-        initialize(db)
-        db.executemany('INSERT INTO candle_cache VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(feed,timeframe,start) DO UPDATE SET "end"=excluded."end",open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close',
-            ((feed,asset['id'],timeframe,c.start,c.end,c.open,c.high,c.low,c.close) for c in candles))
+    from local_cache import publish_candles
+    publish_candles(store, 'candle_cache',
+        ((feed,asset['id'],timeframe,c.start,c.end,c.open,c.high,c.low,c.close) for c in candles))
