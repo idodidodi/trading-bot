@@ -79,7 +79,7 @@ For the browser alone, run `python3 dashboard_server.py`. It starts no scanner a
 
 ## Archives and recovery
 
-SQLite remains only in the explicit offline [import/recovery command](https://github.com/idodidodi/trading-bot/blob/main/scripts/migrate-postgres.py) and migration test fixtures. Production modules do not import SQLite. Retired installations and databases belong in protected archives outside active application/data paths.
+With `TRADING_LOCAL_CACHE_DIR` enabled, SQLite also holds disposable Linux working caches; see [local cache operations](docs/local-scanner-cache.md). Shared runtime state remains in Postgres. SQLite is otherwise used in the explicit offline [import/recovery command](https://github.com/idodidodi/trading-bot/blob/main/scripts/migrate-postgres.py) and migration test fixtures. Retired installations and databases belong in protected archives outside active application/data paths.
 
 Preserve final migration snapshots, the hosted backup, import receipt and retirement manifest. After new Postgres writes or deliveries, do not restart stale SQLite. Follow the recovery section of the installation guide; prefer repairing Postgres when effects or identities require reconciliation.
 

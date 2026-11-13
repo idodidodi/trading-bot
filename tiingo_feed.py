@@ -41,14 +41,25 @@ def request_json(symbol, frequency, start, end):
     if hourly <= 0 or daily <= 0:
         raise ValueError('Tiingo request budgets must be positive')
     from postgres_store import connect
+    from local_cache import configured
+    local = configured()
+    if local:
+        # Release the Postgres connection before taking a local SQLite lock.
+        # This avoids lock inversion with the candle publisher's local -> PG order.
+        with connect() as db:
+            now = db.execute('SELECT extract(epoch FROM clock_timestamp())::float8').fetchone()[0]
+        cached = local.get(key, now, 300)
+        if cached is not None:
+            return cached
     # Short serialized reservation, committed BEFORE contacting Tiingo. Quota
     # reservations survive provider errors/restarts and cover every worker.
     with connect() as db:
         db.execute('SELECT pg_advisory_xact_lock(714269003)')
         now = db.execute('SELECT extract(epoch FROM clock_timestamp())::float8').fetchone()[0]
-        cached = db.execute('SELECT fetched,payload FROM tiingo_responses WHERE key=%s', (key,)).fetchone()
-        if cached and now-cached[0] < 300:
-            return json.loads(cached[1])
+        if not local:
+            cached = db.execute('SELECT fetched,payload FROM tiingo_responses WHERE key=%s', (key,)).fetchone()
+            if cached and 0 <= now-cached[0] < 300:
+                return json.loads(cached[1])
         db.execute('DELETE FROM tiingo_requests WHERE at<%s', (now-86400,))
         hour_count, day_count = db.execute('SELECT count(*) FILTER (WHERE at>%s),count(*) FROM tiingo_requests', (now-3600,)).fetchone()
         if hour_count >= hourly or day_count >= daily:
@@ -74,9 +85,12 @@ def request_json(symbol, frequency, start, end):
         raise ValueError('Tiingo connection or JSON response failed; retry later') from None
     if not isinstance(data, list):
         raise ValueError('Tiingo returned an invalid candle response')
-    with connect() as db:
-        db.execute('INSERT INTO tiingo_responses VALUES(%s,%s,%s) ON CONFLICT(key) DO UPDATE SET fetched=excluded.fetched,payload=excluded.payload', (key,now,json.dumps(data)))
-        db.execute('DELETE FROM tiingo_responses WHERE fetched<%s', (now-86400,))
+    if local:
+        local.put(key, data, now)
+    else:
+        with connect() as db:
+            db.execute('INSERT INTO tiingo_responses VALUES(%s,%s,%s) ON CONFLICT(key) DO UPDATE SET fetched=excluded.fetched,payload=excluded.payload', (key,now,json.dumps(data)))
+            db.execute('DELETE FROM tiingo_responses WHERE fetched<%s', (now-86400,))
     return data
 
 

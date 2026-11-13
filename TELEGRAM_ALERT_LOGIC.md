@@ -1,6 +1,6 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
 ## Qualification and timing
 
@@ -226,3 +226,16 @@ Five-minute (`5m`) signal alerts are suppressed before destination selection and
 Market scanning, five-minute candle processing, stored findings, higher-timeframe context and signal subscriber publication remain unchanged. Existing 1h/4h/daily/weekly/monthly Telegram behavior is preserved; this is not a new 1h/4h-only policy. Commit `50633b8` enabled NEAR 5m processing without adding an independent Telegram filter; its parent already routed all qualifying timeframes. Read-only production inspection on 2026-11-07 found 11 NEAR 5m deliveries to the configured Crypto RSI destination over the preceding seven days, all on November 7, and no other 5m crypto deliveries. This correction is locally verified only until separately deployed.
 
 Sources: `telegram_routing.py` (`signal_timeframe`, `deliver_routed`), `platform_app.py` (`delivery_worker`), `test_telegram_routing.py`.
+
+## Optional Linux working cache
+
+`local_cache.py`, `managed_assets.cache_candles`, and `tiingo_feed.request_json`
+add an opt-in local working cache. Live detection still uses the provider candle
+sequence and the existing closed-candle/freshness validation. Tiingo response
+freshness stays five minutes, checked against Postgres time; future timestamps
+are rejected. Shared request budgets, worker ownership, baselines, duplicate
+identities, signal queues and external-effects gates remain in Postgres. Local
+cache failures surface as errors; they do not authorize offline delivery. Candle
+publication must succeed before the scan proceeds, as before. No alert threshold,
+routing or timing rule is changed. This describes tested local code, not verified
+production activation. See `docs/local-scanner-cache.md` for storage operations.

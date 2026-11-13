@@ -54,18 +54,17 @@ def run_backtest(store, config, rules, *, provisional=False, job_id=None):
                         feed_id = f"tiingo:Tiingo-UTC:{asset['symbol']}"
                         row['source'] = dict(provider='Tiingo', feed='forex', alignment='UTC')
                     row.update(replay(bars, rules, feed_id, timeframe, provisional=provisional, start=start, end=end))
-                    with store.connect() as db:
-                        db.require_table('backtest_candle_cache')
-                        db.executemany('INSERT INTO backtest_candle_cache VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(feed,timeframe,start) DO UPDATE SET "end"=excluded."end",open=excluded.open,high=excluded.high,low=excluded.low,close=excluded.close',
-                            ((feed_id,timeframe,c.start,c.end,c.open,c.high,c.low,c.close) for c in bars))
+                    from local_cache import publish_candles
+                    publish_candles(store, 'backtest_candle_cache',
+                        ((feed_id,timeframe,c.start,c.end,c.open,c.high,c.low,c.close) for c in bars))
                     row['note'] += ' ' + '; '.join(bars.notes)
                     results.append(row)
                     continue
                 if asset['provider'] != 'csv':
                     raise ValueError('This asset is unavailable from the selected historical provider')
                 from scanner import Candle
-                with store.connect() as db:
-                    stored = db.execute('SELECT start,"end",open,high,low,close FROM backtest_candle_cache WHERE feed=%s AND timeframe=%s ORDER BY start',(asset['id'],timeframe)).fetchall()
+                from local_cache import read_backtest_candles
+                stored = read_backtest_candles(store, asset['id'], timeframe)
                 bars = [Candle(*r) for r in stored] if stored else read_csv(asset,timeframe)
                 if not stored:
                     with store.connect() as db:
