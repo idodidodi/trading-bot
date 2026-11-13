@@ -239,3 +239,14 @@ cache failures surface as errors; they do not authorize offline delivery. Candle
 publication must succeed before the scan proceeds, as before. No alert threshold,
 routing or timing rule is changed. This describes tested local code, not verified
 production activation. See `docs/local-scanner-cache.md` for storage operations.
+
+## Preserved production listener recovery
+
+Reviewed 13 November 2026 against the existing Linux source before the local-cache
+rollout. `telegram_checklist.api` normalizes direct socket resets, HTTP protocol
+errors, incomplete response reads and invalid JSON into sanitized `RuntimeError`
+messages. The existing listener retry loop can then resume polling; no callback,
+delivery, routing or deduplication rule changes. This records and preserves the
+already-deployed production fix that was missing from the recorded Git revision.
+Regression coverage: `test_telegram_listener_reconnect.py` (transport/body errors
+and retry-loop continuation).
