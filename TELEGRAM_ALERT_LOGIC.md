@@ -252,11 +252,12 @@ Regression coverage: `test_telegram_listener_reconnect.py` (transport/body error
 and retry-loop continuation).
 
 
-## Market-session request eligibility (local change, 2026-11-14)
+## Market-session request eligibility (reviewed 2026-11-14)
 
 Sources: `market_sessions.py` (`state`, `closed_row`, `classify_unavailable`),
 `scanner.py` (`scan_once`), `scan_schedule.py` (`identity`, `next_due`, `provider_lag`),
-`colmex_feed.py` (`fetch_colmex`). This change has not been pushed or deployed.
+`colmex_feed.py` (`fetch_colmex`). This section describes source behavior;
+production verification requires matching the deployed commit and manifest.
 
 The scanner resolves each timeframe's provider before choosing its calendar. Live
 cycles recheck wall time for each asset so a long scan cannot reuse an earlier
