@@ -1,7 +1,7 @@
 name: Colmex integration
 on:
   push:
-    branches: ['main', 'codex/colmex-scanner-integration', 'codex/colmex-history-backfill', 'codex/signal-service-separation']
+    branches: ['main', 'codex/colmex-scanner-integration', 'codex/colmex-history-backfill', 'codex/signal-service-separation', 'codex/market-session-gating']
   pull_request:
 permissions:
   contents: read
@@ -29,5 +29,5 @@ jobs:
           node-version: '22'
       - run: python -m pip install 'psycopg[binary,pool]>=3.2,<4' certifi tzdata reportlab pypdf
       - run: python scripts/setup-postgres-tests.py
-      - run: python -m unittest test_colmex_integration test_managed_assets test_scanner test_forex_market_hours test_yahoo_feed -q
+      - run: python -m unittest test_colmex_integration test_managed_assets test_scanner test_forex_market_hours test_yahoo_feed test_market_sessions test_alpaca_feed test_family_upgrade test_kraken_intraday -q
       - run: node --test web/*.test.mjs

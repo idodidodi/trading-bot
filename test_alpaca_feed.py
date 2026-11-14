@@ -75,14 +75,19 @@ class AlpacaTests(PostgresTestCase):
         self.assertNotIn('private',str(error.exception))
 
     def test_only_quota_errors_trigger_fallback_and_isolated_state(self):
+        bars=fixture()
+        # Keep provider-routing assertions within regular equity hours.
+        from datetime import datetime
+        shift=int(datetime.fromisoformat('2026-11-13T15:00:00+00:00').timestamp()*1000)-bars[-1].end
+        bars=[replace(b,start=b.start+shift,end=b.end+shift) for b in bars]
         with tempfile.TemporaryDirectory() as folder:
             store=Store(Path(folder)/'db');prepare_store(store)
             cfg=dict(assets=[self.asset],timeframes=['daily'])
-            with patch('scanner.fetch_twelve_data',return_value=fixture()):
-                scan_once(store,cfg,load_rules(),fixture()[-1].end)
+            with patch('scanner.fetch_twelve_data',return_value=bars):
+                scan_once(store,cfg,load_rules(),bars[-1].end)
             with store.connect() as db:db.execute('DELETE FROM scan_schedule')
-            with patch('scanner.fetch_twelve_data',side_effect=TwelveDataRateLimit('quota')), patch('alpaca_feed.fetch_alpaca',return_value=fixture()) as fallback:
-                coverage=scan_once(store,cfg,load_rules(),fixture()[-1].end)
+            with patch('scanner.fetch_twelve_data',side_effect=TwelveDataRateLimit('quota')), patch('alpaca_feed.fetch_alpaca',return_value=bars) as fallback:
+                coverage=scan_once(store,cfg,load_rules(),bars[-1].end)
             self.assertEqual(coverage[0]['provider'],'alpaca')
             self.assertEqual(coverage[0]['status'],'baseline set')
             self.assertEqual(store.rows(),[])
@@ -91,11 +96,11 @@ class AlpacaTests(PostgresTestCase):
             for asset,err in ((self.asset,ValueError('bad key')),(self.asset|dict(symbol='EUR/USD',exchange='',market='forex'),TwelveDataRateLimit('quota'))):
                 with patch('scanner.fetch_twelve_data',side_effect=err),patch('alpaca_feed.fetch_alpaca') as fallback:
                     with store.connect() as db:db.execute('DELETE FROM scan_schedule')
-                    scan_once(store,dict(assets=[asset],timeframes=['daily']),load_rules(),fixture()[-1].end)
+                    scan_once(store,dict(assets=[asset],timeframes=['daily']),load_rules(),bars[-1].end)
                     fallback.assert_not_called()
             with store.connect() as db:db.execute('DELETE FROM scan_schedule')
             with patch('scanner.fetch_twelve_data',side_effect=TwelveDataRateLimit('quota')),patch('alpaca_feed.fetch_alpaca') as fallback:
-                scan_once(store,cfg|dict(alpaca_rate_limit_fallback=False),load_rules(),fixture()[-1].end)
+                scan_once(store,cfg|dict(alpaca_rate_limit_fallback=False),load_rules(),bars[-1].end)
                 fallback.assert_not_called()
 
     def test_indices_and_other_markets_are_excluded(self):
@@ -103,6 +108,10 @@ class AlpacaTests(PostgresTestCase):
             self.assertFalse(supported(self.asset | dict(market=market)))
 
     def test_direct_etf_hourly_routing_has_its_own_baseline(self):
+        bars=fixture()
+        from datetime import datetime
+        shift=int(datetime.fromisoformat('2026-11-13T15:00:00+00:00').timestamp()*1000)-bars[-1].end
+        bars=[replace(b,start=b.start+shift,end=b.end+shift) for b in bars]
         from managed_assets import validate_asset, for_timeframe
         asset = self.asset | dict(id='DAX-ETF', symbol='DAX', market='etf', provider='alpaca',
                                  timeframes=['1h'], tradingview_symbol='NASDAQ:DAX')
@@ -114,8 +123,8 @@ class AlpacaTests(PostgresTestCase):
             validate_asset(asset | dict(market='index'))
         with tempfile.TemporaryDirectory() as folder:
             store = Store(Path(folder)/'db'); prepare_store(store)
-            with patch('alpaca_feed.fetch_alpaca', return_value=fixture()) as fetch, patch('scanner.fetch_twelve_data') as twelve:
-                coverage = scan_once(store, dict(assets=[asset], timeframes=['1h']), load_rules(), fixture()[-1].end)
+            with patch('alpaca_feed.fetch_alpaca', return_value=bars) as fetch, patch('scanner.fetch_twelve_data') as twelve:
+                coverage = scan_once(store, dict(assets=[asset], timeframes=['1h']), load_rules(), bars[-1].end)
             twelve.assert_not_called()
             self.assertEqual([call.args[1] for call in fetch.call_args_list], ['1h','daily'])
             self.assertEqual(coverage[0]['status'], 'baseline set')

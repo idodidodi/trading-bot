@@ -11,7 +11,9 @@ def initialize(db):
 
 def identity(asset, timeframe, rules):
     fields={k:asset.get(k) for k in ('id','provider','symbol','exchange','path','max_data_age_seconds','continuous')}
-    fields.update(timeframe=timeframe,skill=rules['skill_hash'])
+    from market_sessions import VERSION
+    fields.update(timeframe=timeframe,skill=rules['skill_hash'],session_version=VERSION,
+                  market=asset.get('market'))
     fields['scan_strategies'] = sorted(asset.get('scan_strategies', ['rsi', 'pin-bars']))
     if asset['provider']=='colmex':
         import os
@@ -50,6 +52,13 @@ def saved(store, key, now):
 
 
 def next_due(asset, timeframe, raw, candles, now, row):
+    from market_sessions import next_request_time
+    if row.get('status') == 'market closed' and row.get('next_open_at'):
+        return row['next_open_at']
+    return next_request_time(asset, _next_due(asset, timeframe, raw, candles, now, row))
+
+
+def _next_due(asset, timeframe, raw, candles, now, row):
     from scanner import interval_end
     delay=16*60*1000 if asset['provider']=='alpaca' and asset.get('alpaca_feed','sip')=='sip' else 0
     if row['status']=='unavailable' and asset['provider']=='colmex':
@@ -82,6 +91,11 @@ def next_due(asset, timeframe, raw, candles, now, row):
 
 
 def provider_lag(store,key,row,now,deadline,asset=None):
+    from market_sessions import next_request_time
+    return next_request_time(asset or {}, _provider_lag(store,key,row,now,deadline,asset))
+
+
+def _provider_lag(store,key,row,now,deadline,asset=None):
     """A successful response with an unchanged old bar is not a new close."""
     with store.connect() as db:
         previous=db.execute('SELECT next_due,payload FROM scan_schedule WHERE key=%s',(key,)).fetchone()

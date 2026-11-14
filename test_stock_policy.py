@@ -42,5 +42,6 @@ class StockPolicyTests(PostgresTestCase):
             config=dict(timeframes=['daily'],assets=[dict(id='STOCK-X',symbol='X',market='stock',provider='alpaca')])
             with patch('alpaca_feed.fetch_alpaca') as fetch:
                 rows=scan_once(store,config,load_rules(),instant('2026-10-11T09:00:00'))
-            fetch.assert_not_called();self.assertEqual(rows[0]['status'],'weekday only')
+            fetch.assert_not_called();self.assertEqual(rows[0]['status'],'market closed')
+            self.assertEqual(rows[0]['next_open_at'],instant('2026-10-12T16:30:00'))
 if __name__=='__main__':unittest.main()

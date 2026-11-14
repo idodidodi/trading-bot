@@ -282,6 +282,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     from colmex_runtime import refresh as refresh_colmex
     config = refresh_colmex(store, config)
     configured = config
+    live_clock = now is None
     now = int(time.time() * 1000) if now is None else now
     from weekly_stock_screen import resolve as resolve_weekly_stocks
     from stock_reports import enabled as reports_enabled, run_due as run_stock_reports
@@ -357,11 +358,14 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                        exchange=asset.get('exchange', ''), symbol=asset.get('symbol', asset['id']),
                        market=asset.get('market'), scan_strategies=strategies)
             from market_calendar import is_stock, is_forex, forex_market_open, next_forex_open
-            if is_forex(asset) and not forex_market_open(now):
-                coverage.append(row | dict(status='market closed', check_state='waiting for forex market open',
-                                          reason='Forex scans paused until Sunday 17:00 New York time',
-                                          checked_at=now, next_close_at=next_forex_open(now), new_signals=0))
+            from market_sessions import closed_row, state as session_state, classify_unavailable, MarketClosed
+            request_at = int(time.time() * 1000) if live_clock else now
+            closed = closed_row(asset, request_at)
+            if closed:
+                coverage.append(row | closed)
                 continue
+            row.update(session_state(asset, request_at))
+            row['request_at'] = request_at
             from stock_policy import scan_day, next_scan, MIN_PRICE
             if is_stock(asset) and not scan_day(now):
                 coverage.append(row|dict(status='weekday only',reason='Stock scans paused Saturday/Sunday',checked_at=now,next_close_at=next_scan(now)))
@@ -520,6 +524,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     row.update(status='scanned' if state else 'baseline set', candles=len(candles), last_closed_at=candles[-1].end,
                                new_signals=new, historical_matches=len(matches), limited_history=len(candles) < 250,
                                last_closed_age_seconds=age_seconds)
+            except MarketClosed as exc:
+                row.update(exc.row)
             except (ValueError, FileNotFoundError) as exc:
                 # Only local, known ValueErrors are shown; URLs and provider payloads are never logged.
                 reason = asset.get('unavailable_reason', 'Candle CSV missing; configure a live provider in Assets') if isinstance(exc, FileNotFoundError) else str(exc)
@@ -528,6 +534,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 raise
             except Exception:
                 row.update(status='unavailable', reason='Data request or parsing failed; check provider access and format')
+            if row['status'] == 'unavailable':
+                row.update(classify_unavailable(asset, request_at, row.get('reason', '')))
             row['checked_at']=now
             row['next_close_at']=provider_lag(store,schedule_key,row,now,next_due(asset,timeframe,raw,candles,now,row),asset)
             save(store,schedule_key,row['next_close_at'],row)
@@ -541,7 +549,9 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     if config_revision is not None:
         with store.connect() as db:
             db.execute('UPDATE managed_config SET applied_revision=%s WHERE id=1', (config_revision,))
-    store.log('Scan cycle completed', f'{sum(not r.get("check_state") for r in coverage)} market checks; {sum(bool(r.get("check_state")) for r in coverage)} waiting for another closed candle')
+    closed_count = sum(r.get('status') == 'market closed' for r in coverage)
+    waiting_count = sum(bool(r.get('check_state')) and r.get('status') != 'market closed' for r in coverage)
+    store.log('Scan cycle completed', f'{sum(not r.get("check_state") for r in coverage)} market checks; {waiting_count} waiting for another closed candle; {closed_count} market closed')
     return coverage
 
 
