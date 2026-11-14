@@ -86,6 +86,9 @@ class FamilyUpgradeTests(PostgresTestCase):
         bars=fixture();rules=load_rules()|dict(max_band_slope_pct=1.5)
         # The latest completed candle contains this confirmation.
         bars=bars[:258]
+        # Strategy behavior is exercised inside an eligible equity session.
+        shift=ms('2026-11-13T15:00:00+00:00')-bars[-1].end
+        bars=[replace(b,start=b.start+shift,end=b.end+shift) for b in bars]
         a=dict(id='STOCK-TEST',symbol='TEST',provider='alpaca',market='stock',exchange='NASDAQ',feed_confirmed=True,
                weekly_screen_selected=True,weekly_screen_since=0,weekly_screen_week_start=0)
         with patch('alpaca_feed.fetch_alpaca',return_value=bars):

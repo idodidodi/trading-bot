@@ -32,11 +32,13 @@ def validate_feed(asset, timeframe):
 def fetch_colmex(asset, timeframe):
     from scanner import Candle, ProviderCandles
     validate_feed(asset, timeframe)
+    from market_sessions import require_open
+    now = time.time()
+    require_open(asset, int(now*1000))
     reader = bridge()
     policy_path = os.environ.get('COLMEX_TIME_POLICY', '')
     if not policy_path:
         raise ValueError('Colmex historical timezone mapping is not verified')
-    now = time.time()
     try:
         bars = reader.candles(directory(),asset['symbol'],timeframe,reader.read_json(policy_path,65536),now,
             history_directory=os.environ.get('COLMEX_HISTORY_DIR') or None)

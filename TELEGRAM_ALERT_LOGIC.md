@@ -1,6 +1,6 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
 ## Qualification and timing
 
@@ -122,7 +122,7 @@ minutes or whole buckets reset that suffix; no market-break calendar is inferred
 The existing strategy minimum-history and first-scan baseline rules still apply.
 Current SPX history only produced two eligible H4 bars in the read-only smoke test;
 this does not meet strategy history requirements. Unknown gaps remain a readiness
-blocker. Unavailable Colmex reads retry in 30 seconds. Other provider schedules remain.
+blocker. Open-session unavailable Colmex reads retry in 30 seconds; the market-session gate below skips verified closed sessions and moves deadlines to reopening.
 
 `cloud/colmex.sql` exposes authenticated `/api/colmex` requests to installation
 members (including viewers), with owner identity taken from auth.uid(), per-user
@@ -250,3 +250,92 @@ delivery, routing or deduplication rule changes. This records and preserves the
 already-deployed production fix that was missing from the recorded Git revision.
 Regression coverage: `test_telegram_listener_reconnect.py` (transport/body errors
 and retry-loop continuation).
+
+
+## Market-session request eligibility (reviewed 2026-11-14)
+
+Sources: `market_sessions.py` (`state`, `closed_row`, `classify_unavailable`),
+`scanner.py` (`scan_once`), `scan_schedule.py` (`identity`, `next_due`, `provider_lag`),
+`colmex_feed.py` (`fetch_colmex`). This section describes source behavior;
+production verification requires matching the deployed commit and manifest.
+
+The scanner resolves each timeframe's provider before choosing its calendar. Live
+cycles recheck wall time for each asset so a long scan cannot reuse an earlier
+open-session decision; logs retain `request_at` separately from the cycle watermark. A
+verified closed session skips the provider read, cached scan result, strategy
+calculation and signal insertion, including catch-up and the independent daily
+MA scan. Coverage says `market closed`, with `next_open_at` and a UTC reopening
+explanation. Schedule identity includes the calendar version and market; stale
+saved errors cannot override the gate. Both success and retry deadlines move out
+of closed sessions. At reopening normal reads resume immediately; unavailable
+Colmex data retains its 30-second retry, with no indefinite startup grace or
+relaxation of quote freshness. Direct Colmex adapter calls also enforce this gate.
+The closing UTC candle can be processed at the next opening; no OHLC is fabricated
+and strategy baselines/deduplication are not reset. The existing reader and native
+history aggregation are unchanged, so insufficient/incomplete history remains a
+separate blocker (especially USOIL's strict M1 path).
+
+Exact `colmex` / `Colmex-MT4` mappings for the reviewed TGLColmex installation:
+
+| Symbol | Calendar timezone | Regular local sessions |
+| --- | --- | --- |
+| `GER40#` | Europe/Berlin | Monday–Friday 02:10–22:00 |
+| `SPX500#` | America/New_York | Sunday from 19:00; Monday–Thursday 00:00–16:15, 16:30–17:00, 18:05–24:00; Friday 00:00–16:15, 16:30–17:00 |
+| `USDINDEX#` | America/New_York | Sunday from 20:00; Monday–Thursday 00:00–17:00 and 20:00–24:00; Friday 00:00–17:00 |
+| `USOIL#` | Europe/Berlin | Monday–Thursday 02:00–24:00; Friday 02:00–22:00 |
+
+The three index sessions use the terminal specifications recorded on November 6
+and native-history seasonal evidence recorded in the exporter repository's
+`docs/STATUS.md`. Read-only November 14 snapshots corroborated the repeated
+November 9–13 breaks and last Friday quotes: GER40 20:59:59 UTC, SPX and USDINDEX
+21:59:59 UTC, USOIL 20:59:58 UTC. Exporter 2.20 was connected with fresh snapshots
+and no configuration error. USOIL's regular hours are corroborated by the
+[Colmex Pro specification](https://www.colmexpro.com/wp-content/uploads/2023/12/Contract-Specifications-Colmex-Pro-Ltd-Dec-2023-CFDs.pdf)
+and the observed week. USOIL's seasonal interpretation is not established: its
+request calendar is limited to November 6, 2026 through March 28, 2027 01:00 UTC,
+and becomes `unknown` when the next opening crosses that boundary. Reverify
+before the next European DST change. That older publication is from a different Colmex entity;
+it conflicts with current terminal SPX/USDINDEX breaks and is not used to override
+them. A schedule match alone never establishes that a historical outage was healthy.
+
+Dated exceptions come from [Colmex Israel's November 2026 client notice](https://www.colmex.co.il/wp-content/uploads/2026/11/Update_November_2026_Clients.pdf),
+whose table uses Israel time. On November 26, SPX closes 20:00 Israel and has an
+extra November 27 01:00–02:00 window; Friday closes 20:15. USDINDEX closes 20:15
+both days. USOIL closes 20:30 Thursday and 22:00 Friday. GER40 remains normal.
+The implementation converts these to exact UTC-date windows, including the SPX
+midnight crossing. No other broker holiday is invented. New monthly notices or
+unscheduled closures require review and a calendar-version update; unknown
+holiday outages remain failures rather than being silently excused.
+
+Existing forex classification retains the Sunday 17:00–Friday 17:00 New York
+week; broker-specific intraday/holiday overrides for requested pairs are not
+verified. US equities on Alpaca/NYSE/NASDAQ/AMEX/NYSE ARCA use the existing
+`market_calendar.py` holiday/early-close rules and regular sessions, corroborated
+against [NYSE's official calendar](https://www.nyse.com/trade/hours-calendars).
+The existing 20-minute closing-data allowance is labelled separately and permits
+final delayed bars, not extended-hours trading. Crypto remains 24/7. CSV history
+is not a live request. Other provider/symbol mappings (including Tiingo gold and
+non-US equities) remain explicitly `unknown`, with normal freshness validation
+and retry behavior; they never inherit an index or US-equity calendar by name.
+Independent stock reports/universe history jobs and MT4's subscribed recorder
+are not paused by this scanner gate. Terminal heartbeat and subscription
+reconciliation continue during closures, and bridge outages remain independently
+visible in Colmex status. No exporter binary or package change is required.
+
+Unavailable checks record calendar version, session state and failure classification
+alongside the original reason. `scripts/audit-market-sessions.py` classifies exported
+Market check JSON offline without database/provider access. It distinguishes a
+closure-compatible stale quote from an open-session failure and from a terminal
+or history failure occurring during a closure. It does not automatically convert
+historical errors into successes. Read-only review of 10,123 retained checks from
+November 7 06:30 to November 14 06:29 UTC found 7,963 closure-compatible stale
+quotes, 1,930 open-session data failures and 11 other failures during closures.
+These are repeated asset/timeframe checks, not counts of distinct outages. The
+open failures include USOIL incomplete buckets and real intraday quote gaps;
+those are deliberately not suppressed. Raw production logs remain outside Git.
+
+Local verification: 149 targeted Python tests passed against a dedicated disposable
+Postgres database, covering boundaries, DST, holidays, closed-session request blocking,
+reopening, preserved open-session errors, provider routing and stock strategy fixtures.
+Offline replay maps all nine current Colmex asset/timeframe failures to closed
+sessions with distinct next-open times. This is not production deployment verification.
