@@ -19,6 +19,11 @@ class CacheError(ValueError):
 
 
 def configured():
+    # Provider responses prefer local PostgreSQL when enabled.
+    from working_postgres import configured as working_configured
+    working = working_configured()
+    if working is not None:
+        return working
     directory = os.environ.get('TRADING_LOCAL_CACHE_DIR', '').strip()
     if not directory:
         return None
@@ -163,6 +168,13 @@ def publish_candles(store, table, rows):
             with store.connect() as db:
                 db.executemany(query, changed)
 
+    from working_postgres import configured as working_configured
+    working = working_configured()
+    if working is not None:
+        # Hosted commit precedes local acknowledgement. Failure propagates;
+        # candle retries are idempotent and do not replay external effects.
+        working.publish(store, table, rows, query)
+        return
     cache = configured()
     if cache is None:
         publish(rows)
@@ -195,7 +207,11 @@ def publish_candles(store, table, rows):
 
 
 def read_backtest_candles(store, feed, frame):
-    """Brief read-through cache for repeated CSV replays; hosted edits refresh in 5m."""
+    """Local PG history when enabled; otherwise a five-minute hosted read-through."""
+    from working_postgres import configured as working_configured
+    working = working_configured()
+    if working is not None:
+        return working.read_candles('backtest_candle_cache', feed, frame)
     cache = configured()
     key = json.dumps(['backtest', feed, frame])
     now = time.time()
@@ -212,6 +228,8 @@ def read_backtest_candles(store, feed, frame):
 
 def main():
     import argparse
+    import psycopg
+    from working_postgres import WorkingStore
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('health', 'backup'))
     parser.add_argument('--destination', type=Path)
@@ -221,6 +239,11 @@ def main():
         if cache is None:
             print(json.dumps({'enabled': False}))
             return 1
+        if isinstance(cache, WorkingStore):
+            if args.action == 'backup':
+                parser.error('Use pg_dump for the local PostgreSQL working database')
+            print(json.dumps(dict(enabled=True, **cache.health()), indent=2))
+            return 0
         if args.action == 'backup':
             if not args.destination:
                 parser.error('backup requires --destination (new file)')
@@ -228,7 +251,7 @@ def main():
         result = cache.health()
         print(json.dumps(dict(enabled=True, **result), indent=2))
         return 0 if result['integrity'] == 'ok' and not result['disk_warning'] else 2
-    except (CacheError, OSError):
+    except (CacheError, OSError, psycopg.Error):
         print(json.dumps({'enabled': True, 'error': 'Local cache operation failed; check disk, permissions and integrity'}))
         return 2
 

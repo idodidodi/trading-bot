@@ -67,8 +67,9 @@ def run_backtest(store, config, rules, *, provisional=False, job_id=None):
                 stored = read_backtest_candles(store, asset['id'], timeframe)
                 bars = [Candle(*r) for r in stored] if stored else read_csv(asset,timeframe)
                 if not stored:
-                    with store.connect() as db:
-                        db.executemany('INSERT INTO backtest_candle_cache VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING',((asset['id'],timeframe,c.start,c.end,c.open,c.high,c.low,c.close) for c in bars))
+                    from local_cache import publish_candles
+                    publish_candles(store, 'backtest_candle_cache',
+                        ((asset['id'],timeframe,c.start,c.end,c.open,c.high,c.low,c.close) for c in bars))
                 row.update(replay(bars, rules, asset['id'], timeframe, provisional=provisional, start=start, end=end))
                 csv_path = Path(asset['path'].format(asset=asset['id'], timeframe=timeframe))
                 if not csv_path.is_absolute():
