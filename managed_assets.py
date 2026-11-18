@@ -44,11 +44,20 @@ def ensure(store, config):
 def get(store):
     migrate_rsi_pb(store)
     migrate_ma_cross(store)
+    # Capture one cache snapshot: concurrent callers must not pair a response
+    # with a different caller's configuration. Every read validates its content
+    # against PostgreSQL; no TTL or stale fallback applies to scan eligibility.
+    cached = getattr(store, '_managed_config_cache', None)
     with store.connect() as db:
-        row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
+        row = db.execute('''SELECT revision,applied_revision,
+            sha256(convert_to(payload,'UTF8')),
+            CASE WHEN sha256(convert_to(payload,'UTF8'))=%s THEN NULL ELSE payload END
+            FROM managed_config WHERE id=1''', (cached[0] if cached else None,)).fetchone()
     if not row:
         raise ValueError('Asset configuration has not been initialized')
-    result=dict(revision=row[0], applied_revision=row[1], config=json.loads(row[2]))
+    config = cached[1] if row[3] is None else json.loads(row[3])
+    store._managed_config_cache = (row[2], config)
+    result=dict(revision=row[0], applied_revision=row[1], config=copy.deepcopy(config))
     for asset in result['config']['assets']:
         asset.setdefault('scan_strategies', SCAN_STRATEGIES.copy())
     return result
@@ -57,8 +66,8 @@ def get(store):
 def migrate_rsi_pb(store):
     """One revisioned upgrade; explicit opt-outs survive every later restart."""
     with store.connect() as db:
-        row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
-        if not row or json.loads(row[2]).get('rsi_pb_defaults_applied'):
+        row = db.execute("SELECT payload::jsonb -> 'rsi_pb_defaults_applied' FROM managed_config WHERE id=1").fetchone()
+        if not row or row[0]:
             return
         db.execute('SELECT pg_advisory_xact_lock(714269001)')
         row = db.execute('SELECT revision,applied_revision,payload FROM managed_config WHERE id=1').fetchone()
@@ -79,6 +88,9 @@ def migrate_rsi_pb(store):
 def migrate_ma_cross(store):
     """Enable crosses once for existing assets; preserve subsequent opt-outs."""
     with store.connect() as db:
+        row = db.execute("SELECT payload::jsonb -> 'ma_cross_defaults_applied' FROM managed_config WHERE id=1").fetchone()
+        if not row or row[0]:
+            return
         db.execute('SELECT pg_advisory_xact_lock(714269001)')
         row = db.execute('SELECT revision,payload FROM managed_config WHERE id=1').fetchone()
         if not row:
