@@ -239,7 +239,6 @@ def view(store, source='live', limit=30):
         query='SELECT payload FROM momentum_runs ORDER BY day DESC'
         rows=[json.loads(r[0]) for r in db.execute(query+' LIMIT %s',(limit,))] if limit else [json.loads(r[0]) for r in db.execute(query)]
         latest=rows[0] if rows else None
-        histories={(m,s):json.loads(raw) for m,s,raw in db.execute('SELECT * FROM momentum_history')}
     signals=[s|dict(published_day=row['day']) for row in rows for s in row['picks'].values() if s]
     return dict(latest=latest,signals=signals,note='Daily signal candidates; execution policy and outcomes are owned by trading-executor.')
 

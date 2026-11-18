@@ -1,6 +1,10 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-15** for the opt-in local PostgreSQL working backend (not deployed); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+
+## Configuration read freshness
+
+`managed_assets.get` checks both one-time migration flags and the current configuration content hash on every call. Unchanged payloads reuse a process-local parsed copy, while revisions and applied revisions are always read freshly. Changes to payload content are fetched immediately even if an external writer leaves the revision unchanged. Returned configurations are independent copies. Database failures propagate; there is no time-based cache or stale fallback. The migration lock/recheck, explicit strategy opt-outs, worker ownership and effect checks remain authoritative. Sources: `managed_assets.get`, `managed_assets.migrate_rsi_pb`, `managed_assets.migrate_ma_cross`, `postgres_store.assert_worker`.
 
 ## Qualification and timing
 
