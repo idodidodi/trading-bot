@@ -1,0 +1,6 @@
+{
+  "authProvider": "clerk",
+  "clerkPublishableKey": "pk_live_Y2xlcmsuZmFtaWx5LXRyYWRpbmctYm90LmR5bnY2Lm5ldCQ",
+  "apiOrigin": "https://ido-portege-r700.tail091280.ts.net",
+  "installationId": "8734f8e3-8629-4d5f-b0ff-350fb4a6b911"
+}

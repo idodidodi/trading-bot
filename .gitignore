@@ -43,3 +43,7 @@ tmp/pdfs/
 
 # Private retention archives and recovery manifests
 .retention/
+
+# Clerk development credentials and local CLI state
+.env.local
+.clerk/

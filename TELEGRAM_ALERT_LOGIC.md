@@ -1,6 +1,23 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+
+## Staged Clerk authentication and personal settings
+
+The opt-in Clerk browser mode sends personal-setting requests to the configured
+Linux API. `clerk_auth.SessionVerifier` maps a verified Clerk subject to the
+existing application UUID through an administrator-controlled mapping;
+`clerk_dashboard_api.Gateway.dispatch` sets this UUID as the transaction-local
+`auth.uid()` identity and retains the existing SQL membership/role checks.
+Browser-supplied user IDs and email/metadata claims do not select recipients or
+grant access. The gateway's database role cannot create or alter these mappings.
+Session changes clear the UI and invalidate pending responses. Tests against a
+disposable database verify separate owner/viewer/editor preference rows and
+rejection of cross-user edits. This implementation is not deployed; production
+still uses Supabase authentication and existing Telegram routing/delivery state.
+Full local runtime migration and permission-parity verification remain cutover
+prerequisites. No signal qualification, queue, notification sound or delivery
+behavior is changed by this staged authentication work.
 
 ## Configuration read freshness
 

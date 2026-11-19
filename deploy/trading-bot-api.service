@@ -1,0 +1,18 @@
+[Unit]
+Description=Family Trading Bot authenticated dashboard API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ido/apps/trading-bot-postgres
+EnvironmentFile=/home/ido/.config/FamilyTradingBotPostgres/dashboard-api.env
+ExecStart=/home/ido/apps/trading-bot-postgres/.venv/bin/python clerk_dashboard_api.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
