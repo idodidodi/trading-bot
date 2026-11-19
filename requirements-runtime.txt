@@ -10,4 +10,4 @@ reportlab>=4.0,<5
 PyJWT[crypto]>=2.10,<3
 
 # Pin-bar Telegram candle diagrams
-Pillow>=10,<14
+Pillow>=10.1,<14
