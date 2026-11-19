@@ -1,5 +1,6 @@
 """Authorization parity checks against the explicit disposable PostgreSQL fixture."""
 import os
+import secrets
 import time
 import unittest
 from pathlib import Path
@@ -23,12 +24,14 @@ class GatewayTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.dsn=test_dsn()
+        cls.gateway_password=secrets.token_urlsafe(32)
         cls.private=rsa.generate_private_key(public_exponent=65537,key_size=2048)
         with psycopg.connect(cls.dsn,autocommit=True) as db:
             cls.original_uid=db.execute("SELECT pg_get_functiondef('auth.uid()'::regprocedure)").fetchone()[0]
             # Model the production auth.uid contract only in the disposable DB.
             db.execute("CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$")
             db.execute((Path(__file__).parent/'cloud/local-clerk-api.sql').read_text(),prepare=False)
+            db.execute(psycopg.sql.SQL('ALTER ROLE dashboard_gateway PASSWORD {}').format(psycopg.sql.Literal(cls.gateway_password)))
             for user in cls.users:db.execute('INSERT INTO auth.users VALUES(%s) ON CONFLICT DO NOTHING',(user,))
             db.execute('INSERT INTO public.dashboard_installations VALUES(%s,%s) ON CONFLICT DO NOTHING',(cls.installation,cls.users[0]))
             db.execute("INSERT INTO public.dashboard_members(installation,user_id,role) VALUES(%s,%s,'viewer'),(%s,%s,'editor') ON CONFLICT DO NOTHING",(cls.installation,cls.users[1],cls.installation,cls.users[2]))
@@ -43,6 +46,7 @@ class GatewayTests(unittest.TestCase):
             db.execute('DELETE FROM public.telegram_alert_preferences WHERE installation=%s',(self.installation,))
             for index,user in enumerate(self.users):db.execute('INSERT INTO api_private.clerk_identities VALUES(%s,%s,%s,true)',(self.issuer,'user_'+str(index),user))
         info=psycopg.conninfo.conninfo_to_dict(self.dsn);info['user']='dashboard_gateway'
+        info['password']=self.gateway_password
         self.gateway=Gateway(psycopg.conninfo.make_conninfo(**info),self.issuer,[self.origin],self.installation)
         key=jwt.algorithms.RSAAlgorithm.to_jwk(self.private.public_key(),as_dict=True)
         self.gateway.verifier.keys.fetch_data=Mock(return_value={'keys':[dict(key,kid='test',use='sig',alg='RS256')]})
