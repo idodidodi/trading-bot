@@ -8,3 +8,6 @@ reportlab>=4.0,<5
 
 # Clerk session signature verification for the authenticated Linux API.
 PyJWT[crypto]>=2.10,<3
+
+# Pin-bar Telegram candle diagrams
+Pillow>=10,<14

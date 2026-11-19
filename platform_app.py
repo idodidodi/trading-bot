@@ -278,17 +278,17 @@ class TelegramDestinationError(RuntimeError):
     """Telegram definitively rejected the destination; safe to use General."""
 
 
-def send_telegram(token, chat_id, text, silent=False, source_identity=None, dismissal_user_id=None, dismissal_actions=None):
+def send_telegram(token, chat_id, text, silent=False, source_identity=None, dismissal_user_id=None, dismissal_actions=None, photo=None):
     from telegram_delivery import footer
     from telegram_formatting import presentation
     text = footer(text, source_identity)
     text, entities = presentation(text)
     from telegram_checklist import enabled, prepare, keyboard, bind
-    checklist_key = prepare(Store(), token, text, entities) if enabled() and dismissal_user_id is None else None
+    checklist_key = prepare(Store(), token, text, entities, **({"caption": True} if photo is not None else {})) if enabled() and dismissal_user_id is None else None
     dismissal = None
     if dismissal_user_id is not None:
         from telegram_personal import prepare_message
-        dismissal = prepare_message(Store(), token, chat_id, text, entities, dismissal_user_id)
+        dismissal = prepare_message(Store(), token, chat_id, text, entities, dismissal_user_id, **({"caption": True} if photo is not None else {}))
         if dismissal_actions:dismissal.extra_keyboard=dismissal_actions
     payload = {'chat_id': chat_id, 'text': text, 'entities': entities,
                'disable_notification': silent}
@@ -296,9 +296,13 @@ def send_telegram(token, chat_id, text, silent=False, source_identity=None, dism
         payload['reply_markup'] = keyboard(checklist_key)
     if dismissal:
         payload['reply_markup'] = dismissal.keyboard()
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage', data=data,
-                                 headers={'Content-Type': 'application/json'})
+    if photo is not None:
+        from pinbar_chart import photo_request
+        req = photo_request(token, payload, photo)
+    else:
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(f'https://api.telegram.org/bot{token}/sendMessage', data=data,
+                                     headers={'Content-Type': 'application/json'})
     try:
         with urllib.request.urlopen(req, timeout=15) as response:
             result = json.load(response)
@@ -343,7 +347,9 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             try:
                 # Strategy alerts share RSI's sound policy, even overnight.
                 is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:', 'rsi-pb:', 'ma-cross:'))
-                outcome = 'dry-run' if current_dry_run else deliver_routed(store, token, chat_id, text, 'notification:' + key, send_telegram, silent=not is_signal and quiet_hours(), notification_key=key)
+                from pinbar_chart import notification_sender
+                send = send_telegram if current_dry_run else notification_sender(store, key, send_telegram)
+                outcome = 'dry-run' if current_dry_run else deliver_routed(store, token, chat_id, text, 'notification:' + key, send, silent=not is_signal and quiet_hours(), notification_key=key)
                 with store.connect() as db:db.execute('UPDATE notification_queue SET status=%s WHERE id=%s',(outcome,key))
                 store.log('Queued notification delivered',outcome)
             except Exception as exc:

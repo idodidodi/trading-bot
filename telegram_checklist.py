@@ -34,7 +34,7 @@ def api(token, method, body):
             result = json.load(exc)
         except Exception:
             result = {}
-        if method == 'editMessageText' and 'message is not modified' in result.get('description', ''):
+        if method in ('editMessageText', 'editMessageCaption') and 'message is not modified' in result.get('description', ''):
             return None
         if method == 'deleteMessage' and 'message to delete not found' in result.get('description', '').lower():
             return True
@@ -57,11 +57,11 @@ def bot_key(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def prepare(store, token, text, entities):
+def prepare(store, token, text, entities, caption=False):
     key = uuid.uuid4().hex
     with store.connect() as db:
         db.execute('INSERT INTO telegram_checklist(id,bot,original) VALUES(%s,%s,%s)',
-                   (key, bot_key(token), json.dumps(dict(text=text, entities=entities))))
+                   (key, bot_key(token), json.dumps({'caption': text, 'caption_entities': entities} if caption else dict(text=text, entities=entities))))
     return key
 
 
@@ -90,7 +90,10 @@ def handle(store, token, query):
         original = json.loads(row[0])
         body = dict(text='✓ Completed', entities=[]) if done else original
         assert_worker(store)
-        api(token, 'editMessageText', dict(chat_id=chat, message_id=message_id,
+        method = 'editMessageCaption' if 'caption' in original else 'editMessageText'
+        if done and 'caption' in original:
+            body = dict(caption='✓ Completed', caption_entities=[])
+        api(token, method, dict(chat_id=chat, message_id=message_id,
             **body, reply_markup=keyboard(key, done)))
         db.execute('UPDATE telegram_checklist SET done=%s WHERE id=%s', (done, key))
     api(token, 'answerCallbackQuery', dict(callback_query_id=query['id'], text='Completed' if done else 'Restored'))

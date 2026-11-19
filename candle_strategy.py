@@ -35,6 +35,9 @@ def scan(store, asset, timeframe, candles, rules, now, selection_start=None, cat
         for signal in matches:
             if signal['confirmed_at'] <= cutoff:
                 continue
+            if engine.STRATEGY in ('pin-bars', 'bb-pin-bars'):
+                from pinbar_chart import snapshot
+                signal['chart_candles'] = snapshot(candles, signal['candle_at'])
             identity = [feed, timeframe, signal['direction'], signal['candle_at']]
             key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
             inserted = db.execute(f'INSERT INTO {engine.TABLE_PREFIX}_signals VALUES(%s,%s,%s) ON CONFLICT DO NOTHING',

@@ -91,10 +91,10 @@ def deliver_personal(store, token, text, event, send, silent=False, payload=None
         raise DeliveryPending('A personal Telegram delivery needs retry')
 
 
-def prepare_message(store, token, chat, text, entities, user_id):
+def prepare_message(store, token, chat, text, entities, user_id, caption=False):
     from telegram_dismissal import DismissibleMessage
     from telegram_checklist import bot_key
-    item = DismissibleMessage(int(chat), 0, dict(text=text, entities=entities), user_id=int(user_id) if user_id else None)
+    item = DismissibleMessage(int(chat), 0, ({'caption': text, 'caption_entities': entities} if caption else dict(text=text, entities=entities)), user_id=int(user_id) if user_id else None)
     with store.connect() as db:
         db.execute('INSERT INTO telegram_personal_messages VALUES(%s,%s,%s)',
                    (item.key, bot_key(token), json.dumps(item.snapshot())))

@@ -40,6 +40,15 @@ class DismissibleMessage:
     def restore(cls, state):
         return cls(**deepcopy(state))
 
+    def edit(self, call, body):
+        if 'caption' in self.original:
+            body = dict(body)
+            if 'text' in body:
+                body['caption'] = body.pop('text')
+                body['caption_entities'] = body.pop('entities', [])
+            return call('editMessageCaption', body)
+        return call('editMessageText', body)
+
     def handle(self, query, call, clock=time.time):
         """Handle only this message's buttons; return whether the query matched.
 
@@ -63,12 +72,12 @@ class DismissibleMessage:
             call('answerCallbackQuery', dict(answer, text='Undo window ended'))
             return True
         if data == f'dismiss:done:{self.key}' and self.phase == 'active':
-            call('editMessageText', dict(chat_id=self.chat_id, message_id=self.message_id,
+            self.edit(call, dict(chat_id=self.chat_id, message_id=self.message_id,
                 text='Deleting… 3 seconds to undo', entities=[], reply_markup=self.keyboard(True)))
             self.phase = 'pending'
             self.delete_at = clock() + 3
         elif data == f'dismiss:undo:{self.key}' and self.phase == 'pending':
-            call('editMessageText', dict(deepcopy(self.original), chat_id=self.chat_id,
+            self.edit(call, dict(deepcopy(self.original), chat_id=self.chat_id,
                 message_id=self.message_id, reply_markup=self.keyboard()))
             self.phase = 'active'
             self.delete_at = None
@@ -84,7 +93,7 @@ class DismissibleMessage:
         try:
             call('deleteMessage', dict(chat_id=self.chat_id, message_id=self.message_id))
         except MessageCannotBeDeleted:
-            call('editMessageText', dict(chat_id=self.chat_id, message_id=self.message_id,
+            self.edit(call, dict(chat_id=self.chat_id, message_id=self.message_id,
                 text='✓ Completed — Telegram could not delete this message. You can delete it manually.',
                 entities=[], reply_markup={'inline_keyboard': []}))
             self.phase = 'completed'
