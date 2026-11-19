@@ -1,10 +1,33 @@
 # Clerk authentication migration plan
 
 Prepared 19 November 2026 on `codex/clerk-auth`, based on `20e7444`.
-Status: local implementation approved on 19 November. Clerk application and free
-DNS zone created; production Clerk instance and its authentication DNS records
-separately authorized. Application code remains local, the three existing users have been imported into Clerk after explicit approval, and the live dashboard/scanner still use their existing
-configuration.
+Status: deployed and verified on 19 November 2026 at 14:43 Israel time,
+application commit `de00fe0d71284c8a762ac812849f84ad6a6b33ff`.
+
+The production dashboard is https://app.family-trading-bot.dynv6.net on Cloudflare
+Pages, deployment `e09d63e5-fcfb-443f-b80f-1023733ea3d6`. Clerk handles sign-in;
+Tailscale Funnel exposes only the authenticated API at
+https://ido-portege-r700.tail091280.ts.net to loopback port 8766. PostgreSQL,
+the scanner's admin server and the subscriber API remain private.
+
+The existing scanner and subscriber API switched together to local database
+`trading_runtime` using distinct restricted roles and verified local TLS.
+All 94 table counts/full-row fingerprints and six sequence positions matched
+the final stopped-writer snapshot. All 116 runtime files matched the approved
+commit. Authenticated overview/assets reads, a fresh normal scan, one worker
+owner, empty pending delivery queue, and health/version responses were verified.
+Existing feed/history coverage gaps remain; the migration does not repair feeds.
+Production mutation/replay smoke tests were intentionally not sent.
+
+Supabase data and private rollback artifacts are retained. Its runtime flags
+are disabled and old application write grants fenced. After local writes,
+restoring the stale hosted snapshot is unsafe: reconcile new local state first.
+The daily monitor now checks the local runtime. Weekly maintenance preserves the
+retired Supabase archive and adds full-runtime backup/restore verification;
+local bounded retention still needs a verified local helper.
+
+The sections below retain the preparation history. Their staged/not-deployed
+statements describe earlier checkpoints, not the current deployment status.
 
 ## Provisioned resources
 
@@ -16,7 +39,7 @@ configuration.
   `clk._domainkey`, `clk2._domainkey`. DNS, mail and TLS certificate verified by Clerk on 19 November.
 - The CLI is linked and development configuration is in ignored `.env.local`
   with mode 0600. Never include it in commits or publication artifacts.
-- No dashboard/API origin address has been published in the new zone.
+- Published dashboard origin: `https://app.family-trading-bot.dynv6.net`.
 
 ## Implemented locally
 
@@ -40,7 +63,7 @@ starts the scanner. `cloud/local-clerk-api.sql` provisions only the mapping tabl
 and restricted role after the full runtime/auth-UUID schema migration. It has
 not been applied on Linux or Supabase. The gateway cannot edit mappings.
 
-## Remaining cutover prerequisites (not deployment-ready)
+## Original cutover checklist (historical)
 
 1. Complete Clerk TLS and live origin verification, establish authenticated
    HTTPS reachability to Linux, and publish the dashboard origin. DNS registration
