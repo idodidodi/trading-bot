@@ -65,6 +65,15 @@ class ChartTests(unittest.TestCase):
         db.execute.return_value.fetchone.return_value = None
         with self.assertRaises(RuntimeError): notification_sender(store, 'pin-bars:missing', send)
 
+    def test_suppressed_alert_does_not_render(self):
+        store = MagicMock()
+        db = store.connect.return_value.__enter__.return_value
+        db.execute.return_value.fetchone.return_value = (json.dumps({'timeframe': '5m'}),)
+        with patch('pinbar_chart.render') as draw:
+            sender = notification_sender(store, 'pin-bars:suppressed', Mock())
+        self.assertTrue(callable(sender))
+        draw.assert_not_called()
+
     def test_photo_done_undo_and_delete_fallback(self):
         item = DismissibleMessage(-123, 7, dict(caption='original', caption_entities=[]), user_id=42)
         calls = []

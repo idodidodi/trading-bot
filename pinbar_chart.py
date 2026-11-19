@@ -2,7 +2,6 @@
 import io
 import json
 import math
-from functools import partial
 
 
 def snapshot(candles, candle_at):
@@ -66,7 +65,16 @@ def notification_sender(store, key, send):
         row = db.execute(f'SELECT payload FROM {table} WHERE id=%s', (identity,)).fetchone()
     if not row:
         raise RuntimeError('Pin-bar chart signal missing')
-    return partial(send, photo=render(json.loads(row[0])))
+    signal = json.loads(row[0])
+    photo = None
+    def send_chart(*args, **kwargs):
+        # Routing may suppress the event or recipient before invoking the sender.
+        # Render only after those gates; reuse the bytes for eligible recipients.
+        nonlocal photo
+        if photo is None:
+            photo = render(signal)
+        return send(*args, photo=photo, **kwargs)
+    return send_chart
 
 
 def photo_request(token, payload, photo):
