@@ -264,3 +264,16 @@ existing Python engine in a separate low-priority subprocess (one at a time,
 function that rechecks identity mapping and edit permission. The API accepts
 bounded JSON up to 2.1 MB to preserve the 2 MB CSV upload limit. No additional
 scanner or Telegram sender is started. These changes are not deployed yet.
+
+## Prepared loading and read-performance repair
+
+The signed-in Overview and Signals pages waited for their findings response
+without a loading state. On the Linux host the read took about 7.5 seconds;
+EXPLAIN showed the shared view rebuilding findings for the feedback and archive
+joins. `cloud/dashboard-read-performance.sql` replaces only those two joins
+with their underlying tables and preserves JSON shape and authorization. A
+read-only benchmark measured about 2.6 seconds; six response-equivalence cases
+and repeat application passed in the disposable restored database. Apply this
+migration to the local runtime after preserving its current function definition.
+The frontend now displays sign-in/data-loading progress and a manual Retry on
+read failure. These repair changes require separate publication confirmation.

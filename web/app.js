@@ -286,15 +286,16 @@ async function openCandle(source,id,target='pivot2'){selectFinding(source,id);co
 $('close-backtest').onclick=()=>$('backtest-dialog').close();
 $('close-chart').onclick=()=>$('candle-dialog').close();
 $('candle-dialog').addEventListener('close',()=>{if(chart){chart.remove();chart=null;}if(location.pathname==='/candle'){const source=new URLSearchParams(location.search).get('source');location.assign(source==='backtest'?'/backtest':'/signals');}});
-async function load(){if(clerkMode&&(!clerkSession||!clerkSession.signedIn()))return;if(online&&passwordSetupSession)return;if(online&&!clerkMode&&!token){$('login').hidden=false;return;}try{const path=location.pathname;$('connection').textContent=clerkMode?'Private scanner API':online?'Online database':'Local SQLite';if(path==='/assets')await loadAssets();else if(path==='/candle'){const p=new URLSearchParams(location.search);await openCandle(p.get('source'),p.get('finding'));}else if(path==='/backtest')await findings('backtest');else if(path==='/logs')await loadLogs();else if(path==='/signals'||path==='/dashboard')await findings('live');else await loadOverview();}catch(e){message(e.message,true);}}
+async function load(){if(clerkMode&&(!clerkSession||!clerkSession.signedIn()))return;if(online&&passwordSetupSession){$('initial-loading')?.remove?.();return;}if(online&&!clerkMode&&!token){$('initial-loading')?.remove?.();$('login').hidden=false;return;}try{$('initial-loading')?.remove?.();const path=location.pathname;message('Loading '+(path==='/signals'?'signals':path==='/'?'overview':'dashboard')+'…');$('connection').textContent=clerkMode?'Private scanner API':online?'Online database':'Local SQLite';if(path==='/assets')await loadAssets();else if(path==='/candle'){const p=new URLSearchParams(location.search);await openCandle(p.get('source'),p.get('finding'));}else if(path==='/backtest')await findings('backtest');else if(path==='/logs')await loadLogs();else if(path==='/signals'||path==='/dashboard')await findings('live');else await loadOverview();message('');}catch(e){message(e.name==='AbortError'?'Loading timed out. Please retry.':e.message,true);status.append(button('Retry',()=>load()));}}
 if(clerkMode){
  for(const key of ['dashboard_token','dashboard_refresh','dashboard_expires','selected_live','selected_backtest'])sessionStorage.removeItem(key);
  token=null;
- window.createClerkDashboard(config,{onReady:session=>{clerkSession=session;load();},onIdentityChange:()=>{
+ message('Connecting securely…');
+ window.createClerkDashboard(config,{onReady:session=>{clerkSession=session;if(!session.signedIn()){content.replaceChildren();message('');}load();},onIdentityChange:()=>{
   content.replaceChildren();state=null;chart?.remove?.();
   for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
   location.reload();
- }}).catch(error=>message(error.message,true));
+ }}).catch(error=>{content.replaceChildren();message(error.message,true);status.append(button('Retry',()=>location.reload()));});
 }else load();
 
 for(const a of document.querySelectorAll?.('nav a')||[])if(a.getAttribute('href')===location.pathname)a.setAttribute('aria-current','page');
