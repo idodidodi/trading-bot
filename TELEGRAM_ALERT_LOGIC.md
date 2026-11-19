@@ -19,6 +19,13 @@ Full local runtime migration and permission-parity verification remain cutover
 prerequisites. No signal qualification, queue, notification sound or delivery
 behavior is changed by this staged authentication work.
 
+The prepared local runtime cutover keeps the same scanner and Telegram workers,
+including pending deliveries, deduplication and callback offsets. Stored-history
+replays use the existing `backtest_jobs.worker` queue; CSV uploads use a separate
+bounded low-priority process (`local_csv_replay.py`), with no scanner or sender.
+`cloud/local-replays.sql` preserves SQL authorization and rechecks CSV save
+permissions. Production routing and the final data transfer remain unverified.
+
 ## Configuration read freshness
 
 `managed_assets.get` checks both one-time migration flags and the current configuration content hash on every call. Unchanged payloads reuse a process-local parsed copy, while revisions and applied revisions are always read freshly. Changes to payload content are fetched immediately even if an external writer leaves the revision unchanged. Returned configurations are independent copies. Database failures propagate; there is no time-based cache or stale fallback. The migration lock/recheck, explicit strategy opt-outs, worker ownership and effect checks remain authoritative. Sources: `managed_assets.get`, `managed_assets.migrate_rsi_pb`, `managed_assets.migrate_ma_cross`, `postgres_store.assert_worker`.

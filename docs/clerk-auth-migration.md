@@ -230,3 +230,14 @@ previous Worker/Tunnel hosting plan, but the normal separate server/UI publicati
 - Cloudflare CLI access was unavailable during preparation (logged out); owner
   login was requested. No Pages project, custom dashboard record, Funnel exposure,
   production API process or live-code deployment has been created by this change.
+
+## Local replay completion (prepared 19 November)
+
+`cloud/local-replays.sql` converts stored-history submissions to pending local
+jobs consumed by the existing scanner replay worker. It retains the deployed
+SQL role and input checks. CSV replay is authorized first, computed by the
+existing Python engine in a separate low-priority subprocess (one at a time,
+12-second wall limit and 10-second CPU limit), then saved through a gateway-only
+function that rechecks identity mapping and edit permission. The API accepts
+bounded JSON up to 2.1 MB to preserve the 2 MB CSV upload limit. No additional
+scanner or Telegram sender is started. These changes are not deployed yet.

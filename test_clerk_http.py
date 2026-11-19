@@ -34,7 +34,7 @@ class HTTPBoundaryTests(unittest.TestCase):
             ('GET','/api/dashboard','',None,405),('POST','/anything','{}',None,404),
             ('POST','/api/dashboard','broken',None,400),
             ('POST','/api/dashboard','{}',{'Content-Type':'text/plain'},415),
-            ('POST','/api/dashboard','',{'Content-Type':'application/json','Content-Length':'1048577'},413),
+            ('POST','/api/dashboard','',{'Content-Type':'application/json','Content-Length':'2100001'},413),
         ]:
             with self.subTest(expected=expected):self.assertEqual(self.request(method,path,body,headers)[0],expected)
         self.gateway.dispatch.assert_not_called()

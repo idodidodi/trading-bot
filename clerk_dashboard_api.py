@@ -5,6 +5,10 @@ API login first; it intentionally cannot use the scanner's database credentials.
 """
 import json
 import os
+import subprocess
+import sys
+import threading
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from uuid import UUID
 from urllib.parse import urlsplit
@@ -25,6 +29,22 @@ class Gateway:
         self.issuer = issuer
         self.origins = frozenset(origins)
         self.verifier = SessionVerifier(issuer, origins, self.resolve_user)
+        self.csv_slot = threading.BoundedSemaphore(1)
+
+    def replay_csv(self, inputs):
+        if not self.csv_slot.acquire(blocking=False):
+            raise ValueError('A CSV replay is already active; retry later')
+        try:
+            result = subprocess.run([sys.executable, str(Path(__file__).with_name('local_csv_replay.py'))],
+                input=json.dumps(inputs), text=True, capture_output=True, timeout=12,
+                env={k:v for k,v in os.environ.items() if k in ('PATH','LANG','LC_ALL','SYSTEMROOT')})
+            if result.returncode:
+                raise ValueError('CSV replay failed or exceeded its limit')
+            return json.loads(result.stdout)['report']
+        except (subprocess.TimeoutExpired, KeyError) as exc:
+            raise ValueError('CSV replay failed or exceeded its limit') from exc
+        finally:
+            self.csv_slot.release()
 
     def connect(self):
         db = psycopg.connect(self.dsn, connect_timeout=5)
@@ -54,10 +74,8 @@ class Gateway:
         if (not isinstance(operation, str) or len(operation)>4096 or not operation.startswith('/api/')
                 or urlsplit(operation).fragment or not isinstance(inputs, dict)):
             raise ValueError('Invalid operation')
-        # Replay execution currently requires an Edge Function. Never silently
-        # enqueue a job that has no local executor after the Auth cutover.
-        if urlsplit(operation).path in ('/api/backtests', '/api/csv-backtests') and inputs:
-            raise ValueError('Local replay execution is not enabled yet')
+        csv_replay = urlsplit(operation).path == '/api/csv-backtests' and bool(inputs)
+        rpc_inputs = {'action':'authorize'} if csv_replay else inputs
         with self.connect() as db:
             # Recheck mapping in this transaction; no privilege is inferred from
             # email, token metadata, or a caller-supplied application UUID.
@@ -71,8 +89,16 @@ class Gateway:
                        (json.dumps(claims), str(identity.user_id)))
             # Existing database functions remain the authority for viewer/editor/
             # owner permissions and personal Telegram preference ownership.
-            return db.execute('SELECT public.dashboard_api(%s::uuid,%s,%s::jsonb)',
-                              (self.installation, operation, Jsonb(inputs))).fetchone()[0]
+            result = db.execute('SELECT public.dashboard_api(%s::uuid,%s,%s::jsonb)',
+                              (self.installation, operation, Jsonb(rpc_inputs))).fetchone()[0]
+        if not csv_replay:
+            return result
+        if result.get('authorized') is not True:
+            raise MembershipError('Not authorized')
+        report = self.replay_csv(inputs)
+        with self.connect() as db:
+            return db.execute('SELECT api_private.save_csv(%s,%s,%s::uuid,%s::jsonb)',
+                (self.issuer,identity.subject,self.installation,Jsonb(report))).fetchone()[0]
 
 
 def handler(gateway):
@@ -108,7 +134,7 @@ def handler(gateway):
                 return self.respond(415, {'error':'Expected bounded JSON'})
             try:
                 length = int(self.headers.get('Content-Length', '0'))
-                if not 0 < length <= 1_048_576:
+                if not 0 < length <= 2_100_000:
                     return self.respond(413, {'error':'Invalid request size'})
                 self.connection.settimeout(10)
                 payload = json.loads(self.rfile.read(length))

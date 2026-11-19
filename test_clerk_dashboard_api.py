@@ -28,9 +28,11 @@ class GatewayTests(unittest.TestCase):
         cls.private=rsa.generate_private_key(public_exponent=65537,key_size=2048)
         with psycopg.connect(cls.dsn,autocommit=True) as db:
             cls.original_uid=db.execute("SELECT pg_get_functiondef('auth.uid()'::regprocedure)").fetchone()[0]
+            cls.original_api=db.execute("SELECT pg_get_functiondef('bot_runtime.api(uuid,text,jsonb)'::regprocedure)").fetchone()[0]
             # Model the production auth.uid contract only in the disposable DB.
             db.execute("CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql AS $$SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$")
             db.execute((Path(__file__).parent/'cloud/local-clerk-api.sql').read_text(),prepare=False)
+            db.execute((Path(__file__).parent/'cloud/local-replays.sql').read_text(),prepare=False)
             db.execute(psycopg.sql.SQL('ALTER ROLE dashboard_gateway PASSWORD {}').format(psycopg.sql.Literal(cls.gateway_password)))
             for user in cls.users:db.execute('INSERT INTO auth.users VALUES(%s) ON CONFLICT DO NOTHING',(user,))
             db.execute('INSERT INTO public.dashboard_installations VALUES(%s,%s) ON CONFLICT DO NOTHING',(cls.installation,cls.users[0]))
@@ -38,7 +40,9 @@ class GatewayTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        with psycopg.connect(cls.dsn,autocommit=True) as db:db.execute(cls.original_uid)
+        with psycopg.connect(cls.dsn,autocommit=True) as db:
+            db.execute(cls.original_uid)
+            db.execute(cls.original_api)
 
     def setUp(self):
         with psycopg.connect(self.dsn) as db:
@@ -97,9 +101,32 @@ class GatewayTests(unittest.TestCase):
         with self.gateway.connect() as db:
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):db.execute("UPDATE api_private.clerk_identities SET subject='user_attacker'")
 
-    def test_replays_fail_explicitly_until_local_executor_exists(self):
-        for path in ['/api/backtests','/api/csv-backtests']:
-            with self.assertRaises(ValueError):self.call(0,path,{'action':'run'})
+    def test_viewer_cannot_start_csv_computation(self):
+        self.gateway.replay_csv=Mock()
+        with self.assertRaises(psycopg.Error):self.call(1,'/api/csv-backtests',{'csv':'untrusted'})
+        self.gateway.replay_csv.assert_not_called()
+
+    def test_csv_save_rechecks_mapping_after_computation(self):
+        def revoke(inputs):
+            with psycopg.connect(self.dsn) as db:
+                db.execute("UPDATE api_private.clerk_identities SET enabled=false WHERE subject='user_0'")
+            return {'id':'computed','signals':[]}
+        self.gateway.replay_csv=revoke
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):self.call(0,'/api/csv-backtests',{'csv':'fixture'})
+
+    def test_stored_replay_is_queued_for_existing_local_worker(self):
+        from psycopg.types.json import Jsonb
+        with psycopg.connect(self.dsn) as db:
+            with db.transaction():
+                db.execute('DELETE FROM bot_runtime.backtest_jobs')
+                db.execute('INSERT INTO bot_runtime.runtime_control(id,installation,enabled) VALUES(1,%s,true) ON CONFLICT(id) DO UPDATE SET installation=excluded.installation,enabled=true',(self.installation,))
+                db.execute("INSERT INTO bot_runtime.backtest_candle_cache VALUES('test-local','daily',0,1,1,1,1,1) ON CONFLICT DO NOTHING")
+                db.execute("SELECT set_config('request.jwt.claim.sub',%s,true)",(self.users[0],))
+                db.execute('SET LOCAL ROLE authenticated')
+                result=db.execute("SELECT public.dashboard_api(%s,'/api/backtests',%s)",(self.installation,Jsonb({'assets':['test-local'],'timeframes':['daily'],'strategy':'confirmed'}))).fetchone()[0]
+                self.assertEqual(result['status'],'pending')
+                self.assertEqual(result['executor'],'local')
+                raise psycopg.Rollback()
 
 
 if __name__ == '__main__':unittest.main()
