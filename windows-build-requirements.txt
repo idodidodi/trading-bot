@@ -5,3 +5,5 @@ psycopg[binary,pool]>=3.2,<4
 reportlab>=4.0,<5
 # PDF content verification in the release test suite
 pypdf>=5,<7
+# Clerk API authentication tests run in both standalone build jobs.
+PyJWT[crypto]>=2.10,<3
