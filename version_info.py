@@ -12,7 +12,7 @@ from app_version import VERSION
 REPOSITORY = 'idodidodi/trading-bot'
 API = f'https://api.github.com/repos/{REPOSITORY}'
 ONLINE_DASHBOARD_URL = 'https://family-trading-bot.idodidodi.workers.dev'
-UI_FILES = {'web/index.html', 'web/app.js', 'web/style.css', 'web/chart.js',
+UI_FILES = {'web/index.html', 'web/app.js', 'web/clerk-session.js', 'web/style.css', 'web/chart.js',
             'web/favicon.svg', 'web/vendor/lightweight-charts.js'}
 
 

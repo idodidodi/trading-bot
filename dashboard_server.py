@@ -11,6 +11,14 @@ def browser_config(root):
     if not path.is_file() and getattr(sys,'frozen',False):
         path=Path(sys._MEIPASS)/'cloud/browser-config.json'
     value=json.loads(path.read_text()) if path.is_file() else {}
+    if os.environ.get('DASHBOARD_AUTH_PROVIDER', value.get('authProvider')) == 'clerk':
+        from dashboard_public_config import clerk_config
+        return clerk_config({
+            'authProvider': 'clerk',
+            'clerkPublishableKey': os.environ.get('DASHBOARD_CLERK_PUBLISHABLE_KEY', value.get('clerkPublishableKey', '')),
+            'apiOrigin': os.environ.get('DASHBOARD_API_ORIGIN', value.get('apiOrigin', '')),
+            'installationId': os.environ.get('DASHBOARD_INSTALLATION_ID', value.get('installationId', '')),
+        })
     keys={'supabaseUrl':'DASHBOARD_SUPABASE_URL','publishableKey':'DASHBOARD_PUBLISHABLE_KEY','installationId':'DASHBOARD_INSTALLATION_ID'}
     result={k:(os.environ.get(env) or value.get(k,'')) for k,env in keys.items()}
     if not result['supabaseUrl'].startswith('https://') or not all(result.values()):
@@ -21,7 +29,7 @@ def browser_config(root):
 
 def handler(root):
     root=Path(root);config=browser_config(root)
-    files={'app.js':'text/javascript','style.css':'text/css','chart.js':'text/javascript','vendor/lightweight-charts.js':'text/javascript','config.js':'text/javascript','version.json':'application/json','favicon.svg':'image/svg+xml'}
+    files={'clerk-session.js':'text/javascript','app.js':'text/javascript','style.css':'text/css','chart.js':'text/javascript','vendor/lightweight-charts.js':'text/javascript','config.js':'text/javascript','version.json':'application/json','favicon.svg':'image/svg+xml'}
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             path=self.path.split('?',1)[0]

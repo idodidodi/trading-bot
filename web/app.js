@@ -1,4 +1,5 @@
-const config=window.DASHBOARD_CONFIG||{}, online=Boolean(config.supabaseUrl);
+const config=window.DASHBOARD_CONFIG||{}, clerkMode=config.authProvider==='clerk', online=clerkMode||Boolean(config.supabaseUrl);
+let clerkSession=null;
 const $=id=>document.getElementById(id),content=$('content'),status=$('status');
 const frames=['monthly','weekly','daily','4h','1h'];
 const assetFrames=[...frames,'30m','15m','5m'];
@@ -13,7 +14,7 @@ let state,token=sessionStorage.getItem('dashboard_token'),chart=null;
 const node=(tag,text)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;return n;};
 function message(text,error=false){status.textContent=text;status.className=error?'error':'';}
 let passwordSetupSession=null;
-if(online&&location.hash){
+if(online&&!clerkMode&&location.hash){
  const auth=new URLSearchParams(location.hash.slice(1));
  const code=auth.get('error_code'),description=auth.get('error_description');
  if(code){
@@ -34,6 +35,7 @@ if(online&&location.hash){
  }
 }
 async function request(path,body,timeout=15000){
+ if(clerkMode){if(!clerkSession)throw Error('Sign-in is still loading.');return clerkSession.request(path,body,timeout);}
  if(online)await refreshSession();
  let url=path,headers={},method=body?'POST':'GET';
  if(online){url=config.supabaseUrl+'/rest/v1/rpc/dashboard_api';method='POST';headers={apikey:config.publishableKey,Authorization:'Bearer '+token};body={installation:config.installationId,operation:path,input:body||{}};}
@@ -284,8 +286,17 @@ async function openCandle(source,id,target='pivot2'){selectFinding(source,id);co
 $('close-backtest').onclick=()=>$('backtest-dialog').close();
 $('close-chart').onclick=()=>$('candle-dialog').close();
 $('candle-dialog').addEventListener('close',()=>{if(chart){chart.remove();chart=null;}if(location.pathname==='/candle'){const source=new URLSearchParams(location.search).get('source');location.assign(source==='backtest'?'/backtest':'/signals');}});
-async function load(){if(online&&passwordSetupSession)return;if(online&&!token){$('login').hidden=false;return;}try{const path=location.pathname;$('connection').textContent=online?'Online database':'Local SQLite';if(path==='/assets')await loadAssets();else if(path==='/candle'){const p=new URLSearchParams(location.search);await openCandle(p.get('source'),p.get('finding'));}else if(path==='/backtest')await findings('backtest');else if(path==='/logs')await loadLogs();else if(path==='/signals'||path==='/dashboard')await findings('live');else await loadOverview();}catch(e){message(e.message,true);}}
-load();
+async function load(){if(clerkMode&&(!clerkSession||!clerkSession.signedIn()))return;if(online&&passwordSetupSession){$('initial-loading')?.remove?.();return;}if(online&&!clerkMode&&!token){$('initial-loading')?.remove?.();$('login').hidden=false;return;}try{$('initial-loading')?.remove?.();const path=location.pathname;message('Loading '+(path==='/signals'?'signals':path==='/'?'overview':'dashboard')+'…');$('connection').textContent=clerkMode?'Private scanner API':online?'Online database':'Local SQLite';if(path==='/assets')await loadAssets();else if(path==='/candle'){const p=new URLSearchParams(location.search);await openCandle(p.get('source'),p.get('finding'));}else if(path==='/backtest')await findings('backtest');else if(path==='/logs')await loadLogs();else if(path==='/signals'||path==='/dashboard')await findings('live');else await loadOverview();message('');}catch(e){message(e.name==='AbortError'?'Loading timed out. Please retry.':e.message,true);status.append(button('Retry',()=>load()));}}
+if(clerkMode){
+ for(const key of ['dashboard_token','dashboard_refresh','dashboard_expires','selected_live','selected_backtest'])sessionStorage.removeItem(key);
+ token=null;
+ message('Connecting securely…');
+ window.createClerkDashboard(config,{onReady:session=>{clerkSession=session;if(!session.signedIn()){content.replaceChildren();message('');}load();},onIdentityChange:()=>{
+  content.replaceChildren();state=null;chart?.remove?.();
+  for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
+  location.reload();
+ }}).catch(error=>{content.replaceChildren();message(error.message,true);status.append(button('Retry',()=>location.reload()));});
+}else load();
 
 for(const a of document.querySelectorAll?.('nav a')||[])if(a.getAttribute('href')===location.pathname)a.setAttribute('aria-current','page');
 

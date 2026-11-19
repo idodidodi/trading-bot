@@ -5,3 +5,6 @@ tzdata
 
 # Scheduled stock report attachments
 reportlab>=4.0,<5
+
+# Clerk session signature verification for the authenticated Linux API.
+PyJWT[crypto]>=2.10,<3

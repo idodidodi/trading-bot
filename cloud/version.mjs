@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {resolve} from 'node:path';
 
 export async function buildManifest(root){
- const ui=['web/index.html','web/app.js','web/style.css','web/chart.js','web/favicon.svg','web/vendor/lightweight-charts.js'];
+ const ui=['web/index.html','web/app.js','web/clerk-session.js','web/style.css','web/chart.js','web/favicon.svg','web/vendor/lightweight-charts.js'];
  async function walk(dir){const rows=await readdir(resolve(root,dir),{withFileTypes:true});return (await Promise.all(rows.map(r=>r.isDirectory()?walk(dir+'/'+r.name):[dir+'/'+r.name]))).flat();}
  // Match version_info.component: CI rewrites app_version.py for packaging,
  // so it must not change the comparable scanner source fingerprint.

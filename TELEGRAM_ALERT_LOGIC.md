@@ -1,6 +1,33 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-19** for Clerk identity handling and full local runtime cutover (verified deployed at `de00fe0`); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+
+## Clerk authentication and personal settings
+
+The opt-in Clerk browser mode sends personal-setting requests to the configured
+Linux API. `clerk_auth.SessionVerifier` maps a verified Clerk subject to the
+existing application UUID through an administrator-controlled mapping;
+`clerk_dashboard_api.Gateway.dispatch` sets this UUID as the transaction-local
+`auth.uid()` identity and retains the existing SQL membership/role checks.
+Browser-supplied user IDs and email/metadata claims do not select recipients or
+grant access. The gateway's database role cannot create or alter these mappings.
+Session changes clear the UI and invalidate pending responses. Tests against a
+disposable database verify separate owner/viewer/editor preference rows and
+rejection of cross-user edits. Production sign-in through Clerk and authenticated Linux API reads were verified
+on 19 November 2026. All 94 migrated tables and six sequence positions matched
+before activation, preserving existing UUIDs, membership and Telegram state.
+No signal qualification, queue, notification sound or delivery behavior changed.
+
+The deployed local runtime cutover keeps the same scanner and Telegram workers,
+including pending deliveries, deduplication and callback offsets. Stored-history
+replays use the existing `backtest_jobs.worker` queue; CSV uploads use a separate
+bounded low-priority process (`local_csv_replay.py`), with no scanner or sender.
+`cloud/local-replays.sql` preserves SQL authorization and rechecks CSV save
+permissions. The existing scanner resumed against local `trading_runtime`; a normal
+scan and queued delivery completed, with one worker owner and no test messages
+or orders. The old Supabase runtime is disabled and fenced as a rollback archive.
+Stored/CSV replay execution was tested in disposable databases; no production
+replay was submitted during the cutover check.
 
 ## Configuration read freshness
 
