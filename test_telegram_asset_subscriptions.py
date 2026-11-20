@@ -118,14 +118,14 @@ class ConfigurationTests(PostgresTestCase):
             revision,applied= db.execute('SELECT revision,applied_revision FROM managed_config WHERE id=1').fetchone()
             self.assertEqual((revision,applied),(48,47))
             self.assertEqual(db.execute('SELECT chat,asset,timeframes,enabled FROM telegram_asset_subscriptions').fetchone(),
-                             ('5412729128','NEARUSD',FRAMES,True))
+                             ('-5412729128','NEARUSD',FRAMES,True))
             self.assertEqual(db.execute('SELECT count(*) FROM telegram_delivery').fetchone()[0],0)
 
     def test_broad_route_conflict_rolls_back_everything(self):
         import contextlib,io
         with self.store.connect() as db:
             db.execute("INSERT INTO public.telegram_routes(installation,revision,routes) VALUES('00000000-0000-0000-0000-000000000002',1,%s)",
-                       (json.dumps({'crypto.rsi':'5412729128'}),))
+                       (json.dumps({'crypto.rsi':'-5412729128'}),))
         with patch('sys.argv',['configure-near-alerts.py','--apply']),contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(Exception,'broad routes'):
                 self.module.main()

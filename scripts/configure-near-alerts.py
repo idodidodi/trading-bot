@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 FRAMES = ['5m', '15m', '30m', '1h', '4h', 'daily', 'weekly']
-CHAT = '5412729128'
+CHAT = '-5412729128'
 ASSET = 'NEARUSD'
 
 

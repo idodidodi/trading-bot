@@ -98,7 +98,7 @@ Local implementation, not yet deployed:
 existing `TRADING_DATABASE_URL`). Apply requires an operator connection permitted
 to update config and subscriptions; it does not run the scanner. It selects the
 existing exact `NEARUSD` / `NEAR/USD` asset, requires its confirmed Kraken feed,
-and configures chat **5412729128** for **5m, 15m, 30m, 1h, 4h, daily, weekly** RSI.
+and configures group **Chasing**, Bot API chat **-5412729128** for **5m, 15m, 30m, 1h, 4h, daily, weekly** RSI.
 It preserves other assets and existing non-RSI strategy coverage using
 `strategy_timeframes`; the asset frame list is the union needed by all strategies,
 while the new subscription is limited to the seven requested frames. Existing
@@ -115,9 +115,11 @@ NEAR was enabled for monthly/weekly/daily/4h/1h/5m and used Kraken for all excep
 monthly. The authoritative runtime is PostgreSQL `trading_runtime` on Linux
 loopback, with runtime/effects enabled. Read-only Kraken requests returned 720 closed candles for each requested frame
 except weekly (231, still above the strategy minimum). Neither shared routing,
-the fallback, nor personal registrations targeted 5412729128. Telegram `getChat` returned
-`Bad Request: chat not found`; `getMe` identified `@idodiTradingBot`. The user must
-start that bot or correct the destination before activation can be verified.
+the fallback, nor personal registrations targeted 5412729128. The user supplied the Telegram export for private group Chasing (export ID
+5412729128). Read-only `getChat` then verified Bot API ID **-5412729128**, title
+**Chasing**, type **group**; the positive export ID is not a private-user chat.
+`getMe` identified `@idodiTradingBot`. This subscription uses group dismissal
+controls and does not bind buttons to the positive export ID as a user identity.
 The Supabase management SQL endpoint was unavailable, but is not the authoritative
 configuration destination. These checks changed no production settings and sent
 no messages or orders. Deploy the existing Linux scanner/service and the additive
