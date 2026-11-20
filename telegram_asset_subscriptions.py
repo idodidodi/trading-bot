@@ -32,7 +32,9 @@ def deliver_subscriptions(store, token, text, event, send, silent=False, payload
         chat = subscription[0]
         # Private destinations bind Done/Undo to that Telegram user. A group
         # subscription uses the existing shared dismissal controls.
-        sender = partial(send, dismissal_user_id=int(chat) if int(chat) > 0 else 0)
+        from telegram_checklist import group_dismissal_enabled
+        sender = (partial(send, dismissal_user_id=int(chat)) if int(chat) > 0
+                  else partial(send, dismissal_user_id=0) if group_dismissal_enabled() else send)
         try:
             deliver(store, token, chat, text, event, sender, silent=silent)
         except (WorkerOwned, *RETRYABLE):

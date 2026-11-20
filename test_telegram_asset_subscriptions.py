@@ -83,6 +83,17 @@ class DeliveryTests(PostgresTestCase):
         self.assertEqual(self.send.call_args.args[1],'5412729128')
         self.assertEqual(self.send.call_args.kwargs['dismissal_user_id'],5412729128)
 
+    def test_group_copies_respect_existing_group_dismissal_setting(self):
+        from telegram_checklist import group_dismissal_enabled
+        with self.store.connect() as db:
+            db.execute("UPDATE telegram_asset_subscriptions SET chat='-5412729128'")
+        for enabled in (False,True):
+            with patch('telegram_checklist.group_dismissal_enabled',return_value=enabled):
+                deliver_subscriptions(self.store,'test-token','test','divergence:group:'+str(enabled),self.send,payload=payload())
+            self.assertEqual(self.send.call_args.args[1],'-5412729128')
+            if enabled:self.assertEqual(self.send.call_args.kwargs['dismissal_user_id'],0)
+            else:self.assertNotIn('dismissal_user_id',self.send.call_args.kwargs)
+
     def test_failure_stays_retryable_and_disabled_subscriptions_do_not_send(self):
         from telegram_delivery import DeliveryPending
         self.send.side_effect=RuntimeError('temporary failure')
@@ -132,3 +143,14 @@ class ConfigurationTests(PostgresTestCase):
         with self.store.connect() as db:
             self.assertEqual(db.execute('SELECT revision FROM managed_config WHERE id=1').fetchone()[0],47)
             self.assertEqual(db.execute('SELECT count(*) FROM telegram_asset_subscriptions').fetchone()[0],0)
+
+    def test_explicit_replacement_removes_only_target_group_reference(self):
+        import contextlib,io
+        with self.store.connect() as db:
+            db.execute("INSERT INTO public.telegram_recipients(installation,user_id,telegram_user_id,routes) VALUES('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001',8016839817,%s)",
+                       (json.dumps({'chasing':'-5412729128','crypto.rsi':'-999'}),))
+        with patch('sys.argv',['configure-near-alerts.py','--apply','--replace-personal-route']),contextlib.redirect_stdout(io.StringIO()):
+            self.module.main()
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('SELECT routes FROM public.telegram_recipients').fetchone()[0],{'crypto.rsi':'-999'})
+            self.assertEqual(db.execute('SELECT chat FROM telegram_asset_subscriptions').fetchone()[0],'-5412729128')

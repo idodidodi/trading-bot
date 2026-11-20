@@ -1,6 +1,6 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (local implementation, not deployed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
 ## Staged Clerk authentication and personal settings
 
@@ -52,7 +52,7 @@ Sources: `pinbar_chart.py` (`snapshot`, `render`, `notification_sender`, `photo_
 =======
 ## Hidden RSI and exact-asset Telegram subscriptions
 
-Local implementation, not yet deployed:
+Implementation; verify activation against the installed source and subscription row:
 
 - The live RSI scanner and Python/hosted RSI replays include regular and hidden
   divergences. Hidden bullish requires Close[P2] > Close[P1] and
@@ -105,8 +105,11 @@ while the new subscription is limited to the seven requested frames. Existing
 monthly RSI scanning/context and other destinations are preserved. The scanner
 intersects strategy limits with enabled asset frames. There is no monthly RSI
 copy to this new subscription.
-The script rejects broad routes already pointing at this chat, locks/checks the
-config revision, commits config/subscription atomically and reads both back.
+The script rejects shared routes already pointing at this chat. Existing personal
+references also fail closed unless `--replace-personal-route` is explicitly given;
+that option removes only references to this exact group, preserving all other
+recipients and destinations. It locks/checks the config revision, commits the
+route replacement/config/subscription atomically and reads config/subscription back.
 New frames establish their normal no-history-alert baseline. No alert is promised
 when data is unavailable or no pattern meets the filters.
 
@@ -118,7 +121,10 @@ except weekly (231, still above the strategy minimum). Neither shared routing,
 the fallback, nor personal registrations targeted 5412729128. The user supplied the Telegram export for private group Chasing (export ID
 5412729128). Read-only `getChat` then verified Bot API ID **-5412729128**, title
 **Chasing**, type **group**; the positive export ID is not a private-user chat.
-`getMe` identified `@idodiTradingBot`. This subscription uses group dismissal
+`getMe` identified `@idodiTradingBot`. The verified group has one existing personal `chasing` route owned by Telegram
+user 8016839817; the approved NEAR-only enrollment replaces that reference using
+the explicit flag. Other routes are preserved. This subscription honors the
+existing group-dismissal enable setting and uses group dismissal
 controls and does not bind buttons to the positive export ID as a user identity.
 The Supabase management SQL endpoint was unavailable, but is not the authoritative
 configuration destination. These checks changed no production settings and sent

@@ -71,6 +71,8 @@ def configure(config):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--replace-personal-route', action='store_true',
+                        help='Remove existing personal route references to this exact group during enrollment')
     args = parser.parse_args()
     from platform_app import load_env
     load_env()
@@ -85,7 +87,8 @@ def main():
         print('Preview only; production settings unchanged.')
         return
     # Recheck the revision while holding the same row lock used for config writes.
-    # Refuse existing broad routes to this chat rather than redirecting others.
+    # Shared routes always fail closed. Personal references to only this group
+    # can be removed with the explicit replacement flag; other groups are preserved.
     sql = f"""BEGIN;
       SELECT 1 FROM public.dashboard_installations WHERE id={installation} FOR UPDATE;
       SELECT 1 FROM bot_runtime.managed_config WHERE id=1 FOR UPDATE;
@@ -93,9 +96,13 @@ def main():
         IF (SELECT revision FROM bot_runtime.managed_config WHERE id=1) IS DISTINCT FROM {int(row['revision'])}
           THEN RAISE EXCEPTION 'Configuration changed; rerun preview'; END IF;
         IF EXISTS(SELECT 1 FROM public.telegram_routes r, jsonb_each_text(r.routes) v WHERE r.installation={installation} AND v.value='{CHAT}')
-          OR EXISTS(SELECT 1 FROM public.telegram_recipients r, jsonb_each_text(r.routes) v WHERE r.installation={installation} AND v.value='{CHAT}')
+          OR ({'false' if args.replace_personal_route else 'true'} AND EXISTS(SELECT 1 FROM public.telegram_recipients r, jsonb_each_text(r.routes) v WHERE r.installation={installation} AND v.value='{CHAT}'))
           THEN RAISE EXCEPTION 'Chat already has broad routes; reconcile before NEAR-only enrollment'; END IF;
       END $$;
+      UPDATE public.telegram_recipients r SET routes=(
+        SELECT coalesce(jsonb_object_agg(v.key,v.value),'{{}}'::jsonb) FROM jsonb_each_text(r.routes) v WHERE v.value<>'{CHAT}')
+      WHERE r.installation={installation} AND {'true' if args.replace_personal_route else 'false'}
+        AND EXISTS(SELECT 1 FROM jsonb_each_text(r.routes) v WHERE v.value='{CHAT}');
       UPDATE bot_runtime.managed_config SET payload={api.literal(json.dumps(config))},revision=revision+1 WHERE id=1;
       INSERT INTO bot_runtime.telegram_asset_subscriptions(chat,asset,timeframes)
       VALUES('{CHAT}','{ASSET}',ARRAY['5m','15m','30m','1h','4h','daily','weekly'])
