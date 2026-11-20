@@ -5,7 +5,7 @@ import json
 # Explicit evidence allowlist: never expose recipient IDs, credentials or asset config.
 EVIDENCE = {'symbol','source','market','timeframe','direction','confirmed_at','detected_at',
     'published_at','lifecycle','observed_at','pivot1','pivot2','price1','price2','rsi1','rsi2','band1','band2',
-    'band_touch_price','band_slope_pct','spacing','signal_status','alert_timing',
+    'divergence_type','band_touch_price','band_slope_pct','spacing','signal_status','alert_timing',
     'pivot_closed_at','pivot1_closed_at','pivot2_closed_at','candle_at','candle','pivot_candle','followup_candle','version',
     'fast_sma','slow_sma','previous_fast_sma','previous_slow_sma',
     'open','high','low','close','body','upper_wick','lower_wick','ema_fast','ema_slow','atr','breakout_level','roc_pct','efficiency','extension_atr','score'}

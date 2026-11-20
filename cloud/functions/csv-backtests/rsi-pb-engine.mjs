@@ -40,7 +40,7 @@ export function pinbarDirection(b,rules){
 }
 export function detectRSIPB(bars,rules,source,symbol,timeframe,market='crypto'){
  const groups=new Map(),indexed=new Map(bars.map(b=>[b.start,b])),signals=[];
- for(const s of detect(bars,rules.rsi,source,timeframe,true)){
+ for(const s of detect(bars,rules.rsi,source,timeframe,true,false)){
   const key=s.pivot2+':'+s.direction,b=indexed.get(s.pivot2);
   s.pivot1_closed_at=indexed.get(s.pivot1).end;s.pivot2_closed_at=b.end;
   if(!groups.has(key))groups.set(key,{strategy:'rsi-pb',version:rules.version,source,symbol,timeframe,direction:s.direction,divergences:[],pivot2:s.pivot2,pivot_closed_at:b.end,pivot_candle:b,rules});

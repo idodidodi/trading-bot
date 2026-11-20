@@ -15,7 +15,7 @@ END = timestamp('2021-01-01T00:00:00Z')
 def replay(candles, rules, symbol, timeframe, *, provisional=False, start=START, end=END):
     # Exclude future candles before calculating indicators and confirming pivots.
     bars = check_candles(candles, end)
-    signals = [s for s in detect(bars, rules, symbol, timeframe, provisional=provisional) if start <= s['confirmed_at'] < end]
+    signals = [s for s in detect(bars, rules, symbol, timeframe, provisional=provisional, include_hidden=True) if start <= s['confirmed_at'] < end]
     from finding_followup import both
     from finding_feedback import finding_id
     followups = {finding_id('backtest', s): both(s, bars) for s in signals}

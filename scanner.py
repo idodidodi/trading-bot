@@ -141,7 +141,7 @@ def indicators(candles, rules):
     return rsi, lower, upper
 
 
-def detect(candles, rules, symbol, timeframe, *, provisional=False):
+def detect(candles, rules, symbol, timeframe, *, provisional=False, include_hidden=False):
     rsi, lower, upper = indicators(candles, rules)
     left, right = rules['pivot_left'], rules['pivot_right']
     signals = []
@@ -175,7 +175,10 @@ def detect(candles, rules, symbol, timeframe, *, provisional=False):
                 price_divergence = prices[i] < prices[first] if direction == 'bullish' else prices[i] > prices[first]
                 divergence = price_divergence and rsi_divergence_matches(
                     rsi[first], rsi[i], direction, rules.get('rsi_tolerance', 0))
-                if not divergence or not band_touch or event_index < minimum_history(rules) - 1:
+                hidden_price = prices[i] > prices[first] if direction == 'bullish' else prices[i] < prices[first]
+                hidden = include_hidden and hidden_price and rsi_divergence_matches(
+                    rsi[i], rsi[first], direction, rules.get('rsi_tolerance', 0))
+                if not (divergence or hidden) or not band_touch or event_index < minimum_history(rules) - 1:
                     continue
                 signal = dict(symbol=symbol, timeframe=timeframe, direction=direction,
                               price1=prices[first], price2=prices[i], rsi1=rsi[first], rsi2=rsi[i],
@@ -183,6 +186,9 @@ def detect(candles, rules, symbol, timeframe, *, provisional=False):
                               pivot1=candles[first].start, pivot2=candles[i].start,
                               pivot1_closed_at=candles[first].end, pivot2_closed_at=candles[i].end,
                               confirmed_at=candles[event_index].end, spacing=spacing, rules=rules)
+                if hidden:
+                    signal['divergence_type'] = 'hidden'
+                    signal['version'] = 'rsi-hidden-v1-' + rules['skill_hash']
                 if provisional:
                     signal.update(signal_status='provisional', alert_timing='pivot_close',
                                   pivot_closed_at=candles[i].end)
@@ -349,6 +355,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
         for timeframe in scan_frames:
             asset = for_timeframe(configured_asset, timeframe)
             strategies = list(selected_strategies) if timeframe in selected_frames else ['ma-cross']
+            strategies = [s for s in strategies if timeframe in configured_asset.get('strategy_timeframes', {}).get(s, scan_frames)]
             if timeframe != 'daily':
                 strategies = [s for s in strategies if s != 'ma-cross']
             if not strategies:
@@ -493,7 +500,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                         raise ValueError('Missing candles in continuous-market feed')
                     source_id = f"{asset['provider']}:{asset.get('exchange') or 'configured'}:{asset.get('symbol') or asset['id']}"
                     state_id = f"{asset['id']}@{source_id}@{rules['skill_hash']}@all-stages-v2"
-                    matches = detect(candles, rules, source_id, timeframe) + detect(candles, rules, source_id, timeframe, provisional=True)
+                    matches = detect(candles, rules, source_id, timeframe, include_hidden=True) + detect(candles, rules, source_id, timeframe, provisional=True, include_hidden=True)
                     with store.connect() as db:
                         state = db.execute('SELECT last_end FROM scan_state WHERE asset=%s AND timeframe=%s', (state_id, timeframe)).fetchone()
                     # First run establishes a baseline without flooding Telegram with history.
@@ -512,13 +519,14 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     pending = sorted((s for s in matches if s['confirmed_at'] > cutoff), key=lambda s:(s['confirmed_at'],s.get('signal_status')!='provisional'))
                     from rsi_context import refresh as refresh_context, read as read_context
                     if not catchup:
-                        refresh_context(store,asset,timeframe,candles,matches,rules,now)
+                        refresh_context(store,asset,timeframe,candles,[s for s in matches if s.get('divergence_type') != 'hidden'],rules,now)
                     context = ({'higher_timeframe_context':read_context(store,configured_asset,rules,now)}
                                if context_target(configured_asset) and timeframe=='5m' and not catchup else {})
-                    new = sum(store.insert(validate_signal(s, rules) | {'market': asset.get('market') or 'unknown', 'detected_at': now} | context, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
+                    new = sum(store.insert(validate_signal(s, rules) | {'asset': asset['id'], 'market': asset.get('market') or 'unknown', 'detected_at': now} | context, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
                     with store.connect() as db:
                         from signal_service import reconcile_provisional
                         reconcile_provisional(db,source_id,timeframe,candles,rules)
+                        reconcile_provisional(db,source_id,timeframe,candles,rules | {'skill_hash':'rsi-hidden-v1-' + rules['skill_hash']})
                         db.execute('INSERT INTO scan_state AS saved(asset,timeframe,last_end) VALUES(%s,%s,%s) ON CONFLICT(asset,timeframe) DO UPDATE SET last_end=GREATEST(saved.last_end,excluded.last_end)',
                                    (state_id, timeframe, candles[-1].end))
                     row.update(status='scanned' if state else 'baseline set', candles=len(candles), last_closed_at=candles[-1].end,

@@ -82,7 +82,7 @@ def next_start(bar, timeframe, asset=None):
 def setups(candles, rules, source, symbol, timeframe):
     from scanner import detect as rsi_detect
     grouped = {}
-    for signal in rsi_detect(candles,rules['rsi'],source,timeframe,provisional=True):
+    for signal in rsi_detect(candles,rules['rsi'],source,timeframe,provisional=True,include_hidden=False):
         key = (signal['pivot2'],signal['direction'])
         grouped.setdefault(key,[]).append(signal)
     indexed = {b.start:b for b in candles}

@@ -71,7 +71,7 @@ def load_rules():
     if not source:
         raise ValueError('Missing close-based divergence price source in skill.')
     rules['price_source'] = source[1]
-    rules['skill_hash'] = hashlib.sha256(text.encode()).hexdigest()[:16]
+    rules['skill_hash'] = hashlib.sha256(text.partition('\n## Hidden divergence extension\n')[0].encode()).hexdigest()[:16]
     return rules
 
 
@@ -111,14 +111,21 @@ def validate_signal(body, rules):
         raise ValueError('Invalid band touch price')
     if (body['direction'] == 'bullish' and touch > body['price2']) or (body['direction'] == 'bearish' and touch < body['price2']):
         raise ValueError('Band touch inconsistent with pivot price')
-    if body['direction'] == 'bullish':
-        valid = body['price2'] < body['price1'] and rsi_divergence_matches(body['rsi1'], body['rsi2'], 'bullish', rules.get('rsi_tolerance', 0)) and touch <= body['band2']
-    else:
-        valid = body['price2'] > body['price1'] and rsi_divergence_matches(body['rsi1'], body['rsi2'], 'bearish', rules.get('rsi_tolerance', 0)) and touch >= body['band2']
+    kind = body.get('divergence_type', 'regular')
+    if kind not in ('regular', 'hidden'):
+        raise ValueError('Invalid divergence type')
+    first, second = ('price2', 'price1') if kind == 'hidden' else ('price1', 'price2')
+    rsi_first, rsi_second = (body['rsi2'], body['rsi1']) if kind == 'hidden' else (body['rsi1'], body['rsi2'])
+    price_match = body[second] < body[first] if body['direction'] == 'bullish' else body[second] > body[first]
+    band_match = touch <= body['band2'] if body['direction'] == 'bullish' else touch >= body['band2']
+    valid = price_match and rsi_divergence_matches(rsi_first, rsi_second, body['direction'], rules.get('rsi_tolerance', 0)) and band_match
     if not valid:
         raise ValueError('Divergence or band-touch rule failed')
     # Store only known fields; never persist the webhook authentication secret.
     clean = {k: body[k] for k in ('symbol', 'timeframe', 'direction', *keys, 'pivot1', 'pivot2', 'confirmed_at', 'spacing', 'rules')}
+    if kind == 'hidden':
+        clean['divergence_type'] = kind
+        clean['version'] = 'rsi-hidden-v1-' + rules['skill_hash']
     if 'band_touch_price' in body:
         clean['band_touch_price'] = touch
     if any(k in body for k in ('signal_status', 'alert_timing', 'pivot_closed_at')):
@@ -168,6 +175,7 @@ class Store:
         if delivery_status == 'pending' and payload.get('signal_status') != 'provisional':
             delivery_status = 'cancelled'
         identity = [payload[k] for k in ('symbol', 'timeframe', 'direction', 'pivot1', 'pivot2')]
+        if payload.get('divergence_type') == 'hidden': identity.append('hidden')
         if payload.get('signal_status') == 'provisional': identity.append('warmup')
         if payload.get('review_slot'): identity.append(payload['review_slot'])
         key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
@@ -218,15 +226,17 @@ def signal_alert_identity(payload):
 
 
 def signal_alert_event(payload):
-    return 'divergence:' + hashlib.sha256(json.dumps(signal_alert_identity(payload)).encode()).hexdigest()
+    identity = signal_alert_identity(payload)
+    if payload.get('divergence_type') == 'hidden': identity.append('hidden')
+    return 'divergence:' + hashlib.sha256(json.dumps(identity).encode()).hexdigest()
 
 
 def signal_alert_delivered(store, payload):
     # Include pre-grouping deliveries so upgrading does not repeat an alert
     # when another reference pivot for an already delivered candle arrives.
     with store.connect() as db:
-        return db.execute("SELECT 1 FROM signals\n            WHERE status IN ('sent','suppressed')\n            AND (payload::jsonb->>'symbol')=%s\n            AND (payload::jsonb->>'timeframe')=%s\n            AND (payload::jsonb->>'direction')=%s\n            AND (payload::jsonb->>'pivot2')::bigint=%s\n            AND CASE WHEN (payload::jsonb->>'signal_status')='provisional'\n                THEN 'provisional' ELSE 'confirmed' END=%s LIMIT 1",
-            signal_alert_identity(payload)).fetchone() is not None
+        return db.execute("SELECT 1 FROM signals\n            WHERE status IN ('sent','suppressed')\n            AND (payload::jsonb->>'symbol')=%s\n            AND (payload::jsonb->>'timeframe')=%s\n            AND (payload::jsonb->>'direction')=%s\n            AND (payload::jsonb->>'pivot2')::bigint=%s\n            AND CASE WHEN (payload::jsonb->>'signal_status')='provisional'\n                THEN 'provisional' ELSE 'confirmed' END=%s AND COALESCE(payload::jsonb->>'divergence_type','regular')=%s LIMIT 1",
+            signal_alert_identity(payload) + [payload.get('divergence_type', 'regular')]).fetchone() is not None
 
 
 def message(payload):
@@ -249,7 +259,7 @@ def message(payload):
         timing += f"\nDetected: {stamp(payload['detected_at'])}"
     if not provisional:
         timing += f"\nConfirmed: {stamp(payload['confirmed_at'])}"
-    return (f"{payload['direction'].upper()} RSI divergence{' · candle closed' if provisional else ' · structurally confirmed'}\n"
+    return (f"{payload['direction'].upper()} {'Hidden ' if payload.get('divergence_type') == 'hidden' else ''}RSI divergence{' · candle closed' if provisional else ' · structurally confirmed'}\n"
             f"{payload['symbol']} · {payload['timeframe']}\n"
             f"Price: {payload['price1']:g} → {payload['price2']:g}\n"
             f"RSI({payload['rules']['rsi_period']}): {payload['rsi1']:.2f} → {payload['rsi2']:.2f}\n"

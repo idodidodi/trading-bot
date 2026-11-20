@@ -109,7 +109,10 @@ def signal_timeframe(store, payload=None, notification_key=None):
 
 def deliver_routed(store, token, general, text, event, send, silent=False, payload=None, notification_key=None):
     # Scanning and subscriber publication remain independent of Telegram delivery.
+    from telegram_asset_subscriptions import deliver_subscriptions
     if signal_timeframe(store, payload, notification_key) == '5m':
+        # Explicit asset subscriptions are the sole exception to the broad 5m mute.
+        deliver_subscriptions(store, token, text, event, send, silent=silent, payload=payload)
         return 'suppressed'
     from telegram_delivery import deliver
     from platform_app import TelegramDestinationError
@@ -129,7 +132,8 @@ def deliver_routed(store, token, general, text, event, send, silent=False, paylo
         outcome = deliver(store, token, fallback, text, event, group_send, silent=silent)
     from telegram_personal import deliver_personal
     if not (notification_key or '').startswith('telegram-demo:'):
-        if payload:
+        deliver_subscriptions(store, token, text, event, send, silent=silent, payload=payload)
+        if payload and payload.get('divergence_type') != 'hidden':
             from chasing_runtime import enroll_automatic
             enroll_automatic(store,payload)
         deliver_personal(store, token, text, event, send, silent=silent, payload=payload)
