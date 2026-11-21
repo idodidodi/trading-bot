@@ -2,6 +2,23 @@
 
 Reviewed **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
+## NEAR notification controls — local draft, not deployed (2026-11-21)
+
+The draft `cloud/near-group-preferences.sql` adds owner-only `/api/near-alerts`
+settings for the existing single NEAR group. It checks installation membership,
+owner identity and runtime installation, accepts only seven supported timeframes
+for RSI/trend pullback pin bars, uses revision checks and never accepts a caller's
+chat ID. `web/app.js` provides the strategy/timeframe checkbox grid in Settings.
+An empty RSI selection disables this group's RSI subscription. Group migrations
+cascade to its saved preferences; unchanged selections retain enrollment times
+and newly enabled frames receive a fresh cutoff to prevent backlog delivery.
+
+This is an incomplete local draft: new pin-bar qualification, subscriber-aware
+scan eligibility and Wyckoff classification are not implemented or deployed.
+The pin-bar direction and estimated Wyckoff classification choices are awaiting
+user clarification. Existing production RSI14 behavior remains unchanged.
+Sources: `cloud/near-group-preferences.sql`, `web/app.js` (`nearGroupControls`).
+
 ## NEAR/USD five-minute RSI profile (prepared 2026-11-21)
 
 Only the configured asset `NEARUSD`, symbol `NEAR/USD`, on `5m` uses RSI 14

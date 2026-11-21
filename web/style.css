@@ -45,3 +45,5 @@
 .telegram-signal-preference label:last-child{color:#aebed1}
 .telegram-alerts input[type=checkbox]{accent-color:#54a8ff;width:17px;height:17px}
 .telegram-alerts input:disabled{opacity:.4}
+
+.near-alert-grid{overflow-x:auto}.near-alert-grid th,.near-alert-grid td{padding:.5rem;text-align:center}.near-alert-grid th:first-child{text-align:left;white-space:nowrap}.near-alert-grid input{width:1.2rem;height:1.2rem}

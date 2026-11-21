@@ -455,6 +455,40 @@ async function telegramRoutingControls(panel,isCurrent){
   section.append(status);
  }catch(e){if(isCurrent())section.append(node('p','Telegram routing unavailable. Only the installation owner can access online routing; the cloud migration must be installed.'));}
 }
+async function nearGroupControls(panel,isCurrent){
+ if(!online)return;
+ const section=node('section');section.className='near-alert-settings';
+ section.append(node('h3','NEAR group alerts'));panel.append(section);
+ try{
+  let value=await request('/api/near-alerts');if(!isCurrent())return;
+  const status=node('p');status.setAttribute('role','status');
+  section.append(node('p','Choose alerts for the connected NEAR group. Each checked box enables that strategy and timeframe. Scanning continues when another subscriber or feature still needs it.'));
+  const table=node('table'),head=node('tr');head.append(node('th','Alert'));
+  for(const frame of value.timeframes)head.append(node('th',frame));
+  table.append(head);const inputs={};
+  for(const [strategy,label] of [['rsi','RSI divergence'],['trend-pin-bars','Trend pullback pin bars']]){
+   const row=node('tr');row.append(node('th',label));inputs[strategy]={};
+   for(const frame of value.timeframes){
+    const cell=node('td'),input=node('input');input.type='checkbox';input.checked=(value.subscriptions[strategy]||[]).includes(frame);
+    input.disabled=!value.editable;input.setAttribute('aria-label',`NEAR ${label} ${frame}`);
+    inputs[strategy][frame]=input;cell.append(input);row.append(cell);
+   }table.append(row);
+  }
+  const scroll=node('div');scroll.className='near-alert-grid';scroll.append(table);section.append(scroll);
+  section.append(node('p','RSI includes bullish, bearish, regular and hidden divergences. NEAR 5m uses RSI 14 close. Clearing every box pauses this group’s alerts.'));
+  if(value.editable){
+   const save=button('Save NEAR alerts',async()=>{
+    save.disabled=true;status.textContent='Saving…';
+    const subscriptions=Object.fromEntries(Object.entries(inputs).map(([strategy,frames])=>[strategy,Object.keys(frames).filter(f=>frames[f].checked)]));
+    try{const updated=await request('/api/near-alerts',{action:'save',revision:value.revision,subscriptions});if(!isCurrent())return;value=updated;status.textContent='Saved. NEAR group preferences updated.';}
+    catch(e){if(isCurrent())status.textContent=e.message+' Reopen Settings to reload before retrying.';}
+    finally{if(isCurrent())save.disabled=false;}
+   });section.append(save);
+  }
+  section.append(status);
+ }catch(e){if(isCurrent())section.append(node('p','NEAR settings are available to the installation owner after the connected group is configured.'));}
+}
+
 async function chasingControls(panel,isCurrent){
  if(!online)return;
  panel.append(node('p','Chasing is suspended. Chasing Telegram groups are inactive; historical settings are retained.'));
@@ -526,15 +560,16 @@ function settingsLoading(label){
 async function openVersions(){
  const dialog=$('settings-dialog'),panel=$('version-content'),id=++versionRequest;
  const isCurrent=()=>id===versionRequest&&dialog.open;
- const personal=node('div'),routing=node('div'),development=node('div'),chasing=node('div'),automatic=node('div'),versions=node('section');
+ const near=node('div'),personal=node('div'),routing=node('div'),development=node('div'),chasing=node('div'),automatic=node('div'),versions=node('section');
  versions.append(node('h3','Versions'),settingsLoading('Checking versions…'));
- panel.replaceChildren(personal,chasing,automatic,routing,development,versions);
+ panel.replaceChildren(near,personal,chasing,automatic,routing,development,versions);
  if(!dialog.open)dialog.showModal();
  async function loadSettings(target,label,load){
   const loading=settingsLoading(label);target.append(loading);
   try{await load(target,isCurrent);}finally{if(isCurrent())target.replaceChildren(...Array.from(target.children).filter(child=>child!==loading));}
  }
  await Promise.all([
+  loadSettings(near,'Loading NEAR alerts…',nearGroupControls),
   loadSettings(personal,'Loading personal alerts…',personalTelegramControls),
   loadSettings(chasing,'Loading chasing settings…',chasingControls),
   loadSettings(automatic,'Loading automatic crypto Chase…',cryptoAutoChaseControls),
