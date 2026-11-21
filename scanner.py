@@ -360,6 +360,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 strategies = [s for s in strategies if s != 'ma-cross']
             if not strategies:
                 continue
+            from rsi_profiles import for_asset as rsi_rules_for_asset
+            signal_rules = rsi_rules_for_asset(rules, asset, timeframe)
             provider = asset['provider']
             row = dict(asset=asset['id'], timeframe=timeframe, provider=provider,
                        exchange=asset.get('exchange', ''), symbol=asset.get('symbol', asset['id']),
@@ -378,7 +380,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 coverage.append(row|dict(status='weekday only',reason='Stock scans paused Saturday/Sunday',checked_at=now,next_close_at=next_scan(now)))
                 continue
             from scan_schedule import identity, saved, save, next_due, provider_lag
-            schedule_key=identity(asset,timeframe,rules | dict(skill_hash=rules['skill_hash'] + pin_rules['version'] + bb_rules['version'] + combined_rules['version'] + cross_rules['version']))
+            schedule_key=identity(asset,timeframe,signal_rules | dict(skill_hash=signal_rules['skill_hash'] + pin_rules['version'] + bb_rules['version'] + combined_rules['version'] + cross_rules['version']))
             previous=saved(store,schedule_key,now)
             if previous:
                 coverage.append(previous)
@@ -489,18 +491,18 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     row.update({k: v for k, v in primary.items() if k not in ('new_signals', 'historical_matches')})
                     row.update(candles=len(candles), new_signals=0, historical_matches=0,
                                rsi_status='disabled')
-                elif len(candles) < minimum_history(rules):
+                elif len(candles) < minimum_history(signal_rules):
                     row.update(status='insufficient history', candles=len(candles),
                                reason=f'Only {len(candles)} closed candles available; '
-                                      f'need {minimum_history(rules)} for this strategy. '
+                                      f'need {minimum_history(signal_rules)} for this strategy. '
                                       'Use a feed with longer history or wait for more closed candles')
                 else:
                     # Optional continuous-market validation (e.g. a verified 24/7 crypto feed).
                     if asset.get('continuous') and any(a.end != b.start for a, b in zip(candles, candles[1:])):
                         raise ValueError('Missing candles in continuous-market feed')
                     source_id = f"{asset['provider']}:{asset.get('exchange') or 'configured'}:{asset.get('symbol') or asset['id']}"
-                    state_id = f"{asset['id']}@{source_id}@{rules['skill_hash']}@all-stages-v2"
-                    matches = detect(candles, rules, source_id, timeframe, include_hidden=True) + detect(candles, rules, source_id, timeframe, provisional=True, include_hidden=True)
+                    state_id = f"{asset['id']}@{source_id}@{signal_rules['skill_hash']}@all-stages-v2"
+                    matches = detect(candles, signal_rules, source_id, timeframe, include_hidden=True) + detect(candles, signal_rules, source_id, timeframe, provisional=True, include_hidden=True)
                     with store.connect() as db:
                         state = db.execute('SELECT last_end FROM scan_state WHERE asset=%s AND timeframe=%s', (state_id, timeframe)).fetchone()
                     # First run establishes a baseline without flooding Telegram with history.
@@ -522,11 +524,11 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                         refresh_context(store,asset,timeframe,candles,[s for s in matches if s.get('divergence_type') != 'hidden'],rules,now)
                     context = ({'higher_timeframe_context':read_context(store,configured_asset,rules,now)}
                                if context_target(configured_asset) and timeframe=='5m' and not catchup else {})
-                    new = sum(store.insert(validate_signal(s, rules) | {'asset': asset['id'], 'market': asset.get('market') or 'unknown', 'detected_at': now} | context, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
+                    new = sum(store.insert(validate_signal(s, signal_rules) | {'asset': asset['id'], 'market': asset.get('market') or 'unknown', 'detected_at': now} | context, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
                     with store.connect() as db:
                         from signal_service import reconcile_provisional
-                        reconcile_provisional(db,source_id,timeframe,candles,rules)
-                        reconcile_provisional(db,source_id,timeframe,candles,rules | {'skill_hash':'rsi-hidden-v1-' + rules['skill_hash']})
+                        reconcile_provisional(db,source_id,timeframe,candles,signal_rules)
+                        reconcile_provisional(db,source_id,timeframe,candles,signal_rules | {'skill_hash':'rsi-hidden-v1-' + signal_rules['skill_hash']})
                         db.execute('INSERT INTO scan_state AS saved(asset,timeframe,last_end) VALUES(%s,%s,%s) ON CONFLICT(asset,timeframe) DO UPDATE SET last_end=GREATEST(saved.last_end,excluded.last_end)',
                                    (state_id, timeframe, candles[-1].end))
                     row.update(status='scanned' if state else 'baseline set', candles=len(candles), last_closed_at=candles[-1].end,

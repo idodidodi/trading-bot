@@ -379,8 +379,9 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             continue
         key, raw, attempts = row
         payload = json.loads(raw)
-        if payload.get('review_slot') or payload.get('signal_status') != 'provisional':
-            # Retire legacy clock reviews and confirmation alerts, including retries.
+        from rsi_profiles import superseded_alert
+        if superseded_alert(payload) or payload.get('review_slot') or payload.get('signal_status') != 'provisional':
+            # Retire superseded RSI3, legacy clock reviews and confirmation alerts, including retries.
             # Keep their findings and completed delivery history intact.
             with store.connect() as db:
                 db.execute("UPDATE signals SET status='cancelled',error=NULL WHERE id=%s", (key,))

@@ -1,6 +1,48 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+
+## NEAR/USD five-minute RSI profile (prepared 2026-11-21)
+
+Only the configured asset `NEARUSD`, symbol `NEAR/USD`, on `5m` uses RSI 14
+on candle closes with the existing Wilder smoothing. This replaces RSI 3 for
+all four plain RSI divergence types: regular/hidden, bullish/bearish. The
+Bollinger, pivot, tolerance and closed-candle qualification rules remain unchanged.
+Other assets, other NEAR timeframes and RSI + PB retain their existing parameters.
+Sources: `rsi_profiles.py`, `scanner.scan_once`, `scanner.indicators`.
+
+The profile has its own version and scan-state identity. Its first scan establishes
+a fresh baseline without sending historical matches. Only that profile is scanned
+for NEAR 5m; no parallel RSI 3 path is enabled. The delivery worker cancels pending
+or retrying plain NEAR 5m RSI 3 queue rows before routing. Findings and completed
+sent ledgers remain intact. Existing pivot-close event grouping and per-recipient
+deduplication still apply: multiple comparisons for one event send once, while
+regular and hidden events remain distinct. Sources: `platform_app.delivery_worker`,
+`platform_app.signal_alert_event`, `telegram_asset_subscriptions.deliver_subscriptions`.
+
+Stored-history Python and legacy cloud replay entrypoints apply the same scoped
+profile; Python replay rows expose their effective rules. CSV upload replay still
+supports 1h and above only. Generic detection engines remain parameter-driven so
+RSI + PB keeps its own rules. No broker execution allowlist is changed: a pinned
+older strategy version does not authorize execution of the new RSI14 version.
+Sources: `backtest.replay`, `cloud/functions/backtests/engine.mjs`,
+`cloud/functions/backtests/index.ts`, `csv_backtests.parse`, `signal_contract.py`.
+
+Production was read-only verified at source `96decf4536c5eb0d32b913767e9f70ae87a0dbf1`
+before this change. The enabled NEAR-only subscription now points to supergroup
+`-1004484031372`, following migration of the original group `-5412729128`.
+It retains 5m, 15m, 30m, 1h, 4h, daily and weekly. The earlier migration recovery
+verified bot membership and natural delivery; this change does not reset enrollment,
+change routing or send test messages. Group renaming alone does not change routing.
+The RSI14 override described above remains local until explicitly approved and
+verified deployed; it does not claim a change to current production calculations.
+
+Local verification: 65 Python tests passed against a fresh disposable PostgreSQL
+database, plus both JavaScript replay suites. Coverage includes all four divergence
+types, Wilder close calculation, scoped parameters, a fresh scanner baseline,
+restart deduplication, old queue cancellation and one subscribed delivery for
+multiple comparisons. Telegram transport was mocked; no test alerts were sent.
+
 
 ## Staged Clerk authentication and personal settings
 

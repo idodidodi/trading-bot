@@ -1,3 +1,8 @@
+export function rsiRulesForSymbol(rules,symbol,timeframe){
+ const profile='near-5m-rsi14-v1';
+ if(timeframe!=='5m'||!['NEARUSD','NEAR/USD'].includes(symbol.split(':').at(-1))||rules.rsi_profile===profile)return rules;
+ return {...rules,rsi_period:14,rsi_profile:profile,skill_hash:profile+':'+rules.skill_hash};
+}
 export {followupWindows} from './followup.mjs';
 // Mirrors scanner.detect: all eligible close-pivot pairs; only P2 needs a BB touch.
 export function detect(candles,rules,symbol,timeframe,provisional=false,includeHidden=true){
