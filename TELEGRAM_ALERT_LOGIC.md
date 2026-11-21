@@ -4,7 +4,7 @@ Reviewed **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not dep
 
 ## NEAR notification controls — prepared locally, not deployed (2026-11-21)
 
-The owner-only Settings grid chooses RSI divergence and trend pullback pin bars
+The owner-only Settings grid chooses RSI divergence and pin bars (trend pullback plus reversal)
 independently on 5m, 15m, 30m, 1h, 4h, daily and weekly. The existing single NEAR
 subscription remains the destination authority; no browser-supplied chat/user ID
 is accepted. `cloud/near-group-preferences.sql` verifies installation ownership
@@ -13,7 +13,7 @@ pause that category for this group. Group migrations cascade preferences.
 Unchanged selections retain their enrollment cutoffs; newly enabled cells receive
 a fresh cutoff. Old queued alerts cannot bypass an unchecked box via broad routes.
 Legacy EMA/BB pin-bar copies are excluded from this group's broad route; the grid's
-pin-bar row selects the new trend rule. Other destinations keep existing behavior.
+pin-bar row selects the new pullback/reversal rules. Other destinations keep existing behavior.
 Sources: `web/app.js` (`nearGroupControls`), `telegram_asset_subscriptions.py`,
 `telegram_routing.py`, `near_alerts.allows_destination`.
 
@@ -38,7 +38,7 @@ at a fresh cutoff rather than replaying its paused interval. Sources:
 `candle_strategy.scan`. Conservative signal-service demand does not prune by
 strategy version or direction; these subscribers may still require inspection.
 
-### Trend pullback pin-bar qualification
+### Pullback and reversal pin-bar qualification
 
 `trend_pin_bars.py` is independent of existing EMA/BB pin-bar strategies. It uses
 five completed pre-pullback candles: at least three of the four close-to-close
@@ -52,15 +52,24 @@ A bullish trend requires a dominant lower wick; a bearish trend requires a domin
 upper wick. The dominant wick must exceed twice the body and exceed the other wick;
 the short wick is at most 0.66 of the long wick. Body color does not determine bias.
 The signal is emitted at pin-bar close, including during an ongoing pullback: no
-later candle or breakout confirmation is used. Version: `trend-pin-bars-v2`.
+later candle or breakout confirmation is used. Version: `trend-pin-bars-v3`.
 
 The user’s Bybit NEARUSDT perpetual 15m example at 2026-11-21 04:30 UTC−4 is
 verified against saved public OHLC in `tests/fixtures/near-bybit-2026-11-21-0430.json`:
 a six-candle mixed pullback with approximately 55.38% retracement qualifies at
 04:45 UTC−4 without any later candles. This is a regression example, not a live
-feed change: live NEAR stays on Kraken spot. The other marked examples (19:00
-reversal and 13:45 indecision candle) await clarification about additional setup
-types and are not claimed as covered by the trend-pullback detector.
+feed change: live NEAR stays on Kraken spot. The user accepted the 19:00 reversal and explicitly excluded 13:45 indecision.
+Both now have historical regression fixtures; 19:00 qualifies and 13:45 does not.
+
+Reversal pins use the same strict wick/body criteria. The preceding ten candles
+must have net movement opposite the pin’s direction exceeding their mean high-low
+range. A bearish pin must reach or exceed their highest high; a bullish pin must
+reach or fall below their lowest low. No subsequent reversal confirmation is needed.
+When one candle qualifies for both setups it emits only one finding, prioritizing
+trend pullback. The saved `setup` and Telegram heading distinguish `trend pullback`
+from `reversal`. The Settings pin-bar row enables both accepted setups; no indecision
+category is enabled. Wyckoff examples are deferred at the user’s request; the
+previously requested stage annotation remains part of this prepared change.
 
 ### Wyckoff stage annotation
 
@@ -89,6 +98,10 @@ Sources: [Kraken OHLC](https://docs.kraken.com/api-reference/market-data/get-ohl
 [Wyckoff method](https://www.wyckoffanalytics.com/wyckoff-method/),
 `wyckoff_context.py`, `near_alerts.annotation`, `platform_app.message`,
 `trend_pin_bars.message`, `pin_bars.message`.
+
+The final marked-example revision passed all 12 focused engine/database/settings
+tests, all 16 UI tests and the dashboard build. Both accepted historical candles
+qualify using only data through their own closes; the excluded 13:45 candle fails.
 
 Local verification: the integrated 80-test backend suite passed against disposable
 PostgreSQL; five focused engine tests (including an added range/volume test) and 16

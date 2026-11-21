@@ -466,7 +466,7 @@ async function nearGroupControls(panel,isCurrent){
   const table=node('table'),head=node('tr');head.append(node('th','Alert'));
   for(const frame of value.timeframes)head.append(node('th',frame));
   table.append(head);const inputs={};
-  for(const [strategy,label] of [['rsi','RSI divergence'],['trend-pin-bars','Trend pullback pin bars']]){
+  for(const [strategy,label] of [['rsi','RSI divergence'],['trend-pin-bars','Pin bars: pullback + reversal']]){
    const row=node('tr');row.append(node('th',label));inputs[strategy]={};
    for(const frame of value.timeframes){
     const cell=node('td'),input=node('input');input.type='checkbox';input.checked=(value.subscriptions[strategy]||[]).includes(frame);
@@ -475,7 +475,7 @@ async function nearGroupControls(panel,isCurrent){
    }table.append(row);
   }
   const scroll=node('div');scroll.className='near-alert-grid';scroll.append(table);section.append(scroll);
-  section.append(node('p','RSI includes bullish, bearish, regular and hidden divergences. NEAR 5m uses RSI 14 close. Pin bars follow a five-candle trend during a 1–12 candle pullback of at most two-thirds. Alerts include an estimated Wyckoff stage. Clearing every box pauses this group’s alerts.'));
+  section.append(node('p','RSI includes bullish, bearish, regular and hidden divergences. NEAR 5m uses RSI 14 close. Pin bars include five-candle trend pullbacks (1–12 candles, at most two-thirds retracement) and rejection reversals at a new 10-candle extreme. Alerts include an estimated Wyckoff stage. Clearing every box pauses this group’s alerts.'));
   if(value.editable){
    const save=button('Save NEAR alerts',async()=>{
     save.disabled=true;status.textContent='Saving…';
