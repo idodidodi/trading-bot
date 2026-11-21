@@ -72,11 +72,18 @@ class PersistenceTests(PostgresTestCase):
         candles=bars([100]*301+[101])
         assets=[self.asset|dict(id=m,market=m) for m in ('crypto','forex','stock','commodity')]
         config=dict(timeframes=['4h'],assets=[a|dict(timeframes=['4h']) for a in assets])
-        with patch('scanner.read_csv',return_value=candles):
+        with patch('scanner.read_csv',return_value=candles) as fetch:
             first=scan_once(self.store,config,load_rules(),candles[-2].end)
-            self.assertTrue(all(r['ma_cross']['status']=='baseline set' for r in first))
+            daily=[r for r in first if r['timeframe']=='daily']
+            self.assertEqual(len(daily),len(assets))
+            self.assertTrue(all(r['ma_cross']['status']=='baseline set' for r in daily))
+            self.assertTrue(all(r['status']=='not subscribed' for r in first if r['timeframe']=='4h'))
+            self.assertEqual(fetch.call_count,len(assets))
             second=scan_once(self.store,config,load_rules(),candles[-1].end)
-            self.assertTrue(all(r['ma_cross']['new_signals']==1 for r in second))
+            daily=[r for r in second if r['timeframe']=='daily']
+            self.assertEqual(len(daily),len(assets))
+            self.assertTrue(all(r['ma_cross']['new_signals']==1 for r in daily))
+            self.assertEqual(fetch.call_count,2*len(assets))
 
     def test_migration_once_and_optout(self):
         from managed_assets import get

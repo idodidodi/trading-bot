@@ -71,8 +71,9 @@ reach or fall below their lowest low. No subsequent reversal confirmation is nee
 When one candle qualifies for both setups it emits only one finding, prioritizing
 trend pullback. The saved `setup` and Telegram heading distinguish `trend pullback`
 from `reversal`. The Settings pin-bar row enables both accepted setups; no indecision
-category is enabled. Wyckoff examples are deferred at the user’s request; the
-previously requested stage annotation remains part of this prepared change.
+category is enabled. A real Kraken 15m example closing on 2026-11-21 at 17:45
+Israel time was reviewed with `Wyckoff stage (estimated): Markup`; the estimate
+used only history available at that close, including Kraken volume.
 
 ### Wyckoff stage annotation
 
