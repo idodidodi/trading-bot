@@ -85,4 +85,16 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.dashboard_api_before_near_preferences(uuid,text,jsonb),public.dashboard_api(uuid,text,jsonb) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.dashboard_api(uuid,text,jsonb) TO authenticated;
+CREATE TABLE IF NOT EXISTS bot_runtime.trend_pin_bar_state(feed text,timeframe text,last_end bigint,PRIMARY KEY(feed,timeframe));
+CREATE TABLE IF NOT EXISTS bot_runtime.trend_pin_bar_signals(id text PRIMARY KEY,confirmed_at bigint,payload text);
+CREATE TABLE IF NOT EXISTS bot_runtime.near_scan_demand(strategy text,timeframe text,enabled boolean NOT NULL,resume_at bigint NOT NULL,PRIMARY KEY(strategy,timeframe));
+REVOKE ALL ON bot_runtime.trend_pin_bar_state,bot_runtime.trend_pin_bar_signals,bot_runtime.near_scan_demand FROM PUBLIC,anon,authenticated;
+GRANT SELECT,INSERT,UPDATE,DELETE ON bot_runtime.trend_pin_bar_state,bot_runtime.trend_pin_bar_signals,bot_runtime.near_scan_demand TO trading_worker;
+-- Enroll the requested trend alerts on the existing group's selected RSI frames.
+-- Rerunning the migration never overwrites later UI selections.
+INSERT INTO bot_runtime.near_group_preferences(chat,asset,subscriptions,enrolled)
+SELECT chat,asset,jsonb_build_object('rsi',to_jsonb(timeframes),'trend-pin-bars',to_jsonb(timeframes)),
+ (SELECT jsonb_object_agg('trend-pin-bars:'||f,to_jsonb(extract(epoch FROM now()))) FROM unnest(timeframes) f)
+FROM bot_runtime.telegram_asset_subscriptions WHERE asset='NEARUSD' AND enabled
+ON CONFLICT DO NOTHING;
 COMMIT;

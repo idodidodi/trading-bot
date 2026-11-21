@@ -15,7 +15,8 @@ def eligible(subscription, payload):
 
 
 def deliver_subscriptions(store, token, text, event, send, silent=False, payload=None):
-    if not payload or not event.startswith('divergence:'):
+    strategy='trend-pin-bars' if event.startswith('notification:trend-pin-bars:') else 'rsi'
+    if not payload or not (event.startswith('divergence:') or strategy=='trend-pin-bars'):
         return
     from telegram_delivery import deliver, DeliveryPending
     from postgres_store import WorkerOwned, RETRYABLE
@@ -25,11 +26,21 @@ def deliver_subscriptions(store, token, text, event, send, silent=False, payload
             return
         subscriptions = db.execute('SELECT chat,asset,timeframes,extract(epoch FROM created_at) '
                                    'FROM telegram_asset_subscriptions WHERE enabled').fetchall()
+        prefs={}
+        if db.execute("SELECT to_regclass('bot_runtime.near_group_preferences')").fetchone()[0]:
+            prefs={r[0]:(r[1],r[2]) for r in db.execute('SELECT chat,subscriptions,enrolled FROM near_group_preferences')}
+        if strategy=='trend-pin-bars':
+            subscriptions=[(chat,'NEARUSD',p[0].get(strategy,[]),0) for chat,p in prefs.items()]
     failed = False
     for subscription in subscriptions:
-        if not eligible(subscription, payload):
-            continue
         chat = subscription[0]
+        if strategy=='rsi':
+            if not eligible(subscription,payload):continue
+        elif payload.get('asset')!='NEARUSD' or payload.get('timeframe') not in subscription[2]:continue
+        if chat in prefs:
+            selections,enrolled=prefs[chat];frame=payload.get('timeframe')
+            if frame not in selections.get(strategy,[]):continue
+            if payload.get('confirmed_at',0)/1000<float(enrolled.get(strategy+':'+frame,subscription[3])):continue
         # Private destinations bind Done/Undo to that Telegram user. A group
         # subscription uses the existing shared dismissal controls.
         from telegram_checklist import group_dismissal_enabled

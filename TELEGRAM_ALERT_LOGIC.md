@@ -2,22 +2,91 @@
 
 Reviewed **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
-## NEAR notification controls — local draft, not deployed (2026-11-21)
+## NEAR notification controls — prepared locally, not deployed (2026-11-21)
 
-The draft `cloud/near-group-preferences.sql` adds owner-only `/api/near-alerts`
-settings for the existing single NEAR group. It checks installation membership,
-owner identity and runtime installation, accepts only seven supported timeframes
-for RSI/trend pullback pin bars, uses revision checks and never accepts a caller's
-chat ID. `web/app.js` provides the strategy/timeframe checkbox grid in Settings.
-An empty RSI selection disables this group's RSI subscription. Group migrations
-cascade to its saved preferences; unchanged selections retain enrollment times
-and newly enabled frames receive a fresh cutoff to prevent backlog delivery.
+The owner-only Settings grid chooses RSI divergence and trend pullback pin bars
+independently on 5m, 15m, 30m, 1h, 4h, daily and weekly. The existing single NEAR
+subscription remains the destination authority; no browser-supplied chat/user ID
+is accepted. `cloud/near-group-preferences.sql` verifies installation ownership
+and runtime identity, serializes saves and checks revisions. Empty selections
+pause that category for this group. Group migrations cascade preferences.
+Unchanged selections retain their enrollment cutoffs; newly enabled cells receive
+a fresh cutoff. Old queued alerts cannot bypass an unchecked box via broad routes.
+Legacy EMA/BB pin-bar copies are excluded from this group's broad route; the grid's
+pin-bar row selects the new trend rule. Other destinations keep existing behavior.
+Sources: `web/app.js` (`nearGroupControls`), `telegram_asset_subscriptions.py`,
+`telegram_routing.py`, `near_alerts.allows_destination`.
 
-This is an incomplete local draft: new pin-bar qualification, subscriber-aware
-scan eligibility and Wyckoff classification are not implemented or deployed.
-The pin-bar direction and estimated Wyckoff classification choices are awaiting
-user clarification. Existing production RSI14 behavior remains unchanged.
-Sources: `cloud/near-group-preferences.sql`, `web/app.js` (`nearGroupControls`).
+Migration initially enrolls trend pin bars on the existing enabled NEAR RSI
+subscription's frames, using the migration time as enrollment. Rerunning preserves
+saved settings. It creates independent trend state/signals and demand-state tables.
+These alerts use the existing notification queue, photo renderer and per-destination
+ledger, with one signal identity per source, strategy version, frame, direction and
+candle. Repeated scans do not resend. This feature requires the SQL migration before
+scanner/API/UI deployment; current production settings have not been changed.
+
+For NEAR only, the normal scanner considers active group subscriptions, broad shared
+routes, enabled personal routes and live signal-service subscribers. Broad Telegram
+routes do not count for 5m because those deliveries are suppressed. Needed higher
+RSI frames remain scanned for a subscribed 5m context consumer; RSI + PB and its
+opposing evidence remain separate dependencies. Legacy EMA and BB pin-bar checks
+can be skipped when no consumer needs them. If a frame has no strategies left,
+the scanner performs no feed fetch or strategy evaluation. Selections are refreshed
+on the next cycle; delivery rechecks current settings. A resumed strategy starts
+at a fresh cutoff rather than replaying its paused interval. Sources:
+`near_alerts.snapshot/needed/plan`, `scanner.scan_once`, `scan_schedule.identity`,
+`candle_strategy.scan`. Conservative signal-service demand does not prune by
+strategy version or direction; these subscribers may still require inspection.
+
+### Trend pullback pin-bar qualification
+
+`trend_pin_bars.py` is independent of existing EMA/BB pin-bar strategies. It uses
+five completed pre-pullback candles: at least three of the four close-to-close
+changes agree with the trend, and net movement exceeds the mean high-low range
+of those five candles. One to three subsequent candles must close consecutively
+against that trend. Including the signal candle's extreme, retracement must be
+positive and no more than 50% of the trend's first-to-last close move; the signal
+close must remain inside the pullback rather than beyond the prior trend close.
+A bullish trend requires a dominant lower wick; a bearish trend requires a dominant
+upper wick. The dominant wick must exceed twice the body and exceed the other wick;
+the short wick is at most 0.66 of the long wick. Body color does not determine bias.
+The signal is emitted at pin-bar close, including during an ongoing pullback: no
+later candle or breakout confirmation is used. Version: `trend-pin-bars-v1`.
+
+### Wyckoff stage annotation
+
+NEAR RSI and pin-bar findings save an informational estimate from the same frame,
+using only candles closed by the signal's timestamp. The Telegram line is
+`Wyckoff stage (estimated): Accumulation`, Markup, Distribution, Markdown or Unclear.
+It does not gate signals or claim a full Wyckoff schematic/phase identification.
+`kraken_feed.fetch_kraken` retains finite nonnegative volume from OHLC element 6,
+keyed by candle start, excludes the final uncommitted bar and uses the existing
+paced request. There is no separate volume request. Invalid/missing volume does
+not block an otherwise valid price signal; the line explicitly says `no volume`.
+Volume is attached to the fetched snapshot and summarized in the saved finding's
+annotation, not retrofitted into the historical OHLC cache.
+
+`wyckoff_context.analyze` requires 40 completed candles. The latest 20 define mean
+high-low range, net move and directional efficiency (absolute net move divided by
+sum of absolute close changes). A move of at least three mean ranges with efficiency
+at least 0.35 estimates Markup/Markdown. Otherwise a range with net movement at most
+two mean ranges and total width at most eight mean ranges can estimate Accumulation
+following a preceding 20-candle decline of at least three mean ranges, or Distribution
+after an equivalent rise. Range estimates additionally require valid volume on all
+40 candles, positive total volume and recent volume-weighted close-location pressure
+at least +0.10 or at most -0.10 respectively. Other cases remain Unclear. These are
+explicit implementation heuristics, not thresholds prescribed by Wyckoff.
+Sources: [Kraken OHLC](https://docs.kraken.com/api-reference/market-data/get-ohlc-data),
+[Wyckoff method](https://www.wyckoffanalytics.com/wyckoff-method/),
+`wyckoff_context.py`, `near_alerts.annotation`, `platform_app.message`,
+`trend_pin_bars.message`, `pin_bars.message`.
+
+Local verification: the integrated 80-test backend suite passed against disposable
+PostgreSQL; five focused engine tests (including an added range/volume test) and 16
+UI tests passed. Browser interaction verified the real settings component with
+mock data and its checkbox/save feedback. Real Kraken NEAR/USD history supplied
+three 5m examples (two bearish, one bullish), without replaying them into queues.
+No production settings, alerts or orders were changed during this verification.
 
 ## NEAR/USD five-minute RSI profile (prepared 2026-11-21)
 

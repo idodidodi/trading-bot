@@ -339,6 +339,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
     if stock_selection and stock_selection['status'] in ('unavailable','partial'):
         coverage.append(dict(asset='WEEKLY_STOCK_SCREEN', timeframe='weekly', provider='Alpaca',
                              status=stock_selection['status'],reason=stock_selection.get('reason','')))
+    from near_alerts import snapshot as near_snapshot, plan as near_plan
+    near_demand = near_snapshot(store) if not catchup else None
     last_requests = {}
     for configured_asset in config['assets']:
         if not configured_asset.get('enabled', True) or configured_asset['id'].replace('/','').upper()=='USDCNY':
@@ -347,6 +349,9 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
         selected_strategies = configured_asset.get('scan_strategies', SCAN_STRATEGIES)
         selected_frames = configured_asset.get('timeframes', config['timeframes'])
         scan_frames = list(selected_frames)
+        if near_demand and configured_asset['id']=='NEARUSD':
+            from near_alerts import FRAMES
+            scan_frames=list(dict.fromkeys(scan_frames+list(FRAMES)))
         if 'ma-cross' in selected_strategies and 'daily' not in scan_frames:
             scan_frames.append('daily')
         from rsi_context import target as context_target
@@ -354,11 +359,14 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
             scan_frames.sort(key=lambda frame: frame=='5m')
         for timeframe in scan_frames:
             asset = for_timeframe(configured_asset, timeframe)
-            strategies = list(selected_strategies) if timeframe in selected_frames else ['ma-cross']
+            strategies = list(selected_strategies) if timeframe in selected_frames else (['ma-cross'] if 'ma-cross' in selected_strategies else [])
             strategies = [s for s in strategies if timeframe in configured_asset.get('strategy_timeframes', {}).get(s, scan_frames)]
             if timeframe != 'daily':
                 strategies = [s for s in strategies if s != 'ma-cross']
+            strategies,resumes=near_plan(store,near_demand,asset,timeframe,strategies,now)
+            asset=asset | {'_resume':resumes}
             if not strategies:
+                coverage.append(dict(asset=asset['id'],timeframe=timeframe,provider=asset['provider'],status='not subscribed',reason='No active subscriber or dependent feature',checked_at=now))
                 continue
             from rsi_profiles import for_asset as rsi_rules_for_asset
             signal_rules = rsi_rules_for_asset(rules, asset, timeframe)
@@ -380,7 +388,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                 coverage.append(row|dict(status='weekday only',reason='Stock scans paused Saturday/Sunday',checked_at=now,next_close_at=next_scan(now)))
                 continue
             from scan_schedule import identity, saved, save, next_due, provider_lag
-            schedule_key=identity(asset,timeframe,signal_rules | dict(skill_hash=signal_rules['skill_hash'] + pin_rules['version'] + bb_rules['version'] + combined_rules['version'] + cross_rules['version']))
+            schedule_key=identity(asset | dict(scan_strategies=strategies,_resume=resumes),timeframe,signal_rules | dict(skill_hash=signal_rules['skill_hash'] + pin_rules['version'] + bb_rules['version'] + combined_rules['version'] + cross_rules['version']))
             previous=saved(store,schedule_key,now)
             if previous:
                 coverage.append(previous)
@@ -434,7 +442,11 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     # Preserve the feed's native intraday alignment.
                     period = {'5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240}[timeframe] * 60000
                     row['next_close_at'] = candles[-1].end + ((now - candles[-1].end) // period + 1) * period
+                asset=asset | {'_volumes':getattr(raw,'volumes',{})}
                 cache_candles(store, asset, timeframe, candles)
+                if 'trend-pin-bars' in strategies:
+                    import trend_pin_bars
+                    row['trend_pin_bars']=trend_pin_bars.scan(store,asset,timeframe,candles,trend_pin_bars.load_rules(),now,resumes.get('trend-pin-bars'),catchup=bool(catchup))
                 if candles:row['last_closed_at']=candles[-1].end
                 if 'rsi-pb' not in strategies:
                     row['rsi_pb'] = dict(status='disabled',reason='RSI + PB scanning disabled for this asset')
@@ -487,7 +499,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                                 publish(db,'rsi',finding | dict(market=asset.get('market','unknown')))
                             reconcile_provisional(db,source,timeframe,candles,rules)
                     # Top-level counts belong to RSI; Pin-Bars counts stay nested.
-                    primary = row['pin_bars'] if 'pin-bars' in strategies else row['bb_pin_bars'] if 'bb-pin-bars' in strategies else row['rsi_pb'] if 'rsi-pb' in strategies else row['ma_cross']
+                    primary = row['trend_pin_bars'] if 'trend-pin-bars' in strategies else row['pin_bars'] if 'pin-bars' in strategies else row['bb_pin_bars'] if 'bb-pin-bars' in strategies else row['rsi_pb'] if 'rsi-pb' in strategies else row['ma_cross']
                     row.update({k: v for k, v in primary.items() if k not in ('new_signals', 'historical_matches')})
                     row.update(candles=len(candles), new_signals=0, historical_matches=0,
                                rsi_status='disabled')
@@ -506,7 +518,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     with store.connect() as db:
                         state = db.execute('SELECT last_end FROM scan_state WHERE asset=%s AND timeframe=%s', (state_id, timeframe)).fetchone()
                     # First run establishes a baseline without flooding Telegram with history.
-                    cutoff = state[0] if state else candles[-1].end
+                    cutoff = max(state[0],resumes.get('rsi',0)) if state else candles[-1].end
                     if asset.get('weekly_screen_selected') and not state:
                         cutoff = candles[-1].end-1
                     if asset.get('daily_selected') and selection and not catchup:
@@ -524,7 +536,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                         refresh_context(store,asset,timeframe,candles,[s for s in matches if s.get('divergence_type') != 'hidden'],rules,now)
                     context = ({'higher_timeframe_context':read_context(store,configured_asset,rules,now)}
                                if context_target(configured_asset) and timeframe=='5m' and not catchup else {})
-                    new = sum(store.insert(validate_signal(s, signal_rules) | {'asset': asset['id'], 'market': asset.get('market') or 'unknown', 'detected_at': now} | context, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
+                    from near_alerts import annotation
+                    new = sum(store.insert(validate_signal(s, signal_rules) | annotation(asset,candles,s['confirmed_at']) | {'asset': asset['id'], 'market': asset.get('market') or 'unknown', 'detected_at': now} | context, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
                     with store.connect() as db:
                         from signal_service import reconcile_provisional
                         reconcile_provisional(db,source_id,timeframe,candles,signal_rules)

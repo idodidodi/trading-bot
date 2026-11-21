@@ -1,5 +1,6 @@
 """Public Kraken spot candles; exact pairs, native intervals, no credentials."""
 import json
+import math
 import re
 import urllib.error
 import urllib.parse
@@ -74,9 +75,15 @@ def fetch_kraken(asset, timeframe):
     # Kraken explicitly says the final entry is uncommitted, even with `since`.
     # Do not evaluate it or infer finality from a delayed response's timestamp.
     candles = []
+    volumes = {}
     for row in rows[:-1]:
         start = int(row[0]) * 1000
         candles.append(Candle(start, start + duration, *(float(v) for v in row[1:5])))
+        try:
+            volume=float(row[6])
+            if math.isfinite(volume) and volume>=0:volumes[start]=volume
+        except (IndexError,TypeError,ValueError):pass
     bars = ProviderCandles(candles, ['Kraken spot feed; final uncommitted candle excluded'])
+    bars.volumes = volumes
     bars.next_close_at = int(rows[-1][0]) * 1000 + duration if rows else None
     return bars

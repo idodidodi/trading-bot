@@ -105,5 +105,6 @@ def message(signal):
     provider = {'kraken': 'Kraken', 'twelvedata': 'Twelve Data', 'oanda': 'OANDA',
                 'tiingo': 'Tiingo', 'alpaca': 'Alpaca', 'fmp': 'FMP',
                 'yahoo': 'Yahoo', 'csv': 'CSV'}.get(provider_key.lower(), provider_key)
+    from wyckoff_context import line
     return (f"{signal['direction'].upper()} Pin-Bars\n{signal['symbol']} · {signal['timeframe']} · Price: {signal['close']}\n"
-            f"Confirmed: {stamp}\n--------------------\nProvider: {provider}")
+            f"Confirmed: {stamp}\n--------------------\nProvider: {provider}" + line(signal))

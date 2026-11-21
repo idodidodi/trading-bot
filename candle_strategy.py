@@ -26,7 +26,7 @@ def scan(store, asset, timeframe, candles, rules, now, selection_start=None, cat
         from scanner_control import initialize as initialize_notifications
         initialize_notifications(db)
         state = db.execute(f'SELECT last_end FROM {engine.TABLE_PREFIX}_state WHERE feed=%s AND timeframe=%s', (feed,timeframe)).fetchone()
-        cutoff = state[0] if state else candles[-1].end
+        cutoff = max(state[0],asset.get('_resume',{}).get(engine.STRATEGY,0)) if state else candles[-1].end
         if state and cutoff < candles[0].start:
             return dict(status='unavailable', reason='Polling gap exceeds available history; supply candle backfill')
         if selection_start is not None:
@@ -35,7 +35,10 @@ def scan(store, asset, timeframe, candles, rules, now, selection_start=None, cat
         for signal in matches:
             if signal['confirmed_at'] <= cutoff:
                 continue
-            if engine.STRATEGY in ('pin-bars', 'bb-pin-bars'):
+            signal.update(asset=asset['id'])
+            from near_alerts import annotation
+            signal.update(annotation(asset,candles,signal['confirmed_at']))
+            if engine.STRATEGY in ('pin-bars', 'bb-pin-bars', 'trend-pin-bars'):
                 from pinbar_chart import snapshot
                 signal['chart_candles'] = snapshot(candles, signal['candle_at'])
             identity = [feed, timeframe, signal['direction'], signal['candle_at']]

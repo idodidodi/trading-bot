@@ -259,12 +259,13 @@ def message(payload):
         timing += f"\nDetected: {stamp(payload['detected_at'])}"
     if not provisional:
         timing += f"\nConfirmed: {stamp(payload['confirmed_at'])}"
+    from wyckoff_context import line as wyckoff_line
     return (f"{payload['direction'].upper()} {'Hidden ' if payload.get('divergence_type') == 'hidden' else ''}RSI divergence{' · candle closed' if provisional else ' · structurally confirmed'}\n"
             f"{payload['symbol']} · {payload['timeframe']}\n"
             f"Price: {payload['price1']:g} → {payload['price2']:g}\n"
             f"RSI({payload['rules']['rsi_period']}): {payload['rsi1']:.2f} → {payload['rsi2']:.2f}\n"
             f"{'Lower' if payload['direction'] == 'bullish' else 'Upper'} BB touch: {payload['band2']:g}\n"
-            f"{timing}")
+            f"{timing}" + wyckoff_line(payload))
 
 
 def telegram_connection_error(exc):
@@ -356,7 +357,7 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             key,text,attempts=note
             try:
                 # Strategy alerts share RSI's sound policy, even overnight.
-                is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:', 'rsi-pb:', 'ma-cross:'))
+                is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:', 'rsi-pb:', 'ma-cross:', 'trend-pin-bars:'))
                 from pinbar_chart import notification_sender
                 send = send_telegram if current_dry_run else notification_sender(store, key, send_telegram)
                 outcome = 'dry-run' if current_dry_run else deliver_routed(store, token, chat_id, text, 'notification:' + key, send, silent=not is_signal and quiet_hours(), notification_key=key)

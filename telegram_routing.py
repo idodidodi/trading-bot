@@ -108,7 +108,14 @@ def signal_timeframe(store, payload=None, notification_key=None):
 
 
 def deliver_routed(store, token, general, text, event, send, silent=False, payload=None, notification_key=None):
-    # Scanning and subscriber publication remain independent of Telegram delivery.
+    # Trend pullback signals are opt-in asset copies, never broad category alerts.
+    if (notification_key or '').startswith('trend-pin-bars:'):
+        with store.connect() as db:
+            row=db.execute('SELECT payload FROM trend_pin_bar_signals WHERE id=%s',(notification_key.split(':',1)[1],)).fetchone()
+        if not row:raise RuntimeError('Trend pin-bar metadata unavailable')
+        from telegram_asset_subscriptions import deliver_subscriptions
+        deliver_subscriptions(store,token,text,event,send,silent=silent,payload=json.loads(row[0]))
+        return 'suppressed'
     from telegram_asset_subscriptions import deliver_subscriptions
     if signal_timeframe(store, payload, notification_key) == '5m':
         # Explicit asset subscriptions are the sole exception to the broad 5m mute.
@@ -121,15 +128,29 @@ def deliver_routed(store, token, general, text, event, send, silent=False, paylo
     from functools import partial
     # Zero selects shared-group dismissal; personal deliveries stay owner-bound.
     group_send = partial(send, dismissal_user_id=0) if group_dismissal_enabled() else send
+    from near_alerts import allows_destination
+    policy_payload=payload
+    policy_strategy='rsi'
+    if notification_key:
+        prefix,_,key=notification_key.partition(':')
+        table={'pin-bars':'pin_bar_signals','bb-pin-bars':'bb_pin_bar_signals'}.get(prefix)
+        if table:
+            with store.connect() as db:
+                record=db.execute(f'SELECT payload FROM {table} WHERE id=%s',(key,)).fetchone()
+            if record:
+                policy_payload=json.loads(record[0]);policy_payload.setdefault('asset',policy_payload.get('symbol'))
+                policy_strategy=prefix
     try:
-        outcome = deliver(store, token, chat, text, event, group_send, silent=silent)
+        outcome = (deliver(store, token, chat, text, event, group_send, silent=silent)
+                   if allows_destination(store,chat,policy_payload,policy_strategy) else 'suppressed')
     except TelegramDestinationError:
         if not fallback or fallback == chat:
             raise
         with store.connect() as db:
             db.execute('UPDATE telegram_event_routes SET chat=%s WHERE event=%s', (fallback, event))
         store.log('Telegram destination unavailable', 'Alert routed to General')
-        outcome = deliver(store, token, fallback, text, event, group_send, silent=silent)
+        outcome = (deliver(store, token, fallback, text, event, group_send, silent=silent)
+                   if allows_destination(store,fallback,policy_payload,policy_strategy) else 'suppressed')
     from telegram_personal import deliver_personal
     if not (notification_key or '').startswith('telegram-demo:'):
         deliver_subscriptions(store, token, text, event, send, silent=silent, payload=payload)
