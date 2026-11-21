@@ -13,7 +13,11 @@ pause that category for this group. Group migrations cascade preferences.
 Unchanged selections retain their enrollment cutoffs; newly enabled cells receive
 a fresh cutoff. Old queued alerts cannot bypass an unchecked box via broad routes.
 Legacy EMA/BB pin-bar copies are excluded from this group's broad route; the grid's
-pin-bar row selects the new pullback/reversal rules. Other destinations keep existing behavior.
+pin-bar row selects the new pullback/reversal rules. NEAR RSI and the new pin bars go only to the explicit NEAR group on every
+selected frame. There is no General, market-category or personal-group fallback,
+even on a delivery failure. Legacy NEAR EMA/BB pin-bar copies are suppressed;
+other assets retain their existing routing. Other NEAR strategies such as RSI + PB
+are outside this subscription change.
 Sources: `web/app.js` (`nearGroupControls`), `telegram_asset_subscriptions.py`,
 `telegram_routing.py`, `near_alerts.allows_destination`.
 
@@ -25,9 +29,8 @@ ledger, with one signal identity per source, strategy version, frame, direction 
 candle. Repeated scans do not resend. This feature requires the SQL migration before
 scanner/API/UI deployment; current production settings have not been changed.
 
-For NEAR only, the normal scanner considers active group subscriptions, broad shared
-routes, enabled personal routes and live signal-service subscribers. Broad Telegram
-routes do not count for 5m because those deliveries are suppressed. Needed higher
+For NEAR only, the normal scanner considers active group subscriptions, live signal-service subscribers. Broad shared and personal Telegram routes no
+longer count as consumers of NEAR RSI/pin bars because these alerts are group-only. Needed higher
 RSI frames remain scanned for a subscribed 5m context consumer; RSI + PB and its
 opposing evidence remain separate dependencies. Legacy EMA and BB pin-bar checks
 can be skipped when no consumer needs them. If a frame has no strategies left,

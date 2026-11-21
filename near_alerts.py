@@ -33,7 +33,8 @@ def needed(state,strategy,frame):
         # RSI contract instruments use their provider-qualified symbol.
         if strategy=='rsi' and all(key not in filters or value in filters[key] for key,value in
                [('strategy',strategy),('symbol','kraken:Kraken:NEAR/USD'),('timeframe',frame),('market','crypto')]):return True
-    if frame=='5m' or strategy=='trend-pin-bars':return False
+    # NEAR RSI and pin bars never use broad or personal Telegram routes.
+    if strategy in ('rsi','pin-bars','bb-pin-bars','trend-pin-bars'):return False
     route='crypto.'+('pin-bars' if strategy=='bb-pin-bars' else strategy)
     if state['routes'].get(route) or state['routes'].get('general') or os.environ.get('TELEGRAM_CHAT_ID'):return True
     return any(p['routes'].get(route) and p['enabled'].get(route,True) for p in state['people'])

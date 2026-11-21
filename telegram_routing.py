@@ -117,6 +117,19 @@ def deliver_routed(store, token, general, text, event, send, silent=False, paylo
         deliver_subscriptions(store,token,text,event,send,silent=silent,payload=json.loads(row[0]))
         return 'suppressed'
     from telegram_asset_subscriptions import deliver_subscriptions
+    if payload and payload.get('asset')=='NEARUSD':
+        # NEAR RSI is exclusive to its explicit group, with no broad/personal fallback.
+        deliver_subscriptions(store,token,text,event,send,silent=silent,payload=payload)
+        return 'suppressed'
+    if (notification_key or '').startswith(('pin-bars:','bb-pin-bars:')):
+        prefix,_,key=notification_key.partition(':')
+        table={'pin-bars':'pin_bar_signals','bb-pin-bars':'bb_pin_bar_signals'}[prefix]
+        with store.connect() as db:
+            record=db.execute(f'SELECT payload FROM {table} WHERE id=%s',(key,)).fetchone()
+        if record:
+            old=json.loads(record[0])
+            if old.get('asset',old.get('symbol'))=='NEARUSD':
+                return 'suppressed'  # Only the selected new pin-bar setups go to NEAR.
     if signal_timeframe(store, payload, notification_key) == '5m':
         # Explicit asset subscriptions are the sole exception to the broad 5m mute.
         deliver_subscriptions(store, token, text, event, send, silent=silent, payload=payload)
