@@ -1,7 +1,7 @@
-"""Closed-candle pin bars within a short pullback against a five-candle trend."""
+"""Closed-candle pin bars within a bounded pullback against a five-candle trend."""
 def load_rules():
-    return dict(version='trend-pin-bars-v1',trend_candles=5,min_trend_steps=3,
-                max_pullback_candles=3,max_retracement=.5,ratio=2.,max_short_wick_ratio=.66)
+    return dict(version='trend-pin-bars-v2',trend_candles=5,min_trend_steps=3,
+                max_pullback_candles=12,max_retracement=2/3,ratio=2.,max_short_wick_ratio=.66)
 
 
 def detect(candles,rules,source,symbol,timeframe):
@@ -22,7 +22,10 @@ def detect(candles,rules,source,symbol,timeframe):
             ranges=sum(c.high-c.low for c in trend)/n
             if move<=ranges or sum(d*(c.close-a.close)>0 for a,c in zip(trend,trend[1:]))<rules['min_trend_steps']:continue
             previous=trend[-1].close
-            if any(d*(c.close-a)>=0 for a,c in zip([previous]+[p.close for p in pullback[:-1]],pullback)):continue
+            # Anchor the impulse at its strongest close, then allow a choppy pullback.
+            if any(d*(c.close-previous)>0 for c in trend):continue
+            if any(d*(c.close-previous)>0 for c in pullback):continue
+            if d*(pullback[-1].close-previous)>=0:continue
             # Include the pin's extreme: the pullback must remain small and intact.
             extreme=min(c.low for c in pullback+[b]) if d==1 else max(c.high for c in pullback+[b])
             retracement=d*(previous-extreme)/move

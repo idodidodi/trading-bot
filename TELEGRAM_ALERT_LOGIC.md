@@ -43,15 +43,24 @@ strategy version or direction; these subscribers may still require inspection.
 `trend_pin_bars.py` is independent of existing EMA/BB pin-bar strategies. It uses
 five completed pre-pullback candles: at least three of the four close-to-close
 changes agree with the trend, and net movement exceeds the mean high-low range
-of those five candles. One to three subsequent candles must close consecutively
-against that trend. Including the signal candle's extreme, retracement must be
-positive and no more than 50% of the trend's first-to-last close move; the signal
+of those five candles. One to twelve subsequent candles may alternate direction, but their closes must
+remain at or behind the impulse’s strongest final close and the final pre-signal
+close must be against the trend. Including the signal candle's extreme, retracement must be
+positive and no more than two-thirds of the trend's first-to-last close move; the signal
 close must remain inside the pullback rather than beyond the prior trend close.
 A bullish trend requires a dominant lower wick; a bearish trend requires a dominant
 upper wick. The dominant wick must exceed twice the body and exceed the other wick;
 the short wick is at most 0.66 of the long wick. Body color does not determine bias.
 The signal is emitted at pin-bar close, including during an ongoing pullback: no
-later candle or breakout confirmation is used. Version: `trend-pin-bars-v1`.
+later candle or breakout confirmation is used. Version: `trend-pin-bars-v2`.
+
+The user’s Bybit NEARUSDT perpetual 15m example at 2026-11-21 04:30 UTC−4 is
+verified against saved public OHLC in `tests/fixtures/near-bybit-2026-11-21-0430.json`:
+a six-candle mixed pullback with approximately 55.38% retracement qualifies at
+04:45 UTC−4 without any later candles. This is a regression example, not a live
+feed change: live NEAR stays on Kraken spot. The other marked examples (19:00
+reversal and 13:45 indecision candle) await clarification about additional setup
+types and are not claimed as covered by the trend-pullback detector.
 
 ### Wyckoff stage annotation
 

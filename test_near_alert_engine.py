@@ -30,6 +30,19 @@ class EngineTests(unittest.TestCase):
         bars=sample();bars[5]=replace(bars[5],close=141,high=142)
         self.assertFalse(detect(bars,trend_rules(),'source','NEARUSD','5m'))
 
+    def test_user_marked_bybit_0430_long_mixed_pullback(self):
+        from pathlib import Path
+        raw=json.loads((Path(__file__).parent/'tests/fixtures/near-bybit-2026-11-21-0430.json').read_text())
+        bars=[Candle(int(r[0]),int(r[0])+900000,*map(float,r[1:5])) for r in raw['rows']]
+        signals=detect(bars,trend_rules(),'bybit:linear:NEARUSDT','NEARUSDT','15m')
+        signal=next(s for s in signals if s['candle_at']==raw['marked_start'])
+        self.assertEqual(signal['direction'],'bullish')
+        self.assertEqual(signal['pullback_candles'],6)
+        self.assertAlmostEqual(signal['retracement'],.5538461538461548)
+        self.assertEqual(signal['confirmed_at'],raw['marked_start']+900000)
+        # Source candles end at the marked candle: no later rally is available.
+        self.assertEqual(bars[-1].start,signal['candle_at'])
+
     def test_kraken_volume_excludes_unclosed_and_invalid(self):
         from kraken_feed import fetch_kraken
         rows=[[1700000000,'2','3','1','2','2','123.5',2],[1700000300,'2','3','1','2','2','nan',2],[1700000600,'2','3','1','2','2','900',2]]

@@ -475,7 +475,7 @@ async function nearGroupControls(panel,isCurrent){
    }table.append(row);
   }
   const scroll=node('div');scroll.className='near-alert-grid';scroll.append(table);section.append(scroll);
-  section.append(node('p','RSI includes bullish, bearish, regular and hidden divergences. NEAR 5m uses RSI 14 close. Pin bars follow a five-candle trend during a 1–3 candle pullback of at most 50%. Alerts include an estimated Wyckoff stage. Clearing every box pauses this group’s alerts.'));
+  section.append(node('p','RSI includes bullish, bearish, regular and hidden divergences. NEAR 5m uses RSI 14 close. Pin bars follow a five-candle trend during a 1–12 candle pullback of at most two-thirds. Alerts include an estimated Wyckoff stage. Clearing every box pauses this group’s alerts.'));
   if(value.editable){
    const save=button('Save NEAR alerts',async()=>{
     save.disabled=true;status.textContent='Saving…';
