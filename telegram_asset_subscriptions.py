@@ -18,6 +18,9 @@ def deliver_subscriptions(store, token, text, event, send, silent=False, payload
     strategy='trend-pin-bars' if event.startswith('notification:trend-pin-bars:') else 'rsi'
     if not payload or not (event.startswith('divergence:') or strategy=='trend-pin-bars'):
         return
+    # Do not deliver reversal alerts left in the queue by the retired rule.
+    if strategy=='trend-pin-bars' and payload.get('setup')!='trend_pullback':
+        return
     from telegram_delivery import deliver, DeliveryPending
     from postgres_store import WorkerOwned, RETRYABLE
     with store.connect() as db:

@@ -43,25 +43,19 @@ class EngineTests(unittest.TestCase):
         # Source candles end at the marked candle: no later rally is available.
         self.assertEqual(bars[-1].start,signal['candle_at'])
 
-    def test_accepted_reversal_and_ignored_indecision_examples(self):
+    def test_countertrend_reversals_and_indecision_are_rejected(self):
         from pathlib import Path
-        for name in ('1900','1345'):
-            raw=json.loads((Path(__file__).parent/f'tests/fixtures/near-bybit-marked-{name}.json').read_text())
-            bars=[Candle(int(r[0]),int(r[0])+900000,*map(float,r[1:5])) for r in raw['rows']]
-            found=[s for s in detect(bars,trend_rules(),'bybit:linear:NEARUSDT','NEARUSDT','15m') if s['candle_at']==raw['marked_start']]
-            if name=='1345':
-                self.assertFalse(found)
-                continue
-            self.assertEqual(len(found),1)
-            self.assertEqual(found[0]['setup'],'reversal')
-            self.assertEqual(found[0]['direction'],'bearish')
-            from trend_pin_bars import message
-            self.assertIn('BEARISH reversal pin bar',message(found[0]))
+        cases=[('near-bybit-marked-1900.json',900000),
+               ('near-bybit-marked-1345.json',900000),
+               ('near-kraken-rejected-4h-2026-11-22.json',14400000)]
+        for name,interval in cases:
+            raw=json.loads((Path(__file__).parent/'tests/fixtures'/name).read_text())
+            bars=[Candle(int(r[0]),int(r[0])+interval,*map(float,r[1:5])) for r in raw['rows']]
             mirrored=[replace(c,open=6-c.open,close=6-c.close,high=6-c.low,low=6-c.high) for c in bars]
-            opposite=[s for s in detect(mirrored,trend_rules(),'source','TEST','15m') if s['candle_at']==raw['marked_start']]
-            self.assertEqual(len(opposite),1)
-            self.assertEqual(opposite[0]['direction'],'bullish')
-            self.assertEqual(opposite[0]['setup'],'reversal')
+            for history in (bars,mirrored):
+                with self.subTest(name=name,mirrored=history is mirrored):
+                    found=[s for s in detect(history,trend_rules(),'source','NEARUSD','4h') if s['candle_at']==raw['marked_start']]
+                    self.assertFalse(found)
 
     def test_kraken_volume_excludes_unclosed_and_invalid(self):
         from kraken_feed import fetch_kraken
@@ -118,6 +112,17 @@ class LiveTests(PostgresTestCase):
             coverage=scan_once(self.store,config,load_rules(),bars[-1].end)
         self.assertEqual(next(c for c in coverage if c['timeframe']=='5m')['trend_pin_bars']['status'],'baseline set')
         with self.store.connect() as db:self.assertEqual(db.execute('SELECT count(*) FROM notification_queue').fetchone()[0],0)
+
+    def test_queued_reversal_is_not_delivered(self):
+        from telegram_asset_subscriptions import deliver_subscriptions
+        send=Mock(return_value=1)
+        payload=dict(asset='NEARUSD',timeframe='5m',setup='reversal',confirmed_at=2000000)
+        deliver_subscriptions(self.store,'unused','test','notification:trend-pin-bars:old',send,payload=payload)
+        send.assert_not_called()
+        payload['setup']='trend_pullback'
+        deliver_subscriptions(self.store,'unused','test','notification:trend-pin-bars:valid',send,payload=payload)
+        self.assertEqual(send.call_count,1)
+        self.assertEqual(send.call_args.args[1],'-1004484031372')
 
     def test_near_rsi_routes_only_to_near_group_on_every_frame(self):
         from telegram_routing import deliver_routed

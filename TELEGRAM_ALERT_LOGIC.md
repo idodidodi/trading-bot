@@ -1,8 +1,28 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-22** for the prepared trend-only pin-bar correction; **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
-## NEAR notification controls — prepared locally, not deployed (2026-11-21)
+## Trend-only pin-bar correction — prepared locally (2026-11-22)
+
+This correction supersedes the reversal qualification described for the November 21
+release below. `trend_pin_bars.load_rules/detect` version `trend-pin-bars-v4` only
+emits trend-aligned pullback pins: bearish after a downward impulse and upward
+pullback, bullish after an upward impulse and downward pullback. Existing wick,
+five-candle impulse and 1–12 candle pullback criteria are unchanged. The standalone
+countertrend reversal fallback is removed. The exact Kraken 4h bearish alert closing
+22 November at 18:00 Israel is now rejected, as is its bullish mirror. The previously
+accepted 19:00 reversal is also rejected under the user's corrected requirement;
+04:30 remains accepted and 13:45 remains excluded. No future candles are used.
+
+`telegram_asset_subscriptions.deliver_subscriptions` rejects queued new-pin-bar
+payloads unless `setup` is `trend_pullback`, including retries from the retired
+reversal rule. Existing delivered messages and stored history remain intact. The
+version change establishes fresh strategy baselines without historical replay.
+Settings now labels this strategy “Pin bars: trend pullback.” RSI, Wyckoff annotation,
+selected timeframes and the exclusive NEAR destination are unchanged. This correction
+has not yet been pushed or deployed; the production record below describes v3.
+
+## NEAR notification controls — verified production (2026-11-21)
 
 The owner-only Settings grid chooses RSI divergence and pin bars (trend pullback plus reversal)
 independently on 5m, 15m, 30m, 1h, 4h, daily and weekly. The existing single NEAR
@@ -27,7 +47,7 @@ saved settings. It creates independent trend state/signals and demand-state tabl
 These alerts use the existing notification queue, photo renderer and per-destination
 ledger, with one signal identity per source, strategy version, frame, direction and
 candle. Repeated scans do not resend. This feature requires the SQL migration before
-scanner/API/UI deployment; current production settings have not been changed.
+scanner/API/UI deployment; the migration and release are now verified below.
 
 For NEAR only, the normal scanner considers active group subscriptions, live signal-service subscribers. Broad shared and personal Telegram routes no
 longer count as consumers of NEAR RSI/pin bars because these alerts are group-only. Needed higher
@@ -113,6 +133,36 @@ UI tests passed. Browser interaction verified the real settings component with
 mock data and its checkbox/save feedback. Real Kraken NEAR/USD history supplied
 three 5m examples (two bearish, one bullish), without replaying them into queues.
 No production settings, alerts or orders were changed during this verification.
+
+### Production verification — 2026-11-21
+
+Deployed source `410b93ad041352061caef87da4564a1ac065eb40` from branch
+`codex/near-notification-controls` to `trading-linux:/home/ido/apps/trading-bot-postgres`
+and the existing scanner/API services. Applied `cloud/near-group-preferences.sql`
+to `trading_runtime` after verifying a private database backup. Health and installed
+source matched UI fingerprint `4af21f3a4d4e3544` and scanner `758bf630e4d515b1`;
+exactly one scanner owned the worker lock. The authenticated owner API read passed.
+The sole destination is `-1004484031372`; RSI and new pin bars are selected on
+5m, 15m, 30m, 1h, 4h, daily and weekly. All seven pin-bar baselines initialized
+naturally. Legacy pin-bar calculations still run where live signal-service subscribers
+need them, but their NEAR Telegram copies remain suppressed. Higher-timeframe RSI
+context remains an independent scan consumer.
+
+Cloudflare Pages production deployment `22040f83-8a33-4fe4-80d9-8f068464a7df`
+serves the exact built assets at https://app.family-trading-bot.dynv6.net with the
+existing Clerk configuration unchanged. The deployment metadata records the exact
+source SHA; Pages' production branch metadata remains `codex/clerk-auth`.
+[Pages deployment](https://22040f83.family-trading-bot-dashboard.pages.dev).
+[Linux/Windows builds and frozen-app smoke tests](https://github.com/idodidodi/trading-bot/actions/runs/44953509127)
+and [desktop checks](https://github.com/idodidodi/trading-bot/actions/runs/44953509054)
+passed on that SHA, as did the external Workers build check. The legacy publication
+job remained intentionally disabled. No test alerts or orders were sent; these checks
+do not claim receipt of a future qualifying alert. Wyckoff labels remain estimates.
+
+The implementation and historical regression fixtures are committed in the isolated
+checkout `/private/tmp/near-notification-ui`; the original working checkout's unrelated
+changes were preserved. This post-deployment record is a local documentation update,
+not an additional published source revision.
 
 ## NEAR/USD five-minute RSI profile (prepared 2026-11-21)
 

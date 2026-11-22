@@ -1,6 +1,6 @@
-"""Closed-candle trend-pullback and reversal rejection pin bars."""
+"""Closed-candle trend-aligned pullback pin bars."""
 def load_rules():
-    return dict(version='trend-pin-bars-v3',trend_candles=5,min_trend_steps=3,reversal_candles=10,
+    return dict(version='trend-pin-bars-v4',trend_candles=5,min_trend_steps=3,
                 max_pullback_candles=12,max_retracement=2/3,ratio=2.,max_short_wick_ratio=.66)
 
 
@@ -37,21 +37,6 @@ def detect(candles,rules,source,symbol,timeframe):
                 trend_start=trend[0].start,trend_end=trend[-1].start,pullback_start=pullback[0].start,
                 pullback_candles=length,retracement=retracement,rules=dict(rules)))
             break
-        if signals and signals[-1]['candle_at']==b.start:continue
-        # A reversal rejects a new extreme after a meaningful opposite move.
-        # The preceding candles and the pin itself are the only evidence used.
-        lookback=rules['reversal_candles']
-        if i<lookback:continue
-        prior=candles[i-lookback:i]
-        mean_range=sum(c.high-c.low for c in prior)/lookback
-        prior_move=prior[-1].close-prior[0].close
-        if -d*prior_move<=mean_range:continue
-        if d==1 and b.low>min(c.low for c in prior):continue
-        if d==-1 and b.high<max(c.high for c in prior):continue
-        signals.append(dict(strategy='trend-pin-bars',setup='reversal',version=rules['version'],source=source,symbol=symbol,
-            timeframe=timeframe,direction=direction,candle_at=b.start,confirmed_at=b.end,
-            open=b.open,high=b.high,low=b.low,close=b.close,body=body,lower_wick=lower,upper_wick=upper,
-            context_start=prior[0].start,context_end=prior[-1].start,prior_move=prior_move,rules=dict(rules)))
     return signals
 
 STRATEGY='trend-pin-bars'
