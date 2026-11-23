@@ -1,6 +1,82 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-23** for additive NEAR routing (local, not deployed); **2026-11-22** for the prepared trend-only pin-bar correction; **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-23** for local stock-report schedules, daily RSI PDFs and market-cap metadata (not deployed); **2026-11-23** for additive NEAR routing (local, not deployed); **2026-11-22** for the prepared trend-only pin-bar correction; **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+
+## S&P 500 PDF reports — local update, production not yet verified (2026-11-23)
+
+Sources: `stock_reports.schedules/period/new_run/evaluate/process/artifacts/eligible`,
+`stock_report_data.fetch_batch/fetch_preclose/market_caps`, `stock_report_pdf.render`,
+`telegram_documents.deliver_document`, and `cloud/stock-reports.sql`.
+
+- When `stock_reports.enabled` is true, the independent full-constituent report scan
+  runs without price preselection or portfolio exclusion. It writes report rows and
+  PDF bytes only: it never creates live signals, orders, strategy baselines or pending
+  RSI + PB setups. Permanent-asset alert behavior is unchanged.
+- **Daily RSI divergence and RSI + PB:** each US trading session, scheduled 20 minutes
+  after the regular close to allow closing data to arrive. Only completed daily candles
+  are evaluated. Each strategy/direction has its own matching PDF (up to four), with all
+  matching stocks in that PDF. No daily standalone Pin Bars or BB Pin Bars reports.
+- **Weekly/monthly standalone Pin Bars and BB Pin Bars:** existing matching PDFs move
+  to two hours before close on the last trading session of the week/month. Both bullish
+  and bearish directions remain separate. The later Sunday/first-of-month run no longer
+  includes these strategies. No additional after-close copy is created.
+- **Weekly/monthly RSI divergence and RSI + PB:** retain Sunday 08:00 / first calendar
+  day 08:00 Asia/Jerusalem, respectively, for the preceding completed week/month.
+  RSI uses the existing `scanner.detect(..., provisional=True)` pivot-close stage:
+  its input candle is closed, but later right-side pivot confirmation is not required.
+  RSI + PB retains its existing immediate-next-candle qualification and direction rules.
+  Daily RSI reports use these same detector semantics; “after close” is not a change
+  to confirmed-pivot detection. No indicator parameters were changed.
+- The existing `market_calendar` determines sessions, scheduled holidays, early closes,
+  and New York DST. Unexpected exchange closures require a calendar update. Different
+  timeframes due on the same date produce independent report sets. The worker revisits
+  reports at most every five minutes when idle; scan/provider/Telegram latency means
+  actual delivery follows the scheduled instant rather than guaranteeing an exact minute.
+- Pre-close reports freeze their snapshot at the scheduled instant, not the retry time.
+  They combine closed native historical candles with one partial current candle built
+  from completed daily bars earlier in the period and regular-session one-minute bars
+  through the snapshot. Missing earlier sessions or a last minute bar more than five
+  minutes stale make the snapshot unavailable. Later trades are excluded even on retry.
+  PDFs/captions say **Provisional**; the price column says **Latest price (USD)** and the
+  time group says **Snapshot**, not final close. These signals can change before close.
+- All matching PDF stock tables now include **Market cap (USD)**, formatted in M/B/T.
+  FMP `market-capitalization-batch` uses the existing `FMP_API_KEY`; entitlement, rate
+  limits, malformed values or absent credentials can leave cells **Unavailable**.
+  Lookup is only for matching unique tickers, once per report run; the snapshot is
+  persisted and reused across its PDFs/retries. PDF notes identify source, retrieval
+  time and available provider dates. Values are latest available company market caps,
+  not historical values at the signal candle. They never filter signals or change
+  non-PDF alerts. Market-cap production access has not been verified for this update.
+- Membership and company/sector metadata refresh together. On refresh failure, use the
+  latest saved membership, then the dated repository universe; missing names/sectors are
+  disclosed as unavailable. Target 250 history candles, with each strategy enforcing its
+  own minimum. Limited warm-up is disclosed separately and does not invalidate an
+  otherwise eligible signal. Newly listed stocks may have shorter history.
+- Empty strategy/direction pairs with evaluated data share the existing no-matches PDF;
+  missing/short history goes into coverage notes instead of being treated as no matches.
+  Coverage may add another PDF beyond the four matching PDFs. A stock may qualify for
+  both RSI strategies. PDF grouping still uses signal candle open/end timestamps.
+- Runs freeze membership, feed, rules, strategy subset, period, cutoff and deadline.
+  Checkpoints, ownership leases, persisted PDF bytes and existing Telegram reservations
+  remain. Daily retries use the New York session identity and remain eligible until New
+  York midnight, including after Israel midnight. Pre-close retries expire at that day's
+  session close; legacy RSI runs expire at Israel midnight. Provider failures retry hourly
+  when at least an hour remains, otherwise produce disclosed unavailable coverage.
+  Expired unfinished runs become `missed`; no historical catch-up runs are created.
+  Already saved legacy runs/PDFs keep their frozen contents and original identity.
+- Routing, personal preferences, fallback to General, dry-run behavior and notification
+  sound limits remain those of `telegram_documents`. BB Pin Bars uses the Pin Bars route;
+  combined no-match/coverage documents use General. Delivery retains the existing
+  at-least-once limitation after ambiguous network failures.
+
+Deployment prerequisite: reapply `cloud/stock-reports.sql` as schema owner to allow
+`daily` in the existing run table; it preserves historical rows/documents and permissions.
+Local verification: 84 report, schedule, RSI, RSI + PB and Alpaca tests passed on the
+production-based branch against disposable Postgres, with report-provider/Telegram calls
+mocked. The upgrade was rerun over the old timeframe constraint and retained saved PDFs.
+Single-page and 100-stock multipage PDF previews were rendered and visually inspected.
+No production scanner was started and no test alerts/orders were sent.
+This section describes local code only; it does not claim this release is running in production.
 
 ## Additive NEAR routing — prepared locally (2026-11-23)
 

@@ -1,4 +1,4 @@
-"""Durable Sunday/first-of-month S&P 500 reports; no live signal inserts."""
+"""Durable S&P 500 PDF reports; isolated from live signals and orders."""
 from datetime import datetime, timedelta, time as wall_time
 import json
 import os
@@ -18,38 +18,90 @@ def enabled(config):
     return config.get('stock_reports', {}).get('enabled', False)
 
 
+RSI_STRATEGIES = ('rsi', 'rsi-pb')
+PIN_STRATEGIES = ('pin-bars', 'bb-pin-bars')
+CLOSE_DELAY = timedelta(minutes=20)
+
+
+def schedules(now):
+    """Jobs eligible now, with explicit deadlines that survive Israel midnight."""
+    from market_calendar import stock_trading_day, stock_close, previous_session
+    local = datetime.fromtimestamp(now / 1000, ZONE)
+    ny = local.astimezone(NY)
+    jobs = {}
+
+    def add(name, frame, mode, scheduled, expires):
+        if scheduled.timestamp() * 1000 <= now < expires.timestamp() * 1000:
+            jobs[name] = dict(frame=frame, mode=mode,
+                day=scheduled.astimezone(ZONE).date().isoformat(),
+                scheduled_at=int(scheduled.timestamp()*1000), expires_at=int(expires.timestamp()*1000),
+                strategies=list(PIN_STRATEGIES if mode == 'preclose' else RSI_STRATEGIES))
+
+    morning = datetime.combine(local.date(), wall_time(8), ZONE)
+    midnight = datetime.combine(local.date()+timedelta(days=1), wall_time.min, ZONE)
+    if local.weekday() == 6:
+        add('weekly', 'weekly', 'closed', morning, midnight)
+    if local.day == 1:
+        add('monthly', 'monthly', 'closed', morning, midnight)
+    day = ny.date()
+    if stock_trading_day(day):
+        close = stock_close(day)
+        add('daily', 'daily', 'closed', close+CLOSE_DELAY,
+            datetime.combine(day+timedelta(days=1), wall_time.min, NY))
+        friday = day+timedelta(days=4-day.weekday())
+        if day == previous_session(friday):
+            add('weekly-preclose', 'weekly', 'preclose', close-timedelta(hours=2), close)
+        next_month = (day.replace(day=28)+timedelta(days=4)).replace(day=1)
+        if day == previous_session(next_month-timedelta(days=1)):
+            add('monthly-preclose', 'monthly', 'preclose', close-timedelta(hours=2), close)
+    return jobs
+
+
 def due(now):
-    local = datetime.fromtimestamp(now/1000, ZONE)
-    if local.hour < 8:
-        return []
-    return (['weekly'] if local.weekday()==6 else []) + (['monthly'] if local.day==1 else [])
+    return list(schedules(now))
 
 
 def seconds_to_scan(now):
-    local = datetime.fromtimestamp(now, ZONE)
-    if due(int(now*1000)):
-        return 300  # Revisit same-day retries even with a long normal poll interval.
-    for offset in range(8):
-        day = local.date()+timedelta(days=offset)
-        boundary = datetime.combine(day,wall_time(8),ZONE)
-        if (day.weekday()==6 or day.day==1) and boundary>local:
-            return max(1,boundary.timestamp()-now)
+    # Also services post-midnight retries and both DST transition calendars.
     return 300
 
 
-def period(frame, now):
-    """Previous US market week/calendar month, independent of Israel's DST."""
-    local = datetime.fromtimestamp(now/1000,ZONE)
-    if frame=='weekly':
-        end = local.date()-timedelta(days=(local.weekday()+1)%7+1) # Saturday before report Sunday
-        start = end-timedelta(days=5)  # Monday through Saturday exclusive next Sunday
+def period(frame, now, mode='closed'):
+    """Completed RSI periods, or the current period for pre-close pin bars."""
+    local = datetime.fromtimestamp(now/1000, ZONE)
+    ny_day = local.astimezone(NY).date()
+    if frame == 'daily':
+        start = ny_day
+        end = start+timedelta(days=1)
+    elif mode == 'preclose':
+        start = ny_day-timedelta(days=ny_day.weekday()) if frame == 'weekly' else ny_day.replace(day=1)
+        end = start+timedelta(days=7) if frame == 'weekly' else (start.replace(day=28)+timedelta(days=4)).replace(day=1)
+    elif frame == 'weekly':
+        end = local.date()-timedelta(days=(local.weekday()+1)%7+1)
+        start = end-timedelta(days=5)
         end += timedelta(days=1)
-    else:
+    elif frame == 'monthly':
         end = local.date().replace(day=1)
         start = (end-timedelta(days=1)).replace(day=1)
+    else:
+        raise ValueError('Unsupported stock report timeframe')
     return dict(start=int(datetime.combine(start,wall_time.min,NY).timestamp()*1000),
                 end=int(datetime.combine(end,wall_time.min,NY).timestamp()*1000),
                 label=f'{start.isoformat()} to {(end-timedelta(days=1)).isoformat()} (US market dates)')
+
+
+def new_run(job, rules):
+    p = period(job['frame'], job['scheduled_at'], job['mode'])
+    cutoff = job['scheduled_at'] if job['mode'] == 'preclose' else expected_close(p)
+    return dict(job, period=p, cutoff=cutoff, rules=rules_snapshot(rules),
+                feed=os.environ.get('ALPACA_DATA_FEED','sip'), rows=[], coverage=[], completed=[])
+
+
+def deadline(run):
+    if 'expires_at' in run:
+        return run['expires_at']
+    day = datetime.fromisoformat(run['day']).date()+timedelta(days=1)
+    return int(datetime.combine(day,wall_time.min,ZONE).timestamp()*1000)
 
 
 def rules_snapshot(rules):
@@ -63,14 +115,14 @@ def evaluate(ticker, bars, run):
     rules = run['rules']; frame = run['frame']; p = run['period']
     metadata = run['membership']['members'][ticker]
     source = f'alpaca:{run["feed"]}:{ticker}'
-    expected = expected_close(p)
+    expected = run['cutoff'] if run.get('mode') == 'preclose' else expected_close(p)
     result=[]; coverage=[]
-    for strategy in STRATEGIES:
+    for strategy in run.get('strategies', STRATEGIES):
         module = {'rsi':scanner,'pin-bars':pin_bars,'bb-pin-bars':bb_pin_bars,'rsi-pb':rsi_pb}[strategy]
         minimum = module.minimum_history(rules[strategy])
         note = ''
         if not bars or bars[-1].end != expected:
-            note = 'Latest completed period candle unavailable'
+            note = 'Pre-close snapshot unavailable' if run.get('mode') == 'preclose' else 'Latest completed period candle unavailable'
         elif len(bars)<minimum:
             note = f'Insufficient history: {len(bars)} candles; need {minimum}'
         coverage.append(dict(ticker=ticker,strategy=strategy,candles=len(bars),reason=note,
@@ -86,7 +138,7 @@ def evaluate(ticker, bars, run):
         indexed={bar.start:bar for bar in bars}
         seen=set()
         for signal in signals:
-            if not p['start']<=signal['confirmed_at']<p['end']:
+            if not p['start']<=signal['confirmed_at']<p['end'] or signal['confirmed_at'] > run['cutoff']:
                 continue
             start=signal['pivot2'] if strategy=='rsi' else signal['candle_at']
             bar=indexed[start]; key=(signal['direction'],bar.start,bar.end)
@@ -116,17 +168,20 @@ def artifacts(run):
     from stock_report_pdf import render, LABELS
     docs=[]; empty=[]
     prefix=f'sp500-{run["frame"]}-{run["day"]}'
-    for strategy in STRATEGIES:
+    if run.get('mode') == 'preclose':
+        prefix += '-preclose'
+    qualifier = ' | Provisional' if run.get('mode') == 'preclose' else ''
+    for strategy in run.get('strategies', STRATEGIES):
         for direction in DIRECTIONS:
             rows=[r for r in run['rows'] if r['strategy']==strategy and r['direction']==direction]
             if rows:
                 docs.append(dict(filename=f'{prefix}-{strategy}-{direction}.pdf',strategy=strategy,
-                                 caption=f'S&P 500 {run["frame"]} | {LABELS[strategy]} | {direction}',
+                                 caption=f'S&P 500 {run["frame"]} | {LABELS[strategy]} | {direction}'+qualifier,
                                  content=render(run,strategy,direction,rows)))
             elif any(c['strategy']==strategy and not c.get('reason') for c in run['coverage']):
                 empty.append((strategy,direction))
     if empty:
-        docs.append(dict(filename=f'{prefix}-no-matches.pdf',strategy=None,caption=f'S&P 500 {run["frame"]} | No matches in evaluated stocks',
+        docs.append(dict(filename=f'{prefix}-no-matches.pdf',strategy=None,caption=f'S&P 500 {run["frame"]} | No matches in evaluated stocks'+qualifier,
                          content=render(run,empty=empty)))
     issues=[i for i in run['coverage'] if i.get('reason')]
     # Short histories above minimum remain valid but disclose their limited warm-up.
@@ -136,7 +191,7 @@ def artifacts(run):
         if meta['name']=='Unavailable' or meta['sector']=='Unavailable':
             issues.append(dict(ticker=ticker,reason='Company name or sector metadata unavailable'))
     if issues:
-        docs.append(dict(filename=f'{prefix}-coverage.pdf',strategy=None,caption=f'S&P 500 {run["frame"]} | Coverage notes',
+        docs.append(dict(filename=f'{prefix}-coverage.pdf',strategy=None,caption=f'S&P 500 {run["frame"]} | Coverage notes'+qualifier,
                          content=render(run,issues=issues)))
     return docs
 
@@ -168,9 +223,12 @@ def run_due(store, config, rules, now=None, stop=None):
         if not db.execute("SELECT to_regclass('bot_runtime.stock_report_runs')").fetchone()[0]:
             store.log('Stock reports unavailable','Apply cloud/stock-reports.sql before reports can run')
             return
-        # No weekday catch-up sends. Keep missed work visible in diagnostics.
+        # Expire each run by its own calendar; daily retries cross Israel midnight.
         day=datetime.fromtimestamp(now/1000,ZONE).date().isoformat()
-        db.execute("UPDATE stock_report_runs SET state='missed' WHERE day<%s AND state NOT IN ('sent','missed','incomplete')",(day,))
+        db.execute("""UPDATE stock_report_runs SET state='missed'
+            WHERE state NOT IN ('sent','missed','incomplete') AND
+            CASE WHEN payload::jsonb ? 'expires_at' THEN (payload::jsonb->>'expires_at')::bigint<=%s
+                 ELSE day<%s END""", (now,day))
     for frame in due(now):
         if stop is not None and stop.is_set():
             return
@@ -178,12 +236,15 @@ def run_due(store, config, rules, now=None, stop=None):
 
 
 def process(store, frame, rules, now, stop):
-    from stock_report_data import membership, fetch_batch
+    from stock_report_data import membership, fetch_batch, fetch_preclose, market_caps
     from postgres_store import assert_worker
-    day=datetime.fromtimestamp(now/1000,ZONE).date().isoformat()
+    job = schedules(now).get(frame)
+    if job is None:
+        return
+    day = job['day']
     key=f'{frame}:{day}';owner=str(uuid.uuid4())
-    skeleton=dict(day=day,frame=frame,period=period(frame,now),cutoff=period(frame,now)['end']-1,
-                  rules=rules_snapshot(rules),feed=os.environ.get('ALPACA_DATA_FEED','sip'),rows=[],coverage=[],completed=[])
+    skeleton=new_run(job, rules)
+    frame=job['frame']
     with store.connect() as db:
         db.execute("INSERT INTO stock_report_runs(id,day,frame,state,payload) VALUES(%s,%s,%s,'scanning',%s) ON CONFLICT DO NOTHING",(key,day,frame,json.dumps(skeleton)))
         row=db.execute("UPDATE stock_report_runs SET owner=%s,locked_until=extract(epoch FROM clock_timestamp())+1800 WHERE id=%s AND state NOT IN ('sent','missed','incomplete') AND locked_until<extract(epoch FROM clock_timestamp()) AND next_attempt<=%s RETURNING payload,state",(owner,key,now/1000)).fetchone()
@@ -207,9 +268,10 @@ def process(store, frame, rules, now, stop):
                 batch=remaining[offset:offset+20]
                 assert_worker(store)
                 try:
-                    histories=fetch_batch(batch,frame,run['cutoff'],250,run['feed'])
+                    histories=(fetch_preclose(batch,run) if run.get('mode') == 'preclose' else
+                               fetch_batch(batch,frame,run['cutoff'],250,run['feed']))
                 except (ValueError,OSError):
-                    if datetime.now(ZONE).hour < 23:
+                    if time.time()*1000+3600_000 < deadline(run):
                         save(store,key,owner,run,'retry',time.time()+3600)
                         store.log('Stock report retry',f'{frame}: provider batch unavailable; saved progress')
                         return
@@ -217,6 +279,9 @@ def process(store, frame, rules, now, stop):
                 for ticker in batch:
                     rows,coverage=evaluate(ticker,histories.get(ticker,[]),run)
                     run['rows'].extend(rows);run['coverage'].extend(coverage);run['completed'].append(ticker)
+                save(store,key,owner,run)
+            if 'market_caps' not in run:
+                run['market_caps']=market_caps({row['ticker'] for row in run['rows']})
                 save(store,key,owner,run)
             docs=artifacts(run)
             with store.connect() as db:
@@ -258,5 +323,8 @@ def process(store, frame, rules, now, stop):
 
 
 def eligible(run):
-    now=datetime.now(ZONE)
-    return now.date().isoformat()==run['day'] and run['frame'] in due(int(now.timestamp()*1000))
+    now=int(time.time()*1000)
+    if 'expires_at' in run:
+        return run['scheduled_at'] <= now < run['expires_at']
+    local=datetime.fromtimestamp(now/1000,ZONE)
+    return local.date().isoformat()==run['day'] and run['frame'] in due(now)

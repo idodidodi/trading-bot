@@ -37,7 +37,7 @@ class ReportTests(unittest.TestCase):
 
     def test_dst_next_sunday_and_early_close(self):
         before=instant('2026-10-24T08:00:00')/1000
-        self.assertEqual(reports.seconds_to_scan(before),25*3600)
+        self.assertEqual(reports.seconds_to_scan(before),300)
         p=reports.period('weekly',instant('2026-11-29T08:00:00'))
         self.assertEqual(datetime.fromtimestamp(reports.expected_close(p)/1000,reports.NY).hour,13)
         p=reports.period('weekly',instant('2026-04-05T08:00:00'))
@@ -90,6 +90,8 @@ class ReportTests(unittest.TestCase):
         many=[row | dict(ticker=f'Z{i:03d}',name='A very long company name '*3) for i in range(100)]
         reader=PdfReader(BytesIO(render(run,'rsi-pb','bullish',many)))
         self.assertGreater(len(reader.pages),1)
+        self.assertIn('Z000',reader.pages[0].extract_text())
+        self.assertIn('CANDLE PERIOD',reader.pages[-1].extract_text())
         self.assertIn('Z099',''.join(p.extract_text() for p in reader.pages))
 
     def test_metadata_parser_and_snapshot_fallback(self):
@@ -110,8 +112,9 @@ class DurableReportTests(PostgresTestCase):
         self.now=instant('2026-11-01T08:00:00')
 
     def process(self, **kwargs):
-        with patch('stock_reports.eligible',return_value=True),patch('stock_report_data.membership',return_value=fixture()['membership']), \
+        with patch('stock_reports.time.time',return_value=self.now/1000),patch('stock_reports.eligible',return_value=True),patch('stock_report_data.membership',return_value=fixture()['membership']), \
              patch('stock_report_data.fetch_batch',return_value={}) as fetch,patch('local_settings.delivery_dry_run',return_value=kwargs.get('dry',False)), \
+             patch('stock_report_data.market_caps',return_value={'source':'fixture','values':{}}), \
              patch('telegram_documents.deliver_document',side_effect=kwargs.get('send_error')) as send:
             reports.run_due(self.store,self.config,load_rules(),self.now)
         return fetch,send
@@ -159,7 +162,7 @@ class DurableReportTests(PostgresTestCase):
         self.assertIn('missed',[r['state'] for r in reports.status(self.store)['runs']])
 
     def test_provider_retry_resumes_without_refreshing_membership_or_rules(self):
-        with patch('stock_reports.datetime',wraps=datetime) as clock,patch('stock_reports.eligible',return_value=True),patch('stock_report_data.membership',return_value=fixture()['membership']), \
+        with patch('stock_reports.time.time',return_value=self.now/1000),patch('stock_reports.datetime',wraps=datetime) as clock,patch('stock_reports.eligible',return_value=True),patch('stock_report_data.membership',return_value=fixture()['membership']), \
              patch('stock_report_data.fetch_batch',side_effect=ValueError('unavailable')),patch('telegram_documents.deliver_document') as send:
             clock.now.return_value=datetime.fromtimestamp(self.now/1000,reports.ZONE)
             reports.run_due(self.store,self.config,load_rules(),self.now)
@@ -204,7 +207,7 @@ class DurableReportTests(PostgresTestCase):
         coverage=[dict(ticker='AAPL',strategy=s,reason='',candles=250) for s in reports.STRATEGIES]
         with patch('stock_reports.evaluate',return_value=(rows,coverage)):
             _,send=self.process()
-        self.assertEqual(send.call_count,16)
+        self.assertEqual(send.call_count,8) # weekly/monthly RSI only; pin PDFs move to pre-close
         with self.store.connect() as db:
             self.assertEqual(db.execute("SELECT count(*) FROM stock_report_runs WHERE state='sent'").fetchone()[0],2)
             for table in ('signals','pin_bar_signals','bb_pin_bar_signals','rsi_pb_signals','notification_queue','scan_state','pin_bar_state','bb_pin_bar_state','rsi_pb_state'):
