@@ -87,7 +87,7 @@ class EngineTests(unittest.TestCase):
         with patch.dict('os.environ',{},clear=True):
             self.assertFalse(needed(state,'rsi','15m'))
             self.assertTrue(needed(state|{'services':[{'strategy':['rsi'],'symbol':['kraken:Kraken:NEAR/USD'],'timeframe':['15m']}]},'rsi','15m'))
-            self.assertFalse(needed(state|{'people':[{'routes':{'crypto.rsi':'-2'},'enabled':{}}]},'rsi','15m'))
+            self.assertTrue(needed(state|{'people':[{'routes':{'crypto.rsi':'-2'},'enabled':{}}]},'rsi','15m'))
             self.assertFalse(needed(state|{'people':[{'routes':{'crypto.rsi':'-2'},'enabled':{'crypto.rsi':False}}]},'rsi','15m'))
             self.assertFalse(needed(state|{'routes':{'crypto.rsi':'-2'}},'rsi','5m'))
 
@@ -123,21 +123,6 @@ class LiveTests(PostgresTestCase):
         deliver_subscriptions(self.store,'unused','test','notification:trend-pin-bars:valid',send,payload=payload)
         self.assertEqual(send.call_count,1)
         self.assertEqual(send.call_args.args[1],'-1004484031372')
-
-    def test_near_rsi_routes_only_to_near_group_on_every_frame(self):
-        from telegram_routing import deliver_routed
-        frames=['5m','15m','30m','1h','4h','daily','weekly']
-        with self.store.connect() as db:
-            db.execute('UPDATE telegram_asset_subscriptions SET enabled=true,timeframes=%s',(frames,))
-            db.execute('UPDATE near_group_preferences SET subscriptions=%s::jsonb',(json.dumps({'rsi':frames,'trend-pin-bars':frames}),))
-        send=Mock(return_value=1)
-        with patch('telegram_routing.select') as broad,patch('telegram_personal.deliver_personal') as personal:
-            for frame in frames:
-                payload=dict(asset='NEARUSD',symbol='kraken:Kraken:NEAR/USD',timeframe=frame,signal_status='provisional',alert_timing='pivot_close',confirmed_at=2000000)
-                deliver_routed(self.store,'unused','-general','test','divergence:'+frame,send,payload=payload)
-            broad.assert_not_called();personal.assert_not_called()
-        self.assertEqual(send.call_count,7)
-        self.assertEqual({c.args[1] for c in send.call_args_list},{'-1004484031372'})
 
     def test_trend_queue_and_opt_out_no_duplicate_delivery(self):
         import trend_pin_bars

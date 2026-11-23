@@ -33,18 +33,20 @@ def needed(state,strategy,frame):
         # RSI contract instruments use their provider-qualified symbol.
         if strategy=='rsi' and all(key not in filters or value in filters[key] for key,value in
                [('strategy',strategy),('symbol','kraken:Kraken:NEAR/USD'),('timeframe',frame),('market','crypto')]):return True
-    # NEAR RSI and pin bars never use broad or personal Telegram routes.
-    if strategy in ('rsi','pin-bars','bb-pin-bars','trend-pin-bars'):return False
-    route='crypto.'+('pin-bars' if strategy=='bb-pin-bars' else strategy)
-    if state['routes'].get(route) or state['routes'].get('general') or os.environ.get('TELEGRAM_CHAT_ID'):return True
-    return any(p['routes'].get(route) and p['enabled'].get(route,True) for p in state['people'])
+    # The dedicated group's controls must not pause another group's scans.
+    if frame=='5m':return False  # Existing broad/personal five-minute mute.
+    route='crypto.'+('pin-bars' if strategy in ('bb-pin-bars','trend-pin-bars') else strategy)
+    dedicated={str(p[0]) for p in state['preferences']}
+    def other(chat):return bool(chat) and str(chat) not in dedicated
+    if any(other(chat) for chat in (state['routes'].get(route),state['routes'].get('general'),os.environ.get('TELEGRAM_CHAT_ID'))):return True
+    return any(other(p['routes'].get(route)) and p['enabled'].get(route,True) for p in state['people'])
 
 
 def plan(store,state,asset,frame,strategies,now):
     if not state or asset.get('id')!='NEARUSD' or asset.get('symbol')!='NEAR/USD':return strategies,{}
     wanted=set(strategies)
     for strategy in ('rsi','trend-pin-bars'):
-        if frame in FRAMES and requested(state,strategy,frame):wanted.add(strategy)
+        if frame in FRAMES and (requested(state,strategy,frame) or strategy=='trend-pin-bars' and needed(state,strategy,frame)):wanted.add(strategy)
     # Higher-timeframe RSI context is a real consumer of the same detector.
     context=needed(state,'rsi','5m') and frame in ('1h','4h','daily','weekly','monthly')
     for strategy in ('rsi','pin-bars','bb-pin-bars','trend-pin-bars'):
@@ -73,6 +75,7 @@ def allows_destination(store,chat,payload,strategy='rsi'):
         if not db.execute("SELECT to_regclass('bot_runtime.near_group_preferences')").fetchone()[0]:return True
         row=db.execute('SELECT subscriptions,enrolled FROM near_group_preferences WHERE chat=%s',(str(chat),)).fetchone()
     if not row:return True
-    if strategy!='rsi':return False  # This group selects the dedicated trend pin-bar rule.
+    if strategy not in ('rsi','trend-pin-bars'):return False
+    if strategy=='trend-pin-bars' and payload.get('setup')!='trend_pullback':return False
     frame=payload.get('timeframe')
-    return frame in row[0].get('rsi',[]) and payload.get('confirmed_at',0)/1000>=float(row[1].get('rsi:'+frame,0))
+    return frame in row[0].get(strategy,[]) and payload.get('confirmed_at',0)/1000>=float(row[1].get(strategy+':'+frame,0))

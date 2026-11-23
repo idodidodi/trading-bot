@@ -61,7 +61,7 @@ def recover(db, payload):
     return payload.get('market') or None
 
 
-def select(store, event, general, payload=None, notification_key=None):
+def select(store, event, general, payload=None, notification_key=None, *, allow_missing=False):
     routes = read(store)['routes']
     with store.connect() as db:
         initialize(db)
@@ -71,21 +71,23 @@ def select(store, event, general, payload=None, notification_key=None):
             return row[2], row[3]
         market, strategy = (row[0], row[1]) if row else (None, None)
         if payload is not None and market in (None, '', 'unknown'):
-            strategy, market = strategy or 'rsi', recover(db, payload)
+            prefix = (notification_key or '').partition(':')[0]
+            recovered_strategy = prefix if prefix in ('pin-bars','bb-pin-bars','trend-pin-bars','rsi-pb','ma-cross') else 'rsi'
+            strategy, market = strategy or recovered_strategy, recover(db, payload)
         if notification_key and (not strategy or market in (None, '', 'unknown')):
             prefix, _, key = notification_key.partition(':')
-            if prefix in ('pin-bars', 'bb-pin-bars', 'rsi-pb', 'ma-cross'):
-                table = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals','rsi-pb':'rsi_pb_signals','ma-cross':'ma_cross_signals'}[prefix]
+            if prefix in ('pin-bars', 'bb-pin-bars', 'trend-pin-bars', 'rsi-pb', 'ma-cross'):
+                table = {'trend-pin-bars': 'trend_pin_bar_signals', 'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals','rsi-pb':'rsi_pb_signals','ma-cross':'ma_cross_signals'}[prefix]
                 exists = db.execute('SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name=%s', (table,)).fetchone()
                 signal = db.execute(f'SELECT payload FROM {table} WHERE id=%s', (key,)).fetchone() if exists else None
                 if signal:
                     strategy, market = prefix, recover(db, json.loads(signal[0]))
         fallback = routes['general'] or general
-        route = f'{market_group(market)}.{"pin-bars" if strategy in ("pin-bars", "bb-pin-bars") else "rsi-pb" if strategy=="rsi-pb" else "rsi"}' if strategy and market else 'general'
+        route = f'{market_group(market)}.{"pin-bars" if strategy in ("pin-bars", "bb-pin-bars", "trend-pin-bars") else "rsi-pb" if strategy=="rsi-pb" else "rsi"}' if strategy and market else 'general'
         if strategy == 'ma-cross':
             route, fallback = 'other-signals', ''
         chat = routes.get(route) or fallback
-        if not chat:
+        if not chat and not allow_missing:
             raise RuntimeError('Configure the Other Signals Telegram destination' if strategy == 'ma-cross' else 'Configure a General Telegram destination')
         db.execute('INSERT INTO telegram_event_routes VALUES(%s,%s,%s,%s,%s) ON CONFLICT(event)\n            DO UPDATE SET market=excluded.market,strategy=excluded.strategy,chat=excluded.chat,general=excluded.general', (event, market, strategy, chat, fallback))
         return chat, fallback
@@ -96,7 +98,7 @@ def signal_timeframe(store, payload=None, notification_key=None):
     if payload is not None:
         return payload.get('timeframe')
     strategy, _, key = (notification_key or '').partition(':')
-    table = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals',
+    table = {'trend-pin-bars': 'trend_pin_bar_signals', 'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals',
              'rsi-pb': 'rsi_pb_signals', 'ma-cross': 'ma_cross_signals'}.get(strategy)
     if not table:
         return None  # Reports, summaries and connection tests are not signal alerts.
@@ -108,35 +110,21 @@ def signal_timeframe(store, payload=None, notification_key=None):
 
 
 def deliver_routed(store, token, general, text, event, send, silent=False, payload=None, notification_key=None):
-    # Trend pullback signals are opt-in asset copies, never broad category alerts.
+    from telegram_asset_subscriptions import deliver_subscriptions
     if (notification_key or '').startswith('trend-pin-bars:'):
         with store.connect() as db:
             row=db.execute('SELECT payload FROM trend_pin_bar_signals WHERE id=%s',(notification_key.split(':',1)[1],)).fetchone()
         if not row:raise RuntimeError('Trend pin-bar metadata unavailable')
-        from telegram_asset_subscriptions import deliver_subscriptions
-        deliver_subscriptions(store,token,text,event,send,silent=silent,payload=json.loads(row[0]))
-        return 'suppressed'
-    from telegram_asset_subscriptions import deliver_subscriptions
-    if payload and payload.get('asset')=='NEARUSD':
-        # NEAR RSI is exclusive to its explicit group, with no broad/personal fallback.
-        deliver_subscriptions(store,token,text,event,send,silent=silent,payload=payload)
-        return 'suppressed'
-    if (notification_key or '').startswith(('pin-bars:','bb-pin-bars:')):
-        prefix,_,key=notification_key.partition(':')
-        table={'pin-bars':'pin_bar_signals','bb-pin-bars':'bb_pin_bar_signals'}[prefix]
-        with store.connect() as db:
-            record=db.execute(f'SELECT payload FROM {table} WHERE id=%s',(key,)).fetchone()
-        if record:
-            old=json.loads(record[0])
-            if old.get('asset',old.get('symbol'))=='NEARUSD':
-                return 'suppressed'  # Only the selected new pin-bar setups go to NEAR.
+        payload=json.loads(row[0])
+        if payload.get('setup')!='trend_pullback':return 'suppressed'
     if signal_timeframe(store, payload, notification_key) == '5m':
         # Explicit asset subscriptions are the sole exception to the broad 5m mute.
         deliver_subscriptions(store, token, text, event, send, silent=silent, payload=payload)
         return 'suppressed'
-    from telegram_delivery import deliver
+    from telegram_delivery import deliver, DeliveryPending
     from platform_app import TelegramDestinationError
-    chat, fallback = select(store, event, general, payload, notification_key)
+    chat, fallback = select(store, event, general, payload, notification_key,
+                            allow_missing=bool(payload and payload.get('asset')=='NEARUSD'))
     from telegram_checklist import group_dismissal_enabled
     from functools import partial
     # Zero selects shared-group dismissal; personal deliveries stay owner-bound.
@@ -146,7 +134,7 @@ def deliver_routed(store, token, general, text, event, send, silent=False, paylo
     policy_strategy='rsi'
     if notification_key:
         prefix,_,key=notification_key.partition(':')
-        table={'pin-bars':'pin_bar_signals','bb-pin-bars':'bb_pin_bar_signals'}.get(prefix)
+        table={'trend-pin-bars':'trend_pin_bar_signals','pin-bars':'pin_bar_signals','bb-pin-bars':'bb_pin_bar_signals'}.get(prefix)
         if table:
             with store.connect() as db:
                 record=db.execute(f'SELECT payload FROM {table} WHERE id=%s',(key,)).fetchone()
@@ -155,7 +143,7 @@ def deliver_routed(store, token, general, text, event, send, silent=False, paylo
                 policy_strategy=prefix
     try:
         outcome = (deliver(store, token, chat, text, event, group_send, silent=silent)
-                   if allows_destination(store,chat,policy_payload,policy_strategy) else 'suppressed')
+                   if chat and allows_destination(store,chat,policy_payload,policy_strategy) else 'suppressed')
     except TelegramDestinationError:
         if not fallback or fallback == chat:
             raise
@@ -166,9 +154,15 @@ def deliver_routed(store, token, general, text, event, send, silent=False, paylo
                    if allows_destination(store,fallback,policy_payload,policy_strategy) else 'suppressed')
     from telegram_personal import deliver_personal
     if not (notification_key or '').startswith('telegram-demo:'):
-        deliver_subscriptions(store, token, text, event, send, silent=silent, payload=payload)
-        if payload and payload.get('divergence_type') != 'hidden':
+        # Attempt personal copies even when the dedicated group needs a retry.
+        pending = None
+        try:
+            deliver_subscriptions(store, token, text, event, send, silent=silent, payload=payload)
+        except DeliveryPending as exc:
+            pending = exc
+        if payload and not notification_key and payload.get('divergence_type') != 'hidden':
             from chasing_runtime import enroll_automatic
             enroll_automatic(store,payload)
-        deliver_personal(store, token, text, event, send, silent=silent, payload=payload)
+        deliver_personal(store, token, text, event, send, silent=silent, payload=policy_payload)
+        if pending:raise pending
     return outcome

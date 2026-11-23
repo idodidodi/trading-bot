@@ -1,6 +1,46 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-22** for the prepared trend-only pin-bar correction; **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-23** for additive NEAR routing (local, not deployed); **2026-11-22** for the prepared trend-only pin-bar correction; **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+
+## Additive NEAR routing — prepared locally (2026-11-23)
+
+This section supersedes the exclusive-routing and scan-demand behavior of the
+November 21 release below. Production was inspected read-only on November 23 and
+still has those exclusions; the correction here is not yet deployed.
+
+The NEAR subscription is an additional destination. NEAR RSI follows the existing
+shared crypto RSI route (General remains its fallback) and enabled personal RSI
+routes, as well as the dedicated subscription. Trend pullback pin bars similarly
+use shared/personal crypto pin-bar routes plus the dedicated subscription. Legacy
+EMA/BB pin bars again reach eligible other groups, but remain excluded from the
+dedicated NEAR group, whose pin-bar choice selects only trend pullbacks. Retired
+reversal payloads remain suppressed before delivery to any destination.
+
+The general 5m Telegram mute remains: only explicit subscriptions receive those
+copies. Dedicated group selections and enrollment cutoffs apply only to that
+destination, including when it also appears in a shared or personal route. Other
+personal opt-outs, enrollment times and sound preferences remain effective.
+Deduplication is by bot/destination plus event, so one event reaches each eligible
+group once, including when multiple routes name the same group. A dedicated
+subscription delivery failure leaves the event retryable but does not prevent
+personal copies; accepted destinations are skipped on retry. Missing shared
+configuration does not prevent NEAR subscription or personal delivery.
+
+Other eligible shared/personal groups now count as scan consumers even when NEAR
+checkboxes are off. Trend pullback scans can remain active for those groups on
+supported configured frames; existing asset eligibility and higher-frame RSI
+context dependencies still apply. A dedicated destination alone does not count
+as broad demand when its box is off. Resumed strategies retain fresh cutoffs and
+baseline behavior; this change does not reset queues or replay suppressed history.
+
+Sources: `near_alerts.needed/plan/allows_destination`,
+`telegram_routing.select/deliver_routed`, `telegram_personal.route_for/deliver_personal`,
+`telegram_asset_subscriptions.deliver_subscriptions`, `telegram_delivery.deliver`,
+`scan_schedule.identity`, `candle_strategy.scan`.
+Verification: 82 targeted tests passed against disposable Postgres with mocked Telegram transport; regression tests
+in `test_near_redundant_routing.py` cover independent copies, destination dedup,
+opt-outs, retry isolation, scan demand, 5m exclusion and retired reversals.
+No production settings, queue rows, messages or orders were changed.
 
 ## Trend-only pin-bar correction — prepared locally (2026-11-22)
 

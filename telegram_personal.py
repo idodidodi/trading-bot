@@ -19,7 +19,7 @@ def route_for(market, strategy):
         return 'other-signals'
     if not market or not strategy:
         return 'general'
-    strategy = 'pin-bars' if strategy in ('pin-bars', 'bb-pin-bars') else strategy
+    strategy = 'pin-bars' if strategy in ('pin-bars', 'bb-pin-bars', 'trend-pin-bars') else strategy
     return f'{market_group(market)}.{strategy}'
 
 
@@ -55,7 +55,10 @@ def deliver_personal(store, token, text, event, send, silent=False, payload=None
         chat = person['routes'].get(route)
         if not chat:
             continue  # No fallback to somebody else's General group.
+        from near_alerts import allows_destination
         allowed = person['enabled'].get(route, True)
+        if strategy in ('rsi','pin-bars','bb-pin-bars','trend-pin-bars'):
+            allowed = allowed and allows_destination(store,chat,payload,strategy)
         # Exclude findings predating enrollment, including a backlog after restart.
         observed = (payload or {}).get('detected_at') or (payload or {}).get('confirmed_at')
         if observed and observed / 1000 < float(person['created_at']):
