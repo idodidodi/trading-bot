@@ -187,7 +187,7 @@ async function loadColmexRequests(parent){
   else section.append(node('p','Scanner readiness has not been checked yet.'));
  }catch(error){section.append(node('p','Colmex requests unavailable: '+error.message));}
 }
-async function loadAssets(){state=await request('/api/assets');content.replaceChildren();
+async function loadAssets(savedAsset=null,savedNotice=''){state=await request('/api/assets');content.replaceChildren();
  content.append(node('h2','Live assets'),node('p',`Configuration ${state.revision}; scanner applied ${state.applied_revision}. New tickers are disabled drafts until you configure their data feed.`));
  const form=node('form'),input=node('input');input.name='tickers';input.placeholder='NVDA, EURUSD, BTCUSD';input.required=true;input.maxLength=10000;form.append(input,node('button','Add tickers'));form.onsubmit=async e=>{e.preventDefault();await mutate({action:'bulk',tickers:input.value});};if(state.sync?.error)content.append(node('p','Sync: '+state.sync.error));
  if(!online&&state.configuration_conflict)content.append(button('Use online configuration',()=>mutate({action:'accept_online'})));
@@ -208,11 +208,29 @@ async function loadAssets(){state=await request('/api/assets');content.replaceCh
  const provider=node('select');for(const p of ['csv','twelvedata','kraken','oanda','tiingo','alpaca','fmp','yahoo','colmex']){const o=node('option',p==='csv'?'Candle CSV files':p==='kraken'?'Kraken spot':p==='oanda'?'OANDA forex':p==='tiingo'?'Tiingo FX / commodities':p==='alpaca'?'Alpaca US equities':p==='fmp'?'FMP cash indices':p==='colmex'?'Colmex MT4':p==='yahoo'?'Yahoo indices / futures (delayed)':'Twelve Data');o.value=p;provider.append(o);}provider.value=asset.provider;field.append(provider);
  const inputs={};for(const [key,title] of [['symbol','Provider symbol'],['exchange','Provider exchange'],['tradingview_symbol','TradingView exchange:ticker']]){const l=node('label',title),i=node('input');i.value=asset[key]||'';i.maxLength=100;inputs[key]=i;l.append(i);field.append(l);}
  const confirmed=node('input');confirmed.type='checkbox';confirmed.checked=asset.feed_confirmed===true;const cl=node('label','I verified this provider feed');cl.append(confirmed);field.append(cl);
- const selected={},sources={};for(const f of assetFrames){const l=node('label',f),i=node('input');i.type='checkbox';i.checked=(asset.timeframes||defaultAssetFrames).includes(f);selected[f]=i;l.append(i);field.append(l);const source=node('select');source.setAttribute('aria-label',f+' candle provider');for(const [value,label] of [['','Primary provider'],['twelvedata','Twelve Data'],['oanda','OANDA forex'],['tiingo','Tiingo FX / commodities'],['alpaca','Alpaca US equities'],['fmp','FMP cash indices'],['yahoo','Yahoo indices / futures (delayed)'],...(f==='monthly'?[]:[['kraken','Kraken spot']])]){const o=node('option',label);o.value=value;source.append(o);}source.value=asset.timeframe_providers?.[f]||'';sources[f]=source;field.append(source);}
+ const selected={},sources={};for(const f of assetFrames){const l=node('label',f),i=node('input');i.type='checkbox';i.value=f;i.checked=(asset.timeframes||defaultAssetFrames).includes(f);selected[f]=i;l.append(i);field.append(l);const source=node('select');source.setAttribute('aria-label',f+' candle provider');for(const [value,label] of [['','Primary provider'],['twelvedata','Twelve Data'],['oanda','OANDA forex'],['tiingo','Tiingo FX / commodities'],['alpaca','Alpaca US equities'],['fmp','FMP cash indices'],['yahoo','Yahoo indices / futures (delayed)'],...(f==='monthly'?[]:[['kraken','Kraken spot']])]){const o=node('option',label);o.value=value;source.append(o);}source.value=asset.timeframe_providers?.[f]||'';sources[f]=source;field.append(source);}
  field.append(node('p',asset.provider==='csv'?`CSV: ${asset.path||'data/candles/{asset}-{timeframe}.csv'}`:'Provider entitlement and native intervals must be verified.'));
  field.append(node('p','OANDA supports forex on all five timeframes; its token and account ID stay in the local .env. Kraken supports crypto 5m, 15m, 30m, 1h, 4h, daily and weekly; monthly crypto stays on Twelve Data. Changing the venue starts a new alert baseline. Intraday timeframes are optional; 5m, 15m and 30m require Kraken or CSV.'));
  field.append(node('p','Colmex uses exact broker symbols (including #), exchange Colmex-MT4, and 1h, 4h or daily UTC candles. Use a dedicated primary provider without TradingView mapping.'));
- field.append(button('Save asset',()=>mutate({action:'save',asset:{id:asset.id,market:asset.market,provider:provider.value,enabled:enabled.checked,scan_strategies:Object.keys(strategies).filter(key=>strategies[key].checked),timeframes:assetFrames.filter(f=>selected[f].checked),feed_confirmed:confirmed.checked,timeframe_providers:Object.fromEntries(assetFrames.filter(f=>sources[f].value).map(f=>[f,sources[f].value])),...Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value.trim()]))}})),button('Disable',()=>mutate({action:'save',asset:{...asset,enabled:false}})),button('Remove asset',()=>mutate({action:'remove',ticker:asset.id})));row.append(field);groups.get(marketCategory(asset)).append(row);
+ const feedback=node('p');feedback.setAttribute('role','alert');field.append(feedback);
+ if(savedAsset===asset.id){row.open=true;feedback.textContent=savedNotice;}
+ const save=button('Save asset',async()=>{
+  if(save.disabled)return;
+  feedback.className='error';
+  const timeframes=assetFrames.filter(f=>selected[f].checked),scan_strategies=Object.keys(strategies).filter(key=>strategies[key].checked);
+  if(!timeframes.length||!scan_strategies.length){feedback.textContent='Choose at least one timeframe and one strategy.';return;}
+  const unsupported=timeframes.filter(f=>provider.value==='colmex'&&!['daily','4h','1h'].includes(f));
+  if(unsupported.length){feedback.textContent=`Unavailable Colmex timeframes: ${unsupported.join(', ')}. Select only 1h, 4h or daily.`;return;}
+  const candidate={...asset,provider:provider.value,enabled:enabled.checked,scan_strategies,timeframes,feed_confirmed:confirmed.checked,timeframe_providers:Object.fromEntries(assetFrames.filter(f=>sources[f].value).map(f=>[f,sources[f].value])),...Object.fromEntries(Object.entries(inputs).map(([k,v])=>[k,v.value.trim()]))};
+  save.disabled=true;save.textContent='Saving…';feedback.className='';feedback.textContent='Saving…';
+  try{
+   await request('/api/assets',{action:'save',revision:state.revision,asset:candidate});
+   const notice=`${asset.id}: saved — awaiting scanner application and data checks.`;
+   feedback.textContent=notice;message(notice);
+   try{await loadAssets(asset.id,notice);}catch(e){feedback.textContent=notice+' Refresh failed: '+e.message;message(feedback.textContent,true);}
+  }catch(e){feedback.className='error';feedback.textContent=e.message;message(e.message,true);}
+  finally{save.disabled=false;save.textContent='Save asset';}
+ });field.append(save,button('Disable',()=>mutate({action:'save',asset:{...asset,enabled:false}})),button('Remove asset',()=>mutate({action:'remove',ticker:asset.id})));row.append(field);groups.get(marketCategory(asset)).append(row);
  }
 }
 async function mutate(body){try{message('Saving…');const result=await request('/api/assets',{...body,revision:state.revision});await loadAssets();message(result.results.map(r=>r.ticker+': '+r.status).join('; ')+(online?' — pending local scanner':' — saved locally'));}catch(e){message(e.message,true);}}
@@ -455,6 +473,40 @@ async function telegramRoutingControls(panel,isCurrent){
   section.append(status);
  }catch(e){if(isCurrent())section.append(node('p','Telegram routing unavailable. Only the installation owner can access online routing; the cloud migration must be installed.'));}
 }
+async function nearGroupControls(panel,isCurrent){
+ if(!online)return;
+ const section=node('section');section.className='near-alert-settings';
+ section.append(node('h3','NEAR group alerts'));panel.append(section);
+ try{
+  let value=await request('/api/near-alerts');if(!isCurrent())return;
+  const status=node('p');status.setAttribute('role','status');
+  section.append(node('p','Choose alerts for the connected NEAR group. Each checked box enables that strategy and timeframe. Scanning continues when another subscriber or feature still needs it.'));
+  const table=node('table'),head=node('tr');head.append(node('th','Alert'));
+  for(const frame of value.timeframes)head.append(node('th',frame));
+  table.append(head);const inputs={};
+  for(const [strategy,label] of [['rsi','RSI divergence'],['trend-pin-bars','Pin bars: trend pullback']]){
+   const row=node('tr');row.append(node('th',label));inputs[strategy]={};
+   for(const frame of value.timeframes){
+    const cell=node('td'),input=node('input');input.type='checkbox';input.checked=(value.subscriptions[strategy]||[]).includes(frame);
+    input.disabled=!value.editable;input.setAttribute('aria-label',`NEAR ${label} ${frame}`);
+    inputs[strategy][frame]=input;cell.append(input);row.append(cell);
+   }table.append(row);
+  }
+  const scroll=node('div');scroll.className='near-alert-grid';scroll.append(table);section.append(scroll);
+  section.append(node('p','RSI includes bullish, bearish, regular and hidden divergences. NEAR 5m uses RSI 14 close. Pin bars include five-candle trend pullbacks (1–12 candles, at most two-thirds retracement) only; countertrend reversal pins are excluded. Alerts include an estimated Wyckoff stage. Clearing every box pauses this group’s alerts.'));
+  if(value.editable){
+   const save=button('Save NEAR alerts',async()=>{
+    save.disabled=true;status.textContent='Saving…';
+    const subscriptions=Object.fromEntries(Object.entries(inputs).map(([strategy,frames])=>[strategy,Object.keys(frames).filter(f=>frames[f].checked)]));
+    try{const updated=await request('/api/near-alerts',{action:'save',revision:value.revision,subscriptions});if(!isCurrent())return;value=updated;status.textContent='Saved. NEAR group preferences updated.';}
+    catch(e){if(isCurrent())status.textContent=e.message+' Reopen Settings to reload before retrying.';}
+    finally{if(isCurrent())save.disabled=false;}
+   });section.append(save);
+  }
+  section.append(status);
+ }catch(e){if(isCurrent())section.append(node('p','NEAR settings are available to the installation owner after the connected group is configured.'));}
+}
+
 async function chasingControls(panel,isCurrent){
  if(!online)return;
  panel.append(node('p','Chasing is suspended. Chasing Telegram groups are inactive; historical settings are retained.'));
@@ -526,15 +578,16 @@ function settingsLoading(label){
 async function openVersions(){
  const dialog=$('settings-dialog'),panel=$('version-content'),id=++versionRequest;
  const isCurrent=()=>id===versionRequest&&dialog.open;
- const personal=node('div'),routing=node('div'),development=node('div'),chasing=node('div'),automatic=node('div'),versions=node('section');
+ const near=node('div'),personal=node('div'),routing=node('div'),development=node('div'),chasing=node('div'),automatic=node('div'),versions=node('section');
  versions.append(node('h3','Versions'),settingsLoading('Checking versions…'));
- panel.replaceChildren(personal,chasing,automatic,routing,development,versions);
+ panel.replaceChildren(near,personal,chasing,automatic,routing,development,versions);
  if(!dialog.open)dialog.showModal();
  async function loadSettings(target,label,load){
   const loading=settingsLoading(label);target.append(loading);
   try{await load(target,isCurrent);}finally{if(isCurrent())target.replaceChildren(...Array.from(target.children).filter(child=>child!==loading));}
  }
  await Promise.all([
+  loadSettings(near,'Loading NEAR alerts…',nearGroupControls),
   loadSettings(personal,'Loading personal alerts…',personalTelegramControls),
   loadSettings(chasing,'Loading chasing settings…',chasingControls),
   loadSettings(automatic,'Loading automatic crypto Chase…',cryptoAutoChaseControls),
