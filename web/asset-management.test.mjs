@@ -187,3 +187,30 @@ test('stale Colmex catalogue allows existing pair removal but hides new pair cho
  assert.equal(descendants(get('content')).filter(e=>e.tag==='input').length,1);
  assert.match(text(get('content')),/unavailable or stale/);
 });
+
+test('portfolio save failures stay beside Save and preserve edited timeframes',async()=>{
+ const {context,get,requests}=setup(settings,'Operation rejected; reload and retry');
+ await vm.runInContext('loadAssets()',context);
+ const all=descendants(get('content')),save=all.find(e=>e.textContent==='Save asset');
+ all.find(e=>e.tag==='input'&&e.value==='1h').checked=true;
+ const pending=save.onclick();assert.equal(save.disabled,true);assert.equal(save.textContent,'Saving…');
+ await save.onclick();await pending;
+ assert.equal(requests.filter(r=>r.body?.action==='save').length,1);
+ assert.ok(all.some(e=>e.attrs.role==='alert'&&e.textContent==='Operation rejected; reload and retry'));
+ assert.equal(save.disabled,false);assert.equal(all.find(e=>e.value==='1h').checked,true);
+});
+
+test('Colmex rejects unsupported legacy selections locally and saves supported hourly frames',async()=>{
+ const colmex={...asset,id:'SPX',provider:'colmex',symbol:'SPX500#',exchange:'Colmex-MT4',timeframes:['monthly','4h'],timeframe_providers:{}};
+ const {context,get,requests}=setup({...settings,config:{assets:[colmex]}});
+ await vm.runInContext('loadAssets()',context);
+ const all=descendants(get('content')),save=all.find(e=>e.textContent==='Save asset');
+ await save.onclick();assert.match(text(get('content')),/Unavailable Colmex timeframes.*monthly/);
+ assert.ok(!requests.some(r=>r.body?.action==='save'));
+ all.find(e=>e.value==='monthly').checked=false;all.find(e=>e.value==='1h').checked=true;
+ await save.onclick();
+ assert.deepEqual(requests.find(r=>r.body?.action==='save').body.asset.timeframes,['4h','1h']);
+ const saved=descendants(get('content'));
+ assert.ok(saved.some(e=>e.tag==='details'&&e.open));
+ assert.ok(saved.some(e=>e.attrs.role==='alert'&&/SPX: saved.*awaiting scanner/.test(e.textContent)));
+});
