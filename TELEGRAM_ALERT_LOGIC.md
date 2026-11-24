@@ -1,8 +1,8 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-24** for the activated Current Portfolio group; **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
-## Current Portfolio — prepared locally, not activated (2026-11-24)
+## Current Portfolio — verified activated (2026-11-24)
 
 Read-only Telegram API verification confirmed the user-supplied Current Portfolio
 group is `-5276778238`, with `idodiTradingBot` an administrator. Production managed
@@ -35,14 +35,21 @@ to another destination. A portfolio send may succeed before another destination
 fails; the normal ledger prevents sending its copy twice on retry. Trend-pin-bar
 copies, if such a strategy is enabled in future, reject retired reversal findings.
 
-Verification: five local unit tests cover exact assets/frames, enrollment,
+Verification: five local and staged-production unit tests cover exact assets/frames, enrollment,
 notification strategy metadata, report/demo exclusion, independent shared delivery
 on portfolio failure and worker ownership propagation. Telegram membership and
 managed configuration were inspected without sending alerts or starting a scanner.
-Publication was authorized on November 24. Deployment and natural production
-delivery remain unverified until the runtime checks complete. The production
-routing module retains its existing fixes; `scripts/patch-portfolio-routing.py`
-applies only the hook from this change. Sources: `telegram_portfolio.py`, `telegram_routing.py`
+Publication was authorized and the existing Linux worker was updated at 10:12
+Israel time on November 24. `PORTFOLIO_DEPLOYMENT.json` records the source commit,
+base routing hash, deployed hashes and backup. Both deployed file hashes matched;
+the worker is active and managed revision 51 remains fully applied. A live-config
+smoke test using mocked delivery accepted all 24 symbol/frame combinations and
+rejected lower frames, other symbols and pre-enrollment findings without writes,
+alerts or orders. Five tests passed against the staged production module. The
+production routing retains its existing fixes; `scripts/patch-portfolio-routing.py`
+applies only this hook. Natural portfolio delivery has not yet been observed;
+GitHub checks are verified separately against the final pushed SHA.
+Sources: `telegram_portfolio.py`, `telegram_routing.py`
 (`deliver_routed`), `telegram-portfolio.example.json`, `test_telegram_portfolio.py`.
 
 ## Configuration read freshness
