@@ -242,6 +242,48 @@ class DocumentDeliveryTests(unittest.TestCase):
 
 
 class DocumentRoutingTests(PostgresTestCase):
+    def test_dedicated_group_covers_every_timeframe_strategy_and_auxiliary_pdf(self):
+        import os
+        from telegram_documents import deliver_document
+        store=TestStore()
+        with patch.dict(os.environ,TELEGRAM_BOT_TOKEN='123:fake',TELEGRAM_STOCK_REPORT_CHAT_ID='-5347004785'), \
+             patch('telegram_documents.send_document',return_value=42) as send, \
+             patch('telegram_routing.deliver_routed') as routed:
+            for frame in ('daily','weekly','monthly'):
+                for strategy in ('rsi','rsi-pb','pin-bars','bb-pin-bars',None):
+                    event=f'{frame}:{strategy}'
+                    self.assertEqual(deliver_document(store,event,'report.pdf',strategy,'Report',b'PDF'),'sent')
+                    self.assertEqual(deliver_document(store,event,'report.pdf',strategy,'Report',b'PDF'),'suppressed')
+            self.assertEqual(send.call_count,15)
+            self.assertTrue(all(c.args[1]=='-5347004785' for c in send.call_args_list))
+            self.assertTrue(all(c.kwargs['silent'] for c in send.call_args_list[1:]))
+            routed.assert_not_called()
+
+    def test_dedicated_destination_failure_does_not_fallback(self):
+        import os
+        from telegram_documents import deliver_document
+        from platform_app import TelegramDestinationError
+        store=TestStore()
+        with patch.dict(os.environ,TELEGRAM_BOT_TOKEN='123:fake',TELEGRAM_STOCK_REPORT_CHAT_ID='-5347004785'), \
+             patch('telegram_documents.send_document',side_effect=TelegramDestinationError('gone')) as send, \
+             patch('telegram_routing.deliver_routed') as routed:
+            with self.assertRaises(TelegramDestinationError):
+                deliver_document(store,'failed-report','coverage.pdf',None,'Report',b'PDF')
+            send.assert_called_once()
+            routed.assert_not_called()
+        with store.connect() as db:
+            self.assertIsNone(db.execute('SELECT outcome FROM telegram_delivery').fetchone()[0])
+
+    def test_invalid_dedicated_group_fails_without_sending(self):
+        import os
+        from telegram_documents import deliver_document
+        store=TestStore()
+        for value in ('5347004785','group-name','-0'):
+            with patch.dict(os.environ,TELEGRAM_STOCK_REPORT_CHAT_ID=value),patch('telegram_documents.send_document') as send:
+                with self.assertRaises(ValueError):
+                    deliver_document(store,'invalid','report.pdf','rsi','Report',b'PDF')
+                send.assert_not_called()
+
     def test_stock_route_general_fallback_and_repeat_suppression(self):
         import os
         from psycopg.types.json import Jsonb

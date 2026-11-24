@@ -1,6 +1,6 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-24** for the prepared NEAR 5m RSI ATR gate; **2026-11-23** for local stock-report schedules, daily RSI PDFs and market-cap metadata (not deployed); **2026-11-23** for additive NEAR routing (local, not deployed); **2026-11-22** for the prepared trend-only pin-bar correction; **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-24** for the prepared NEAR 5m RSI ATR gate; **2026-11-24** for exclusive periodic stock-PDF routing (local, not deployed); **2026-11-23** for verified stock-report schedules, daily RSI PDFs and market-cap metadata; **2026-11-23** for additive NEAR routing (local, not deployed); **2026-11-22** for the prepared trend-only pin-bar correction; **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
 ## NEAR 5m RSI large-candle exception — prepared locally (2026-11-24)
 
@@ -32,6 +32,57 @@ migration or RSI baseline reset is needed. This change is not yet deployed.
 Local verification: 99 backend regression tests passed against disposable Postgres,
 including current production routing; 16 UI tests and the static build passed.
 
+
+
+## Current Portfolio — verified activated (2026-11-24)
+
+Read-only Telegram API verification confirmed the user-supplied Current Portfolio
+group is `-5276778238`, with `idodiTradingBot` an administrator. Production managed
+configuration revision 51 is fully applied and enables CRWV, ALK, NVDA, ANT, AMAT
+and AUR on 4h, daily, weekly and monthly. All six enable RSI, Pin Bars and daily
+SMA crosses; all except ALK also enable RSI + PB. This change does not enable
+additional strategies or alter scan qualification. ANT remains subject to limited
+history following its recent enrollment.
+
+The local `telegram_portfolio.py` delivery hook adds copies to this group for
+those exact six canonical IDs and the four listed frames. Notification metadata
+is read from the relevant signal table; RSI uses its structured payload. Existing
+market and personal routing remains in place. Reports, demos, unknown notification
+types, other assets and lower timeframes are excluded. The example configuration
+is disabled: activation requires `telegram-portfolio.json` beside the runtime
+modules, enabled with a positive enrollment timestamp. Findings whose confirmation
+predates enrollment cannot be copied, including old queued findings. Membership
+is the latest user-supplied list, not every asset marked portfolio. Sunday updates
+replace the list; retained assets preserve enrollment and new assets receive a new
+`asset_enrolled_at` timestamp. Removed symbols stop receiving copies. No reply
+leaves the current list unchanged. The reminder is scheduled for Sundays at 09:00
+Asia/Jerusalem.
+
+Copies reuse `telegram_delivery.deliver` with the original event identity and
+separate chat destination for durable deduplication and retries, existing sound
+settings and shared dismissal behavior. A portfolio delivery RuntimeError leaves
+the event retryable after attempting existing groups. Worker ownership and
+retryable database exceptions propagate. No fallback sends portfolio-only copies
+to another destination. A portfolio send may succeed before another destination
+fails; the normal ledger prevents sending its copy twice on retry. Trend-pin-bar
+copies, if such a strategy is enabled in future, reject retired reversal findings.
+
+Verification: five local and staged-production unit tests cover exact assets/frames, enrollment,
+notification strategy metadata, report/demo exclusion, independent shared delivery
+on portfolio failure and worker ownership propagation. Telegram membership and
+managed configuration were inspected without sending alerts or starting a scanner.
+Publication was authorized and the existing Linux worker was updated at 10:12
+Israel time on November 24. `PORTFOLIO_DEPLOYMENT.json` records the source commit,
+base routing hash, deployed hashes and backup. Both deployed file hashes matched;
+the worker is active and managed revision 51 remains fully applied. A live-config
+smoke test using mocked delivery accepted all 24 symbol/frame combinations and
+rejected lower frames, other symbols and pre-enrollment findings without writes,
+alerts or orders. Five tests passed against the staged production module. The
+production routing retains its existing fixes; `scripts/patch-portfolio-routing.py`
+applies only this hook. Natural portfolio delivery has not yet been observed;
+GitHub checks are verified separately against the final pushed SHA.
+Sources: `telegram_portfolio.py`, `telegram_routing.py`
+(`deliver_routed`), `telegram-portfolio.example.json`, `test_telegram_portfolio.py`.
 
 ## S&P 500 PDF reports — local update, production not yet verified (2026-11-23)
 
@@ -95,10 +146,23 @@ Sources: `stock_reports.schedules/period/new_run/evaluate/process/artifacts/elig
   when at least an hour remains, otherwise produce disclosed unavailable coverage.
   Expired unfinished runs become `missed`; no historical catch-up runs are created.
   Already saved legacy runs/PDFs keep their frozen contents and original identity.
-- Routing, personal preferences, fallback to General, dry-run behavior and notification
-  sound limits remain those of `telegram_documents`. BB Pin Bars uses the Pin Bars route;
-  combined no-match/coverage documents use General. Delivery retains the existing
-  at-least-once limitation after ambiguous network failures.
+- **Dedicated PDF routing (local change, not yet deployed on 2026-11-24):** when
+  `TELEGRAM_STOCK_REPORT_CHAT_ID` is set, every periodic stock PDF goes exclusively
+  to that group: daily/weekly/monthly, all strategies/directions, and no-match/coverage
+  PDFs. This bypasses strategy/General and personal/subscription fan-out for PDFs only;
+  ordinary signal alert routing is unchanged. A failed dedicated destination is retried
+  under the existing report deadline and never falls back to another group. The shared
+  delivery ledger, worker ownership check, one-sound-per-minute cap and report dry-run
+  gates remain. Empty configuration preserves legacy PDF routing. Invalid positive or
+  nonnumeric IDs fail before sending. Previously delivered documents are not replayed.
+  Read-only Telegram `getChat` verified the requested group as **Periodic Stocks Reports**,
+  Bot API chat ID **-5347004785**, type `group`, with document sending allowed.
+  The positive exported ID 5347004785 is not the Bot API destination.
+  Source: `telegram_documents.deliver_document`, `telegram_delivery.deliver`.
+  Local verification: 42 report/schedule/delivery tests passed against disposable
+  Postgres with mocked Telegram, including all PDF categories, duplicate suppression,
+  the shared sound cap, invalid IDs and no fallback after destination failure.
+
 
 Deployment prerequisite: reapply `cloud/stock-reports.sql` as schema owner to allow
 `daily` in the existing run table; it preserves historical rows/documents and permissions.
@@ -108,6 +172,28 @@ mocked. The upgrade was rerun over the old timeframe constraint and retained sav
 Single-page and 100-stock multipage PDF previews were rendered and visually inspected.
 No production scanner was started and no test alerts/orders were sent.
 This section describes local code only; it does not claim this release is running in production.
+
+
+Verified production rollout (2026-11-23): source
+`35c180fc52fc0373383052a67d82588a7c2f7b41`, branch `codex/stock-report-schedules`,
+is installed at `trading-linux:/home/ido/apps/trading-bot-postgres`. This verification
+supersedes the pre-publication status above. The active runtime database is local
+PostgreSQL `trading_runtime`, not Supabase. The report migration preserved counts,
+content checksums, delivery flags and report configuration. A full database dump is
+at `/home/ido/stock-report-rollout-35c180f/trading_runtime-before.dump`; source backup:
+`/home/ido/apps/trading-source-backups/20261123T170815929713Z`.
+All installed runtime Git blobs matched the approved commit. Served scanner fingerprint
+`a06a2b6d08b98509` and unchanged UI `484da62cc65f7d4d` matched the source manifest.
+Both existing services were active; exactly one worker owner and the API's 401
+unauthenticated boundary were verified. Pure schedule/PDF smoke tests passed without
+persisting report rows, starting a scanner or sending test Telegram alerts/orders.
+A read-only FMP sample returned AAPL market cap dated 2026-11-23; this does not prove
+coverage for every constituent or future natural delivery.
+[Linux/Windows tests, builds and frozen-app smoke tests](https://github.com/idodidodi/trading-bot/actions/runs/45223092693)
+and [desktop checks](https://github.com/idodidodi/trading-bot/actions/runs/45223092615)
+passed on that exact SHA. The Cloudflare branch-preview check passed; production UI
+redeployment was unnecessary. Legacy executable publication stayed disabled.
+This rollout note is a local verification record, not another published source revision.
 
 ## Additive NEAR routing — prepared locally (2026-11-23)
 

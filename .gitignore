@@ -47,3 +47,6 @@ tmp/pdfs/
 # Clerk development credentials and local CLI state
 .env.local
 .clerk/
+
+# Private installation portfolio routing configuration
+telegram-portfolio.json
