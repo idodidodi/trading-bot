@@ -11,7 +11,7 @@ FRAMES=['5m','15m','30m','1h','4h','daily','weekly']
 
 def payload(**changes):
     return dict(asset='NEARUSD',timeframe='5m',signal_status='provisional',alert_timing='pivot_close',
-                confirmed_at=2000000,divergence_type='hidden')|changes
+                confirmed_at=2000000,divergence_type='hidden',near_rsi_atr={'version':'near-5m-rsi-atr14-v1','qualifies':True})|changes
 
 
 class ScopeTests(unittest.TestCase):
@@ -46,6 +46,17 @@ class DeliveryTests(PostgresTestCase):
         with self.store.connect() as db:
             db.execute("INSERT INTO telegram_asset_subscriptions VALUES('5412729128','NEARUSD',%s,true,to_timestamp(1000))",(FRAMES,))
         self.send=Mock(return_value=123)
+
+    def test_ordinary_five_minute_alerts_are_muted_but_large_candle_exception_sends(self):
+        for kind in ('regular','hidden'):
+            for direction in ('bullish','bearish'):
+                event='divergence:'+kind+direction
+                data=payload(divergence_type=kind,direction=direction,near_rsi_atr=None)
+                deliver_subscriptions(self.store,'unused','test',event,self.send,payload=data)
+        self.send.assert_not_called()
+        deliver_subscriptions(self.store,'unused','test','divergence:allowed',self.send,payload=payload())
+        deliver_subscriptions(self.store,'unused','test','divergence:allowed',self.send,payload=payload())
+        self.assertEqual(self.send.call_count,1)
 
     def test_new_rsi_timeframes_do_not_expand_other_strategies(self):
         from scanner import scan_once

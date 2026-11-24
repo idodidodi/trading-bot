@@ -33,7 +33,7 @@ class RedundantRoutingTests(PostgresTestCase):
         for frame in FRAMES:
             self.send.reset_mock()
             self.rsi(frame);self.rsi(frame)
-            self.assertCountEqual(self.chats(),['-2'] if frame=='5m' else ['-1','-2','-3'])
+            self.assertCountEqual(self.chats(),[] if frame=='5m' else ['-1','-2','-3'])
     def test_pin_strategies_and_no_duplicate_per_destination(self):
         for strategy in ('trend-pin-bars','pin-bars','bb-pin-bars'):
             self.send.reset_mock();self.pin(strategy);self.pin(strategy)

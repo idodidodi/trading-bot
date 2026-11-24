@@ -3,10 +3,11 @@ from functools import partial
 
 
 def eligible(subscription, payload):
+    from near_rsi_atr import allows
     chat, asset, frames, enrolled = subscription
     # Require the canonical asset ID added by the scanner. Never infer it from
     # a display name, substring, quote currency, or an old queued finding.
-    return (payload.get('asset') == asset
+    return (allows(payload) and payload.get('asset') == asset
             and payload.get('timeframe') in frames
             and payload.get('signal_status') == 'provisional'
             and payload.get('alert_timing') == 'pivot_close'

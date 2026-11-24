@@ -537,7 +537,8 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     context = ({'higher_timeframe_context':read_context(store,configured_asset,rules,now)}
                                if context_target(configured_asset) and timeframe=='5m' and not catchup else {})
                     from near_alerts import annotation
-                    new = sum(store.insert(validate_signal(s, signal_rules) | annotation(asset,candles,s['confirmed_at']) | {'asset': asset['id'], 'market': asset.get('market') or 'unknown', 'detected_at': now} | context, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
+                    from near_rsi_atr import annotation as atr_annotation
+                    new = sum(store.insert(validate_signal(s, signal_rules) | atr_annotation(asset,candles,s) | annotation(asset,candles,s['confirmed_at']) | {'asset': asset['id'], 'market': asset.get('market') or 'unknown', 'detected_at': now} | context, delivery_status='summarized' if catchup else 'pending',catchup_id=catchup if isinstance(catchup,str) else None) for s in pending)
                     with store.connect() as db:
                         from signal_service import reconcile_provisional
                         reconcile_provisional(db,source_id,timeframe,candles,signal_rules)

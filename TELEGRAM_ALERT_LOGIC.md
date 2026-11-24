@@ -1,6 +1,37 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-23** for local stock-report schedules, daily RSI PDFs and market-cap metadata (not deployed); **2026-11-23** for additive NEAR routing (local, not deployed); **2026-11-22** for the prepared trend-only pin-bar correction; **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-24** for the prepared NEAR 5m RSI ATR gate; **2026-11-23** for local stock-report schedules, daily RSI PDFs and market-cap metadata (not deployed); **2026-11-23** for additive NEAR routing (local, not deployed); **2026-11-22** for the prepared trend-only pin-bar correction; **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+
+## NEAR 5m RSI large-candle exception — prepared locally (2026-11-24)
+
+For the NEAR group's plain RSI alerts only, the selected 5m checkbox now means
+exception-only delivery: the divergence's second pivot candle must either itself
+have a high-low range of at least 3× preceding ATR(14), or immediately follow a
+candle meeting that threshold. Both bullish/bearish and regular/hidden divergences
+use the same gate. RSI remains 14 close. Other frames, assets, pin-bar alerts and
+Wyckoff annotations are unchanged. The checkbox stays selected to enable exceptions;
+unchecking it suppresses exceptions too. Settings explains this behavior.
+
+`near_rsi_atr.annotation` computes Wilder ATR from true ranges: seed with 14 ranges,
+then `(13 * previous ATR + TR) / 14`. True range includes the previous close;
+the initial available candle uses its high-low range. Compare each candidate's
+high-low range against ATR **before** that candidate, excluding its own true range.
+Equality at 3× qualifies. Only closed candles through the divergence close are used;
+no future data, direction/color requirement or longer lookback exception is added.
+A gap resets ATR history and a non-adjacent prior candle cannot qualify. Insufficient
+history or zero ATR does not qualify. Evidence records the qualifying candle,
+ATR, range, ratio and whether it is the signal candle or its immediate predecessor.
+
+`scanner.scan_once` attaches this evidence after signal validation, before storage.
+`telegram_asset_subscriptions.eligible` calls `near_rsi_atr.allows` during delivery:
+missing, old-version or nonqualifying evidence suppresses the 5m RSI alert, including
+previously queued retries. Qualified alerts keep existing enrollment, destination
+routing and deduplication. Findings and RSI scans remain available to other consumers;
+5m scanning is still necessary to find exceptional alerts. No subscription/schema
+migration or RSI baseline reset is needed. This change is not yet deployed.
+Local verification: 99 backend regression tests passed against disposable Postgres,
+including current production routing; 16 UI tests and the static build passed.
+
 
 ## S&P 500 PDF reports — local update, production not yet verified (2026-11-23)
 

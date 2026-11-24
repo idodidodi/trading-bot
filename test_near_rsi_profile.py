@@ -84,6 +84,9 @@ class ProfileDatabaseTests(PostgresTestCase):
         self.assertTrue(rows)
         payloads=[json.loads(r[0]) for r in rows]
         self.assertTrue(all(p['rules']['rsi_period']==14 for p in payloads))
+        from near_rsi_atr import annotation
+        for payload in payloads:
+            self.assertEqual(payload['near_rsi_atr'],annotation(config['assets'][0],bars[:77],payload)['near_rsi_atr'])
         self.assertEqual(len(payloads),len({(p['pivot1'],p['pivot2'],p['direction'],p.get('divergence_type')) for p in payloads}))
 
     def test_old_pending_and_retry_cancelled_without_send(self):
@@ -109,6 +112,11 @@ class ProfileDatabaseTests(PostgresTestCase):
         rules=for_symbol(load_rules(),'NEARUSD','5m')
         with patch('scanner.indicators',return_value=values):
             signal=detect(bars,rules,'kraken:Kraken:NEAR/USD','5m',provisional=True,include_hidden=True)[0]|{'asset':'NEARUSD'}
+        from dataclasses import replace
+        from near_rsi_atr import annotation
+        bars=[replace(c,high=c.high+100,low=c.low-100) if c.start==signal['pivot2'] else c for c in bars]
+        signal.update(annotation({'id':'NEARUSD'},bars,signal))
+        self.assertTrue(signal['near_rsi_atr']['qualifies'])
         send=Mock(return_value=42)
         for offset in (0,1,2):
             comparison=signal|{'pivot1':signal['pivot1']+offset}
