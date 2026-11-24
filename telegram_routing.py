@@ -108,6 +108,18 @@ def signal_timeframe(store, payload=None, notification_key=None):
 
 
 def deliver_routed(store, token, general, text, event, send, silent=False, payload=None, notification_key=None):
+    from telegram_portfolio import deliver_portfolio
+    from telegram_delivery import DeliveryPending
+    from postgres_store import WorkerOwned, RETRYABLE
+    portfolio_pending = None
+    try:
+        deliver_portfolio(store, token, text, event, send, silent=silent,
+                          payload=payload, notification_key=notification_key)
+    except (WorkerOwned, *RETRYABLE):
+        raise
+    except RuntimeError as exc:
+        # A portfolio outage must not prevent the existing groups' copies.
+        portfolio_pending = exc
     # Scanning and subscriber publication remain independent of Telegram delivery.
     if signal_timeframe(store, payload, notification_key) == '5m':
         return 'suppressed'
@@ -133,4 +145,6 @@ def deliver_routed(store, token, general, text, event, send, silent=False, paylo
             from chasing_runtime import enroll_automatic
             enroll_automatic(store,payload)
         deliver_personal(store, token, text, event, send, silent=silent, payload=payload)
+    if portfolio_pending:
+        raise DeliveryPending('Portfolio delivery needs retry') from portfolio_pending
     return outcome

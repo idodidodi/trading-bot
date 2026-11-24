@@ -2,6 +2,49 @@
 
 Reviewed **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
+## Current Portfolio — prepared locally, not activated (2026-11-24)
+
+Read-only Telegram API verification confirmed the user-supplied Current Portfolio
+group is `-5276778238`, with `idodiTradingBot` an administrator. Production managed
+configuration revision 51 is fully applied and enables CRWV, ALK, NVDA, ANT, AMAT
+and AUR on 4h, daily, weekly and monthly. All six enable RSI, Pin Bars and daily
+SMA crosses; all except ALK also enable RSI + PB. This change does not enable
+additional strategies or alter scan qualification. ANT remains subject to limited
+history following its recent enrollment.
+
+The local `telegram_portfolio.py` delivery hook adds copies to this group for
+those exact six canonical IDs and the four listed frames. Notification metadata
+is read from the relevant signal table; RSI uses its structured payload. Existing
+market and personal routing remains in place. Reports, demos, unknown notification
+types, other assets and lower timeframes are excluded. The example configuration
+is disabled: activation requires `telegram-portfolio.json` beside the runtime
+modules, enabled with a positive enrollment timestamp. Findings whose confirmation
+predates enrollment cannot be copied, including old queued findings. Membership
+is the latest user-supplied list, not every asset marked portfolio. Sunday updates
+replace the list; retained assets preserve enrollment and new assets receive a new
+`asset_enrolled_at` timestamp. Removed symbols stop receiving copies. No reply
+leaves the current list unchanged. The reminder is scheduled for Sundays at 09:00
+Asia/Jerusalem.
+
+Copies reuse `telegram_delivery.deliver` with the original event identity and
+separate chat destination for durable deduplication and retries, existing sound
+settings and shared dismissal behavior. A portfolio delivery RuntimeError leaves
+the event retryable after attempting existing groups. Worker ownership and
+retryable database exceptions propagate. No fallback sends portfolio-only copies
+to another destination. A portfolio send may succeed before another destination
+fails; the normal ledger prevents sending its copy twice on retry. Trend-pin-bar
+copies, if such a strategy is enabled in future, reject retired reversal findings.
+
+Verification: five local unit tests cover exact assets/frames, enrollment,
+notification strategy metadata, report/demo exclusion, independent shared delivery
+on portfolio failure and worker ownership propagation. Telegram membership and
+managed configuration were inspected without sending alerts or starting a scanner.
+Publication was authorized on November 24. Deployment and natural production
+delivery remain unverified until the runtime checks complete. The production
+routing module retains its existing fixes; `scripts/patch-portfolio-routing.py`
+applies only the hook from this change. Sources: `telegram_portfolio.py`, `telegram_routing.py`
+(`deliver_routed`), `telegram-portfolio.example.json`, `test_telegram_portfolio.py`.
+
 ## Configuration read freshness
 
 `managed_assets.get` checks both one-time migration flags and the current configuration content hash on every call. Unchanged payloads reuse a process-local parsed copy, while revisions and applied revisions are always read freshly. Changes to payload content are fetched immediately even if an external writer leaves the revision unchanged. Returned configurations are independent copies. Database failures propagate; there is no time-based cache or stale fallback. The migration lock/recheck, explicit strategy opt-outs, worker ownership and effect checks remain authoritative. Sources: `managed_assets.get`, `managed_assets.migrate_rsi_pb`, `managed_assets.migrate_ma_cross`, `postgres_store.assert_worker`.

@@ -43,3 +43,5 @@ tmp/pdfs/
 
 # Private retention archives and recovery manifests
 .retention/
+
+telegram-portfolio.json
