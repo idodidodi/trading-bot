@@ -6,12 +6,19 @@ from market_calendar import NY, stock_close, stock_trading_day, previous_session
 FRAMES = ('15m', '30m', '1h', '4h')
 MINUTES = dict(zip(FRAMES, (15, 30, 60, 240)))
 DIRECTIONS = ('bullish', 'bearish')
+# Historical SIP permits queries older than 15 minutes. Use a full extra
+# minute and only completed source minutes; this is not real-time data.
+DATA_DELAY_MS = 16 * 60_000
 GROUPS = {'higher': '-5596046632', 'lower': '-5462582401',
           'ready': '-5481883301', 'invalid': '-5517376122'}
 
 
 def millis(dt):
     return int(dt.timestamp()*1000)
+
+
+def data_cutoff(now):
+    return (now // 60_000) * 60_000 - DATA_DELAY_MS
 
 
 def cycles(now):
@@ -65,6 +72,8 @@ def emit(cycle, setup, kind, now, *, match=None, reason=None):
     cycle['events'].append(dict(id=identity, kind=kind, chat=GROUPS[kind],
         symbol=setup['symbol'], direction=setup['direction'], higher=cycle['frame'],
         higher_status=parent_status(cycle, now), observed_at=now, setup_id=setup['id'],
+        detected_at=cycle.get('wall_now', now), data_as_of=cycle.get('data_as_of'),
+        higher_close=cycle['close'],
         signal=match['signal'] if match else setup['signal'],
         lower=match['frame'] if match else None, reason=reason,
         match_id=match['id'] if match else None, lower_end=match['end'] if match else None,
@@ -142,23 +151,34 @@ def lower_observation(cycle, setup, frame, candle, signals, now, reason=None):
     emit(cycle, setup, 'lower', now, match=match)
 
 
-def message(event):
+def message(event, delivered_at=None):
     from zoneinfo import ZoneInfo
     def stamp(value):
         return datetime.fromtimestamp(value/1000, ZoneInfo('Asia/Jerusalem')).isoformat(timespec='minutes')
     titles = dict(higher='RSI HIGHER TF REACHED', lower='RSI LOWER TF REACHED',
                   ready='STOCK RSI SETUP READY', invalid='RSI STOCK SETUP INVALIDATED')
     s = event['signal']
-    lines = [titles[event['kind']], f"{event['symbol']} | {event['direction'].upper()}",
-             f"Higher: {event['higher']} — {event['higher_status']}"]
+    delayed = event.get('data_as_of') is not None
+    wall_now = delivered_at if delivered_at is not None else event.get('detected_at', event['observed_at'])
+    lines = [titles[event['kind']] + (' — DELAYED DATA' if delayed else ''),
+             f"{event['symbol']} | {event['direction'].upper()}",
+             f"Higher: {event['higher']} — {event['higher_status']}" + (' in delayed data' if delayed else '')]
     if event['lower']:
-        lines.append(f"Lower: {event['lower']} — {event['lower_status']}")
+        lines.append(f"Lower: {event['lower']} — {event['lower_status']}" + (' in delayed data' if delayed else ''))
+    if delayed:
+        lines += [f"Alpaca SIP delayed: 16-minute buffer + polling/delivery time. Data cutoff {stamp(event['data_as_of'])}.",
+                  f"Detected {stamp(event['detected_at'])}; sent {stamp(wall_now)}.",
+                  'Higher candle by clock: ' + ('CLOSED' if wall_now >= event['higher_close'] else 'PROVISIONAL') + '.']
+        if event['lower']:
+            lines.append('Lower candle by clock: ' + ('CLOSED' if wall_now >= event['lower_end'] else 'PROVISIONAL') + '.')
+        if event['kind'] == 'lower' and wall_now >= event['lower_end']:
+            lines.append('Historical provisional observation; this candle has already closed by clock. Await delayed close validation.')
     if event.get('reason'):
         lines.append(event['reason'])
     lines += [f"P1 {stamp(s['pivot1'])}: close {s['price1']:.4f}, RSI {s['rsi1']:.2f}",
               f"P2 {stamp(s['pivot2'])}: close {s['price2']:.4f}, RSI {s['rsi2']:.2f}",
               'Alpaca SIP, split-adjusted; regular-session higher candles; extended-hours lower candles.',
-              f"Observed {stamp(event['observed_at'])} | Setup {event['setup_id']}"]
+              f"{'Evaluated at data time' if delayed else 'Observed'} {stamp(event['observed_at'])} | Setup {event['setup_id']}"]
     if event['kind'] == 'ready':
         lines.append('Lower candle closed with divergence intact; no right-hand pivot confirmation required.')
     return '\n'.join(lines)

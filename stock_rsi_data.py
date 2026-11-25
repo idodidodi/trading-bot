@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, time, timezone
 import math
 import re
 from market_calendar import NY, stock_trading_day
-from stock_rsi_watch import millis, MINUTES
+from stock_rsi_watch import millis, MINUTES, data_cutoff
 
 
 def universe():
@@ -58,9 +58,7 @@ def universe():
 def parent_histories(symbols, cycle, now):
     from stock_report_data import fetch_preclose
     # Freeze at the regular close; later extended-hours data cannot alter it.
-    cutoff = min(now-60_000, cycle['close'])
-    if now >= cycle['close'] and cutoff < cycle['close']:
-        raise ValueError('Waiting for regular-session closing data')
+    cutoff = min(data_cutoff(now), cycle['close'])
     run = dict(frame=cycle['frame'], cutoff=cutoff,
                period={'start': cycle['period_start']}, feed='sip')
     histories = fetch_preclose(symbols, run)
@@ -126,7 +124,7 @@ def aggregate(bars, frame, cutoff):
 
 def lower_histories(symbol, now, cache):
     """Native completed 15m bars plus completed minute bars in the forming 15m."""
-    cutoff = (now//60_000-1)*60_000  # allow late minute updates before validation
+    cutoff = data_cutoff(now)
     day = datetime.fromtimestamp(now/1000, NY).date().isoformat()
     if cache.get('_session_date') != day:
         cache.clear()  # refresh split adjustments at every New York date boundary

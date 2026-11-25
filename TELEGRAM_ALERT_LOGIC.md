@@ -1,10 +1,11 @@
 # Telegram alert logic — canonical reference
 
-## Stock RSI higher/lower-timeframe watches — local implementation, 2026-11-25
+## Stock RSI higher/lower-timeframe watches — delayed SIP update local, 2026-11-25
 
 Last reviewed **2026-11-25** against `stock_rsi_watch.py`, `stock_rsi_data.py`,
 `stock_rsi_runtime.py`, `platform_app.main`, and `cloud/stock-rsi-watch.sql`.
-This watch is not deployed or enabled. Existing periodic PDF schedules, RSI + PB
+The earlier implementation is deployed with the watch disabled; the delayed-SIP
+update described below is local and has not been published or enabled. Existing periodic PDF schedules, RSI + PB
 PDFs, report destination, portfolio routes and ordinary scanner alerts are unchanged.
 
 ### Schedule and candle definitions
@@ -22,17 +23,25 @@ PDFs, report destination, portfolio routes and ordinary scanner alerts are uncha
   Unscheduled exchange closures require a calendar update.
 - Higher-timeframe discovery uses the current daily/weekly candle only, while
   provisional. The parent is re-evaluated at the regular close, then frozen closed;
-  post-market trades do not extend it. New parents are not admitted after that close.
+  post-market trades do not extend it. New parents are not admitted once the delayed
+  data cutoff reaches that close. This allows delivery of a pre-close observation
+  during the first 16 minutes after the wall-clock close, explicitly marked delayed.
 - Lower timeframes are **15m, 30m, 1h, 4h**, independently, in the same direction.
   Use Alpaca SIP split-adjusted data, regular plus 04:00–20:00 New York extended
   sessions. Clock-aligned 4h buckets are 04–08, 08–12, 12–16 and 16–20; 1h/30m/15m
   align to local clock boundaries. No overnight/weekend prices are invented.
   Tracking persists through closed hours and resumes when actual bars are available.
 - Completed native 15m bars plus completed minutes construct provisional lower
-  candles. A one-minute data watermark permits late bar updates. Missing/stale
+  candles. All watch requests use explicit historical `feed=sip`, split adjustment,
+  and a watermark of `floor(wall clock to minute) - 16 minutes`, retaining a
+  one-minute buffer beyond the free historical SIP restriction. Missing/stale
   endings (over two minutes) suppress evaluation; a closing candle is evaluated
   only once the watermark reaches its end. Cached split-adjusted history is
   refreshed at each New York date boundary. At least 250 candles are required.
+  Freshness is measured relative to the delayed watermark, not the wall clock.
+  No IEX or real-time fallback is used. Schedule start/expiry and delivery shutdown
+  remain wall-clock based: daily stops 15 minutes before next open, weekly at next
+  open. Consequently the final delayed portion at expiry is not reported later.
 
 ### Qualification, limits and messages
 
@@ -46,9 +55,10 @@ that a right-hand pivot or the higher candle has necessarily closed.
 One parent is admitted per symbol/direction/cycle. Choose its most recent qualifying
 P1 deterministically; recheck that exact pair. Lower events also retain their exact
 pair, but several qualifying P1s in one P2 candle count as one lower match. A candle
-already closed when first observed cannot enter the provisional stage. A forming
+already closed at the data watermark when first observed cannot enter the provisional stage. A forming
 candle may have started before its parent watch, but its first observation must
-follow admission and it must still be open.
+follow admission in data time and it must still be open in that delayed snapshot.
+It may already be closed by wall clock, particularly on the 15m timeframe.
 
 The target is five distinct validated stocks per direction per cycle. Repeated
 timeframes/candles on one stock do not increase that count. Stop admitting parents
@@ -70,12 +80,19 @@ Dedicated destinations (exported positive IDs verified via read-only Telegram
 | Exact lower pair valid at close | Stock RSI Setup Ready | `-5481883301` |
 | Higher or lower invalidation, with failed condition | RSI Stock Setup Invalidated | `-5517376122` |
 
-Lower and ready messages show higher **PROVISIONAL/CLOSED** independently of lower
-status, with observation time, pivot prices/RSI and a shared parent identifier.
+Every newly generated watch alert (higher, lower, ready and invalidation) has
+**DELAYED DATA** in its title and states the **16-minute buffer plus polling/delivery
+time**. It shows the delayed data cutoff, detection timestamp and send timestamp
+in Israel time with UTC offset. Higher/lower **PROVISIONAL/CLOSED in delayed data**
+is separate from each candle's status by clock at delivery. A lower provisional
+observation arriving after wall-clock close explicitly says it is historical and
+awaits delayed close validation. Pivot prices/RSI and the shared parent identifier
+remain included. The data cutoff is the permitted evaluation boundary, not a claim
+that every symbol traded at that exact instant; existing freshness guards still apply.
 Invalidations explain failed price, RSI, pivot or band-touch conditions. Unavailable
 data is never an invalidation or a no-match. The third group receives only validated
 closures whose provisional lower message was delivered. If delivery fails until
-the lower candle has closed, skip that stale provisional message and its ready
+the delayed watermark reaches the lower candle's close, skip that stale provisional message and its ready
 message. Successful Telegram acceptance followed by a lost commit remains an
 at-least-once edge case, as with existing delivery.
 
@@ -109,16 +126,49 @@ remain effective. Worker ownership loss propagates to the shared shutdown guard.
 Apply the SQL migration explicitly, then opt in with `STOCK_RSI_WATCH_ENABLED=true`
 only after access and group permissions are verified. The default is false.
 Read-only checks on 2026-11-25 found **recent Alpaca SIP access rejected** and **FMP
-company-screener subscription access rejected**. Do not activate the complete live
-workflow until those data requirements are resolved. No test messages were sent.
+company-screener subscription access rejected**. Subsequent authenticated GET-only
+checks using production credentials verified delayed SIP access (HTTP 200): AAPL,
+MSFT and SPY on November 23–24 included pre-market from 04:00 NY and after-hours
+through 19:59 (MSFT November 24 ended 19:56). Today's window ending 17 minutes
+before the request returned 121 minute bars per symbol. History requests returned
+551 daily and 1,359 hourly bars per symbol. These samples establish account access,
+not full-universe completeness or every timeframe's signal accuracy. Broad Nasdaq
+and other US coverage remains limited by FMP entitlement; index fallback records
+that limitation. No test messages were sent. The delayed implementation can be
+enabled only after publication approval and source/deployment verification.
 Local verification uses `test_stock_rsi_watch.py` with mocked providers/Telegram
 and a disposable loopback PostgreSQL database; it does not establish production
 signal accuracy or actual delivery readiness.
+Delayed-SIP local verification on 2026-11-25: **68 tests passed**, including all
+28 watch tests and Alpaca/report/delivery regressions, using a newly created
+disposable loopback PostgreSQL database with mocked providers and Telegram.
+New regressions cover delayed query cutoffs, higher close deferral, post-close
+discovery of delayed provisional data, 15m provisional-to-ready transitions,
+message labels and delayed delivery deadlines versus wall-clock cycle expiry.
 Verification on 2026-11-25: 100 targeted scanner/report/watch/delivery tests passed;
 the 23 watch tests passed again after final data-validation and delivery-expiry
 changes. Compilation and `git diff --check` passed. Read-only `getChatMember`
 confirmed the bot is an administrator in the first two groups and a member in the
 ready/invalidation groups; actual end-to-end delivery has not been exercised.
+
+Post-publication receipt (recorded locally after the verified rollout): commit
+`0bfc1ff880112fd2a0a0b17cffe8b5a166367703`, branch `codex/stock-rsi-watch`, deployed
+to `trading-linux:/home/ido/apps/trading-bot-postgres` on 2026-11-25. Exact-SHA
+[Linux/Windows tests, builds and frozen-app smoke tests](https://github.com/idodidodi/trading-bot/actions/runs/45595851818)
+and [desktop builds](https://github.com/idodidodi/trading-bot/actions/runs/45595852089)
+passed; the Cloudflare branch check passed. Legacy executable publication remained
+intentionally skipped. No production UI deployment was requested or performed.
+Every installed runtime blob matched the commit. Health and source manifest matched
+scanner `94697a0433fdd8aa`, UI `6097720c5ac73e84`; exactly one worker held ownership.
+The additive watch schema and worker grants were verified, with zero watch rows.
+`STOCK_RSI_WATCH_ENABLED=false` is explicitly set in the production environment;
+the disabled worker path and sixteen simulated ready events passed without live
+sends or production signal writes. Unauthenticated API access returned the expected
+401. Source rollback backup:
+`/home/ido/apps/trading-source-backups/20261125T103731594047Z`.
+The rollout bundle, private environment backup, schema backup and verification
+scripts are in `/home/ido/stock-rsi-watch-rollout`. Activation remains blocked on
+the data entitlements described above.
 
 Reviewed **2026-11-24** for the prepared NEAR 5m RSI ATR gate; **2026-11-24** for exclusive periodic stock-PDF routing (local, not deployed); **2026-11-23** for verified stock-report schedules, daily RSI PDFs and market-cap metadata; **2026-11-23** for additive NEAR routing (local, not deployed); **2026-11-22** for the prepared trend-only pin-bar correction; **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 

@@ -264,4 +264,86 @@ class DataTests(unittest.TestCase):
         self.assertEqual(c['events'][2]['kind'],'ready')
 
 
+class DelayedTests(unittest.TestCase):
+    def test_cutoff_and_lower_queries_avoid_recent_sip(self):
+        from stock_rsi_data import lower_histories
+        now=ms('2026-11-24T17:12')+42000
+        cutoff=ms('2026-11-24T16:56')
+        self.assertEqual(w.data_cutoff(now),cutoff)
+        with patch('stock_rsi_data.request_bars',return_value=[]) as fetch:
+            _,_,actual=lower_histories('FAKE',now,{})
+        self.assertEqual(actual,cutoff)
+        self.assertTrue(all(call.args[3]==cutoff for call in fetch.call_args_list))
+
+    def test_parent_waits_for_delayed_close(self):
+        from stock_rsi_data import parent_histories
+        c,now=cycle();s=w.admit(c,'FAKE',signal(c['period_start']),now)
+        for wall,closed in [(c['close']+15*60000,False),(c['close']+16*60000,True)]:
+            as_of=w.data_cutoff(wall)
+            cutoff=min(as_of,c['close'])
+            bar=Candle(c['period_start'],cutoff,100,102,94,95)
+            with patch('stock_report_data.fetch_preclose',return_value={'FAKE':[bar]}) as fetch:
+                self.assertTrue(parent_histories(['FAKE'],c,wall)['FAKE'])
+            self.assertEqual(fetch.call_args.args[1]['cutoff'],cutoff)
+            w.recheck_parent(c,s,[s['signal']],as_of)
+            self.assertEqual(s['closed_checked'],closed)
+
+    def test_provisional_then_ready_after_wall_close(self):
+        c,now=cycle();s=w.admit(c,'FAKE',signal(c['period_start']),now)
+        s['closed_checked']=True
+        start=ms('2026-11-20T16:00')
+        bar=Candle(start,start+900000,100,102,94,95)
+        for wall,cutoff,expected in [(start+20*60000,start+4*60000,'lower'),
+                                     (bar.end+16*60000,bar.end,'ready')]:
+            piece=Candle(start,min(cutoff,bar.end),100,102,94,95)
+            with patch('stock_rsi_data.lower_histories',return_value=({'15m':[bar]},[piece],cutoff)), \
+                 patch('stock_rsi_runtime.signals',return_value=[signal(start)]):
+                runtime.update_tracking(c,wall,{})
+            self.assertEqual(c['events'][-1]['kind'],expected)
+            event=c['events'][-1]
+            self.assertEqual(event['data_as_of'],cutoff)
+            self.assertEqual(event['detected_at'],wall)
+            text=w.message(event,wall)
+            self.assertIn('DELAYED DATA',text)
+            self.assertIn('Lower candle by clock: CLOSED',text)
+            self.assertIn('16-minute buffer',text)
+            if expected=='lower':
+                self.assertIn('PROVISIONAL in delayed data',text)
+                self.assertIn('Historical provisional observation',text)
+            else:
+                self.assertIn('CLOSED in delayed data',text)
+        self.assertEqual(c['counts']['bullish'],1)
+
+    def test_discovery_uses_data_clock_after_regular_close(self):
+        c,now=cycle()
+        c['universe']={'tiers':[[dict(symbol='FAKE',market_cap=3e9)]]}
+        wall=c['close']+10*60000
+        with patch('stock_rsi_data.parent_histories',return_value={'FAKE':[]}), \
+             patch('stock_rsi_runtime.evaluate_parent',return_value=[signal(c['period_start'])]):
+            runtime.discover(c,wall)
+        event=c['events'][0]
+        self.assertEqual(event['higher_status'],'PROVISIONAL')
+        self.assertEqual(event['data_as_of'],c['close']-6*60000)
+        self.assertIn('Higher candle by clock: CLOSED',w.message(event))
+
+    def test_delivery_deadline_uses_data_clock_but_cycle_expiry_is_wall_clock(self):
+        c,now=cycle();s=w.admit(c,'FAKE',signal(c['period_start']),now)
+        c['events'][0]['delivered']=True
+        bar=Candle(now,now+900000,100,102,94,95)
+        c.update(wall_now=now+w.DATA_DELAY_MS,data_as_of=now)
+        w.lower_observation(c,s,'15m',bar,[signal(now)],now)
+        with patch('local_settings.delivery_dry_run',return_value=False), \
+             patch('telegram_delivery.deliver',return_value='sent') as send, patch.object(runtime,'save'):
+            runtime.flush(Mock(),c,'fake',now+w.DATA_DELAY_MS)
+            self.assertEqual(send.call_count,1)
+            self.assertIn('DELAYED DATA',send.call_args.args[3])
+            c['events'][-1]['delivered']=False
+            runtime.flush(Mock(),c,'fake',bar.end+w.DATA_DELAY_MS)
+            self.assertEqual(send.call_count,1)
+            self.assertEqual(c['events'][-1]['delivered'],'expired-before-provisional-delivery')
+            c['events'][-1]['delivered']=False
+            runtime.flush(Mock(),c,'fake',c['expires'])
+            self.assertEqual(c['events'][-1]['delivered'],'expired')
+
+
 if __name__=='__main__':unittest.main()

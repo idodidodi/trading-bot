@@ -60,6 +60,8 @@ def invalid_reason(bars, old, rules, label):
 
 def update_tracking(cycle, now, cache):
     from stock_rsi_data import parent_histories, lower_histories, fresh
+    as_of = watch.data_cutoff(now)
+    cycle.update(wall_now=now, data_as_of=as_of)
     active = [s for s in cycle['setups'].values() if s['valid']]
     pending_parents = sorted({s['symbol'] for s in active if not s['closed_checked']})
     available = set()
@@ -81,7 +83,7 @@ def update_tracking(cycle, now, cache):
                 continue
             reason = None if any(watch.same_pair(s,setup['signal']) for s in found) else invalid_reason(
                 histories[symbol], setup['signal'], cycle['rules'], 'Higher-timeframe setup invalidated')
-            watch.recheck_parent(cycle, setup, found, now, reason)
+            watch.recheck_parent(cycle, setup, found, as_of, reason)
             available.add(setup['id'])
     for setup in active:
         if not setup['valid'] or not (setup['closed_checked'] or setup['id'] in available):
@@ -99,15 +101,13 @@ def update_tracking(cycle, now, cache):
                 for index, candle in enumerate(bars):
                     if candle.start not in wanted or not fresh(candle, pieces, cutoff):
                         continue
-                    # Do not validate the final minute until it has actually arrived.
-                    if cutoff < candle.end <= now:
-                        continue
+                    # Lifecycle closure follows available data, not wall time.
                     found = signals(bars[:index+1], cycle['rules'], setup['symbol'], frame)
                     prior = next((m for m in setup['matches'].values() if m['frame']==frame and m['start']==candle.start),None)
                     reason = None
                     if prior and not any(watch.same_pair(s,prior['signal']) for s in found):
                         reason = invalid_reason(bars[:index+1], prior['signal'], cycle['rules'], 'Lower-timeframe setup invalidated')
-                    watch.lower_observation(cycle, setup, frame, candle, found, now, reason)
+                    watch.lower_observation(cycle, setup, frame, candle, found, cutoff, reason)
             cycle['coverage'][setup['symbol']] = 'tracked'
         except (OSError, ValueError, KeyError) as exc:
             cycle['coverage'][setup['symbol']] = str(exc)
@@ -115,7 +115,9 @@ def update_tracking(cycle, now, cache):
 
 def discover(cycle, now):
     from stock_rsi_data import universe, parent_histories
-    if now >= cycle['close'] or all(v >= 5 for v in cycle['counts'].values()):
+    as_of = watch.data_cutoff(now)
+    cycle.update(wall_now=now, data_as_of=as_of)
+    if as_of >= cycle['close'] or all(v >= 5 for v in cycle['counts'].values()):
         return
     if 'universe' not in cycle:
         cycle['universe'] = universe()
@@ -133,7 +135,7 @@ def discover(cycle, now):
             for direction in watch.DIRECTIONS:
                 matches = [s for s in found if s['direction'] == direction]
                 if matches:
-                    watch.admit(cycle, symbol, max(matches, key=lambda s:s['pivot1']), now, row['market_cap'])
+                    watch.admit(cycle, symbol, max(matches, key=lambda s:s['pivot1']), as_of, row['market_cap'])
             cycle['coverage'][symbol] = 'higher match' if found else 'no higher match'
         except (KeyError, ValueError) as exc:
             cycle['coverage'][symbol] = str(exc)
@@ -152,7 +154,8 @@ def flush(store, cycle, token, now):
         if now >= cycle['expires']:
             event['delivered'] = 'expired'
             continue
-        if event['kind'] == 'lower' and now >= event['lower_end']:
+        delivery_clock = watch.data_cutoff(now) if event.get('data_as_of') is not None else now
+        if event['kind'] == 'lower' and delivery_clock >= event['lower_end']:
             event['delivered'] = 'expired-before-provisional-delivery'
             continue
         if event['kind'] == 'ready' and not any(e['kind'] == 'lower' and
@@ -161,7 +164,7 @@ def flush(store, cycle, token, now):
             continue
         # Maintain stage order through failures/restarts; the ledger handles a
         # crash after Telegram acceptance but before this cycle checkpoint.
-        result = deliver(store, token, event['chat'], watch.message(event),
+        result = deliver(store, token, event['chat'], watch.message(event, now),
                          'stock-rsi-watch:'+event['id'], send_telegram)
         if result not in ('sent', 'suppressed'):
             break
