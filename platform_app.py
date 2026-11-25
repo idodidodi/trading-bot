@@ -698,6 +698,9 @@ def main():
         prepare_store(store)
         scanner_thread = threading.Thread(target=resilient_worker(scanner_worker, 'scanner'), args=(store, config, rules, stop), daemon=True)
         scanner_thread.start()
+        from stock_rsi_runtime import worker as stock_rsi_worker
+        threading.Thread(target=resilient_worker(stock_rsi_worker, 'stock-rsi-watch'),
+            args=(store, rules, token, dry_run, stop), name='stock-rsi-watch', daemon=True).start()
         if os.environ.get("COLMEX_FILES_DIR"):
             from colmex_runtime import worker as colmex_worker
             colmex_thread = threading.Thread(target=resilient_worker(colmex_worker, "colmex"),
