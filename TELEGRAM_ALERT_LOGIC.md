@@ -31,7 +31,7 @@ NEAR dedicated RSI and trend-pin-bar copies use the payload timeframe through `t
 The watch worker reevaluates preferences on each delivery attempt. Lower,
 ready and lower-invalidation events use `event.lower`; parent-only events use
 `event.higher`. A failed preference read leaves delivery retryable.
-Apply `cloud/telegram-notification-sound.sql` then
+Apply the migrations to Linux-local PostgreSQL `trading_runtime`, through its existing administrator path (not Supabase). Clerk authenticates requests; the Linux gateway supplies application identity and permission claims. Apply `cloud/telegram-notification-sound.sql` then
 `cloud/telegram-group-sound.sql` before UI/worker publication. The former updates
 its existing API wrapper in place so later settings endpoints remain available.
 Sources: `web/app.js` (`personalTelegramControls`, `stockGroupSoundControls`),

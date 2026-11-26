@@ -26,3 +26,21 @@ https://github.com/idodidodi/colmex-mt4-exporter at
 `/Users/ido1/Dev - not synced/trading-bot/mt4`. Read that repository's AGENTS.md and
 `docs/INTEGRATION.md` for exporter work. This repository owns scanner integration,
 Postgres request authorization and UI; see `docs/colmex-integration.md`.
+
+## Current production architecture — verified 2026-11-26
+
+Clerk provides authentication only. The authoritative database is PostgreSQL
+`trading_runtime` on the existing Linux host (`trading-linux`, loopback database
+host `127.0.0.1`). All application settings, including Telegram sound preferences,
+belong there. The active UI is `https://app.family-trading-bot.dynv6.net`, hosted by Cloudflare Pages
+project `family-trading-bot-dashboard` (production branch setting `codex/clerk-auth`); its
+Clerk-authenticated API is `https://ido-portege-r700.tail091280.ts.net`, served by
+`trading-bot-api.service` using `clerk_dashboard_api.py`. The existing scanner is
+`trading-bot-postgres.service` in `/home/ido/apps/trading-bot-postgres`.
+
+Do not use Supabase Auth, management APIs, hosted database migrations, or the
+legacy `family-trading-bot.idodidodi.workers.dev` dashboard for production changes.
+Old Supabase migration documents are historical. Local compatibility schemas
+(`auth.uid()`, `authenticated`, and `public.dashboard_api`) do not imply Supabase
+is still used. Preserve Clerk build configuration and the existing Linux API
+permissions; inspect live public config and service settings before deployment.

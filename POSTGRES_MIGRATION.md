@@ -1,3 +1,8 @@
+> **Historical migration guide.** Current production uses Clerk for authentication
+> and Linux-local PostgreSQL `trading_runtime` for all application data/settings.
+> See `AGENTS.md` for the verified production endpoints and service paths. Do not
+> apply the Supabase provisioning steps below to current production.
+
 # Signal/execution separation notice — 2026-11-06
 
 For this release, follow [SIGNAL_SERVICE_MIGRATION.md](SIGNAL_SERVICE_MIGRATION.md) before the historical Postgres guide below. Its paper-trading activation steps are superseded: the signal service cannot execute trades. Do not re-enable legacy execution. Telegram gates and routing remain owned here.
