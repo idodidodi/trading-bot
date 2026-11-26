@@ -30,7 +30,7 @@ class AlertDisplayTests(unittest.TestCase):
                 '{"ok":true,"result":{"message_id":42}}')) as request:
             self.assertEqual(send_telegram('test-token', '123', raw), 42)
         payload = json.loads(request.call_args.args[0].data)
-        self.assertIn('S&P 500 · 4h', payload['text'])
+        self.assertTrue(payload['text'].startswith('Bull RSI div 4h S&P 500\n'))
         self.assertIn('Price: 7708.5 → 7579.2', payload['text'])
         self.assertTrue(payload['text'].endswith('Provider: Yahoo'))
         for internal in ('Source:', 'linux-postgres', '3eb68542', 'yahoo:SNP:'):

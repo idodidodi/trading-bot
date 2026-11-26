@@ -1,6 +1,16 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-23** for SPX/DAX timeframes and asset-save feedback; **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+Reviewed **2026-11-26** for local RSI heading consolidation; **2026-11-23** for SPX/DAX timeframes and asset-save feedback; **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+
+## RSI divergence heading — local change (2026-11-26)
+
+`alert_display.public_text` merges the title and asset/timeframe line into
+`Bull/Bear RSI div {TF} {asset}` (preserving `Hidden` when present). It also
+normalizes older full divergence headings at the send boundary. Existing asset
+display names and provider attribution are preserved; all content below the
+asset/timeframe line stays unchanged. This formatting change has not been
+verified in production.
+
 
 ## Staged Clerk authentication and personal settings
 
