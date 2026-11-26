@@ -51,7 +51,9 @@ def deliver_subscriptions(store, token, text, event, send, silent=False, payload
         sender = (partial(send, dismissal_user_id=int(chat)) if int(chat) > 0
                   else partial(send, dismissal_user_id=0) if group_dismissal_enabled() else send)
         try:
-            deliver(store, token, chat, text, event, sender, silent=silent)
+            from telegram_group_sound import silent_for_group
+            group_silent = silent_for_group(store, 'near', payload.get('timeframe')) if payload.get('asset') == 'NEARUSD' else False
+            deliver(store, token, chat, text, event, sender, silent=silent or group_silent)
         except (WorkerOwned, *RETRYABLE):
             raise
         except RuntimeError:

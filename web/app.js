@@ -396,6 +396,33 @@ async function developmentSettingsControls(panel,isCurrent){
 }
 let versionRequest=0;
 function versionMatch(current,latest){return !current||!latest?'Comparison unavailable':current===latest?'Matches GitHub':'Differs from GitHub';}
+async function stockGroupSoundControls(panel,isCurrent){
+ if(!online)return;
+ const section=node('section');section.className='development-settings telegram-alerts';panel.append(section);
+ section.append(node('h3','NEAR and Stock RSI groups · delivery sound'));
+ try{
+  let value=await request('/api/telegram-group-sound');if(!isCurrent())return;
+  if(!value.editable){section.append(node('p','The installation owner manages sound for these shared groups.'));return;}
+  section.append(node('p','Select which timeframes arrive silently in each group. Messages still arrive. NEAR uses the signal timeframe. Stock RSI matches, ready setups and lower invalidations use the lower candle timeframe; parent signals and parent invalidations use the higher timeframe. These shared settings affect everyone in the group and do not enable scans.'));
+  const inputs={},status=node('p');status.setAttribute('role','status');
+  for(const [key,label] of Object.entries(value.groups)){
+   const frames=node('fieldset');frames.className='telegram-timeframe-silence';frames.append(node('legend',label));inputs[key]={};
+   for(const [frame,title] of [['5m','5 min'],['15m','15 min'],['30m','30 min'],['1h','1 hour'],['4h','4 hours'],['daily','Daily'],['weekly','Weekly'],['monthly','Monthly']]){
+    const wrapper=node('label'),box=node('input');box.type='checkbox';box.checked=value.silent?.[key]?.[frame]===true;
+    box.setAttribute('aria-label','Deliver '+label+' '+title+' silently');inputs[key][frame]=box;
+    wrapper.append(box,document.createTextNode(' '+title));frames.append(wrapper);
+   }
+   section.append(frames);
+  }
+  section.append(node('p','Unchecked timeframes may request sound. Telegram mute settings and the one-sound-per-minute limit still apply. Selecting a timeframe here does not add it to the scanner.'));
+  const save=button('Save group sound',async()=>{
+   save.disabled=true;status.textContent='Saving…';
+   try{value=await request('/api/telegram-group-sound',{action:'save',revision:value.revision,silent:Object.fromEntries(Object.entries(inputs).map(([key,frames])=>[key,Object.fromEntries(Object.entries(frames).map(([frame,box])=>[frame,box.checked]))]))});status.textContent='Saved. Group sound preferences are updated.';}
+   catch(e){status.textContent=e.message+' Reopen Settings to reload before retrying.';}
+   finally{save.disabled=false;}
+  });section.append(save,status);
+ }catch(e){if(isCurrent())section.append(node('p','Group sound settings unavailable: '+e.message));}
+}
 async function personalTelegramControls(panel,isCurrent){
  const section=node('section');section.className='development-settings telegram-alerts';
  section.append(node('h3','My Telegram alerts'));panel.append(section);
@@ -404,7 +431,7 @@ async function personalTelegramControls(panel,isCurrent){
   let value=await request('/api/telegram-alerts');if(!isCurrent())return;
   section.append(node('p','Choose which alerts you receive. Changes apply only to your personal groups. Re-enabling resumes new alerts without replaying skipped alerts.'));
   if(!value.registered)section.append(node('p','Your personal Telegram groups have not been connected yet. You can save your preferences now.'));
-  const inputs={},silentInputs={},status=node('p'),quietStatus=node('p');
+  const inputs={},silentInputs={},frameInputs={},status=node('p'),quietStatus=node('p');
   for(const item of [status,quietStatus])item.setAttribute('role','status');
   const showStatus=text=>{status.textContent=text;quietStatus.textContent=text;};
   const categories=[['general','General'],['other-signals','Other Signals'],...['forex','crypto','stocks','other'].flatMap(m=>[['rsi','RSI'],['pin-bars','Pin Bars'],['rsi-pb','RSI + PB']].map(([s,label])=>[m+'.'+s,m[0].toUpperCase()+m.slice(1)+' · '+label]))];
@@ -427,12 +454,22 @@ async function personalTelegramControls(panel,isCurrent){
    const row=node('div');row.className='telegram-signal-preference';
    const receive=node('label'),input=node('input');input.type='checkbox';input.checked=value.enabled[key]!==false;
    input.setAttribute('aria-label','Receive '+label+' alerts');inputs[key]=input;receive.append(input,document.createTextNode(' '+label));
-   const silentLabel=node('label'),silentInput=node('input');silentInput.type='checkbox';silentInput.checked=value.silent?.[key]===true;
+   const silentLabel=node('label'),silentInput=node('input');silentInput.type='checkbox';silentInput.checked=value.silent?.[key]===true||value.silent?.[key]?.default===true;
    silentInput.setAttribute('aria-label','Deliver '+label+' silently');silentInputs[key]=silentInput;
-   silentInput.disabled=!input.checked;input.onchange=()=>{silentInput.disabled=!input.checked;};
-   silentLabel.append(silentInput,document.createTextNode(' Deliver silently'));row.append(receive,silentLabel);list.append(row);
+   const frames=node('fieldset');frames.className='telegram-timeframe-silence';frames.append(node('legend','Deliver silently by timeframe'));
+   frameInputs[key]={};
+   for(const [frame,title] of [['5m','5 min'],['15m','15 min'],['30m','30 min'],['1h','1 hour'],['4h','4 hours'],['daily','Daily'],['weekly','Weekly'],['monthly','Monthly']]){
+    const wrapper=node('label'),box=node('input');box.type='checkbox';
+    box.checked=typeof value.silent?.[key]==='object'?(value.silent[key][frame]??silentInput.checked):silentInput.checked;
+    box.setAttribute('aria-label','Deliver '+label+' '+title+' silently');frameInputs[key][frame]=box;
+    wrapper.append(box,document.createTextNode(' '+title));frames.append(wrapper);
+   }
+   const syncDisabled=()=>{silentInput.disabled=!input.checked;for(const box of Object.values(frameInputs[key]))box.disabled=!input.checked;};
+   input.onchange=syncDisabled;syncDisabled();
+   silentInput.onchange=()=>{for(const box of Object.values(frameInputs[key]))box.checked=silentInput.checked;};
+   silentLabel.append(silentInput,document.createTextNode(' Deliver all timeframes silently'));row.append(receive,silentLabel,frames);list.append(row);
   }
-  section.append(list,node('p','A signal is delivered silently when its checkbox is selected or quiet hours are active. Telegram’s own mute settings also apply.'));
+  section.append(list,node('p','Select the timeframes that should arrive without sound. Unchecked timeframes may make sound; quiet hours, Telegram’s own mute settings and the per-minute sound limit still apply. Alerts continue to arrive.'));
   let saving=false;
   const savePreferences=async()=>{
    if(saving)return;
@@ -443,7 +480,7 @@ async function personalTelegramControls(panel,isCurrent){
     if(quietHours.enabled&&quietHours.start===quietHours.end)throw new Error('Choose different start and end times.');
    }catch(e){showStatus('Quiet hours: '+e.message);return;}
    saving=true;save.disabled=true;quietSave.disabled=true;showStatus('Saving…');
-   try{value=await request('/api/telegram-alerts',{action:'save',revision:value.revision,enabled:Object.fromEntries(Object.entries(inputs).map(([key,input])=>[key,input.checked])),silent:Object.fromEntries(Object.entries(silentInputs).map(([key,input])=>[key,input.checked])),quiet_hours:quietHours});showStatus('Saved. Your personal alert preferences are updated.');}
+   try{value=await request('/api/telegram-alerts',{action:'save',revision:value.revision,enabled:Object.fromEntries(Object.entries(inputs).map(([key,input])=>[key,input.checked])),silent:Object.fromEntries(Object.entries(silentInputs).map(([key,input])=>[key,{default:input.checked,...Object.fromEntries(Object.entries(frameInputs[key]).map(([frame,box])=>[frame,box.checked]))}])),quiet_hours:quietHours});showStatus('Saved. Your personal alert preferences are updated.');}
    catch(e){showStatus(e.message+' Reopen Settings to reload before retrying.');}
    finally{saving=false;save.disabled=false;quietSave.disabled=false;}
   };
@@ -578,15 +615,16 @@ function settingsLoading(label){
 async function openVersions(){
  const dialog=$('settings-dialog'),panel=$('version-content'),id=++versionRequest;
  const isCurrent=()=>id===versionRequest&&dialog.open;
- const near=node('div'),personal=node('div'),routing=node('div'),development=node('div'),chasing=node('div'),automatic=node('div'),versions=node('section');
+ const stockGroups=node('div'),near=node('div'),personal=node('div'),routing=node('div'),development=node('div'),chasing=node('div'),automatic=node('div'),versions=node('section');
  versions.append(node('h3','Versions'),settingsLoading('Checking versions…'));
- panel.replaceChildren(near,personal,chasing,automatic,routing,development,versions);
+ panel.replaceChildren(stockGroups,near,personal,chasing,automatic,routing,development,versions);
  if(!dialog.open)dialog.showModal();
  async function loadSettings(target,label,load){
   const loading=settingsLoading(label);target.append(loading);
   try{await load(target,isCurrent);}finally{if(isCurrent())target.replaceChildren(...Array.from(target.children).filter(child=>child!==loading));}
  }
  await Promise.all([
+  loadSettings(stockGroups,'Loading group sound…',stockGroupSoundControls),
   loadSettings(near,'Loading NEAR alerts…',nearGroupControls),
   loadSettings(personal,'Loading personal alerts…',personalTelegramControls),
   loadSettings(chasing,'Loading chasing settings…',chasingControls),

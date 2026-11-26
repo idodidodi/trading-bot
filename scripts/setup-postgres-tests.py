@@ -13,6 +13,6 @@ files=['test_auth_stub.sql','schema.sql','backtests.sql','providers.sql','sharin
 with psycopg.connect(test_dsn(),autocommit=True) as db:
     if db.execute("SELECT to_regclass('public.dashboard_records')").fetchone()[0]:
         raise SystemExit('Use a NEW empty trading_bot_test database. This script does not drop databases or existing schemas.')
-    for name in files+['stock-rsi-watch.sql']:
+    for name in files+['stock-rsi-watch.sql','telegram-group-sound.sql']:
         db.execute((Path(__file__).resolve().parent.parent/'cloud'/name).read_text(),prepare=False)
 print('Disposable test schemas installed. Run python -m unittest discover -q with the same test DSN.')

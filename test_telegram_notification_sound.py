@@ -30,6 +30,15 @@ class QuietHoursTests(unittest.TestCase):
         self.assertFalse(personal_silent(p,'forex.rsi'))
         self.assertFalse(personal_silent({},'general'))
 
+    def test_timeframe_overrides_and_legacy_defaults(self):
+        p={'silent':{'forex.rsi':{'default':True,'5m':True,'4h':False}}}
+        self.assertTrue(personal_silent(p,'forex.rsi',timeframe='5m'))
+        self.assertFalse(personal_silent(p,'forex.rsi',timeframe='4h'))
+        self.assertTrue(personal_silent(p,'forex.rsi'))
+        self.assertFalse(personal_silent(p,'crypto.rsi',timeframe='5m'))
+        p.update(self.person())
+        self.assertTrue(personal_silent(p,'forex.rsi',datetime.fromisoformat('2026-11-07T21:00:00+00:00'),timeframe='4h'))
+
     def test_dst_repeated_hour_and_invalid_legacy_zone(self):
         p=self.person('01:00','02:00','America/New_York')
         for hour in (5,6):
@@ -72,7 +81,7 @@ class NotificationPreferencesTests(PostgresTestCase):
         for key,value in bad:
             body=self.body();body['quiet_hours'][key]=value
             with self.subTest(key=key,value=value),self.assertRaises(psycopg.Error):self.api(OWNER,body)
-        for silent in [None,[],{'bogus':True},{'general':'true'}]:
+        for silent in [None,[],{'bogus':True},{'general':'true'},{'general':{'2h':True}},{'general':{'5m':'true'}}]:
             body=self.body();body['silent']=silent
             with self.subTest(silent=silent),self.assertRaises(psycopg.Error):self.api(OWNER,body)
 
@@ -86,6 +95,18 @@ class NotificationPreferencesTests(PostgresTestCase):
         deliver.reset_mock()
         deliver_personal(self.store,'token','text','event',Mock(),silent=True)
         self.assertTrue(all(c.kwargs['silent'] for c in deliver.call_args_list))
+
+    @patch('telegram_delivery.deliver',return_value='sent')
+    def test_timeframe_preferences_roundtrip_and_delivery(self,deliver):
+        self.register(OWNER,'-20',123)
+        body=self.body();body['quiet_hours']['enabled']=False
+        body['silent']={'forex.rsi':{'default':False,'5m':True,'4h':False}}
+        self.assertEqual(self.api(OWNER,body)['silent'],body['silent'])
+        for frame,expected in [('5m',True),('4h',False)]:
+            deliver_personal(self.store,'token','text','event',Mock(),payload={'timeframe':frame})
+            self.assertEqual(deliver.call_args.kwargs['silent'],expected)
+        legacy=self.api(OWNER,dict(action='save',revision=1,enabled={}))
+        self.assertEqual(legacy['silent'],body['silent'])
 
     def test_migration_rerun_preserves_preferences_and_wrappers(self):
         self.api(OWNER,self.body())

@@ -1,5 +1,38 @@
 # Telegram alert logic — canonical reference
 
+## Per-timeframe delivery sound — local change, reviewed 2026-11-26
+
+Personal categories accept their legacy silence boolean or a map of `default`,
+`5m`, `15m`, `30m`, `1h`, `4h`, `daily`, `weekly`, `monthly` booleans.
+Explicit timeframe values override the category default; missing frames and
+messages without a timeframe inherit it. Quiet hours and incoming silence still
+apply. Old clients omitting sound settings preserve them. Validation rejects
+unknown frame keys and non-booleans; revision conflicts require reloading.
+
+Settings lists NEAR, RSI Higher TF Reached, RSI Lower TF Reached, Stock RSI Setup Ready
+and RSI Stock Setup Invalidated. The installation owner can save separate
+silence choices per timeframe for these shared groups. Viewers cannot change
+them. Choices affect everyone in the selected group. Defaults permit sound,
+subject to Telegram/client mute settings and the existing per-destination
+one-sound-per-minute cap. Personal quiet hours do not apply to these shared
+copies. Preferences never suppress messages, enable the watch lane, add scan
+frames, or replay old alerts. The current stock watch scans lower 15m/30m/1h/4h
+and higher daily/weekly; saving sound choices for other frames does not enable them.
+
+NEAR dedicated RSI and trend-pin-bar copies use the payload timeframe through `telegram_asset_subscriptions.deliver_subscriptions`; incoming silence still wins. Other asset subscriptions are unaffected. Existing NEAR strategy/frame selections and enrollment checks are unchanged.
+
+The watch worker reevaluates preferences on each delivery attempt. Lower,
+ready and lower-invalidation events use `event.lower`; parent-only events use
+`event.higher`. A failed preference read leaves delivery retryable.
+Apply `cloud/telegram-notification-sound.sql` then
+`cloud/telegram-group-sound.sql` before UI/worker publication. The former updates
+its existing API wrapper in place so later settings endpoints remain available.
+Sources: `web/app.js` (`personalTelegramControls`, `stockGroupSoundControls`),
+`telegram_personal.personal_silent`, `telegram_group_sound.silent_for_event`,
+`stock_rsi_runtime.flush`. Verified locally with disposable Postgres and mocked
+Telegram delivery; production rollout is not verified.
+
+
 ## Stock RSI higher/lower-timeframe watches — delayed SIP update local, 2026-11-25
 
 Last reviewed **2026-11-25** against `stock_rsi_watch.py`, `stock_rsi_data.py`,

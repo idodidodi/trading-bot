@@ -164,8 +164,10 @@ def flush(store, cycle, token, now):
             continue
         # Maintain stage order through failures/restarts; the ledger handles a
         # crash after Telegram acceptance but before this cycle checkpoint.
+        from telegram_group_sound import silent_for_event
         result = deliver(store, token, event['chat'], watch.message(event, now),
-                         'stock-rsi-watch:'+event['id'], send_telegram)
+                         'stock-rsi-watch:'+event['id'], send_telegram,
+                         silent=silent_for_event(store, event))
         if result not in ('sent', 'suppressed'):
             break
         event['delivered'] = True
