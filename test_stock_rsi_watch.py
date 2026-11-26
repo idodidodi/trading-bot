@@ -333,7 +333,8 @@ class DelayedTests(unittest.TestCase):
         c.update(wall_now=now+w.DATA_DELAY_MS,data_as_of=now)
         w.lower_observation(c,s,'15m',bar,[signal(now)],now)
         with patch('local_settings.delivery_dry_run',return_value=False), \
-             patch('telegram_delivery.deliver',return_value='sent') as send, patch.object(runtime,'save'):
+             patch('telegram_delivery.deliver',return_value='sent') as send, patch.object(runtime,'save'), \
+             patch('telegram_group_sound.silent_for_event',return_value=False):
             runtime.flush(Mock(),c,'fake',now+w.DATA_DELAY_MS)
             self.assertEqual(send.call_count,1)
             self.assertIn('DELAYED DATA',send.call_args.args[3])
