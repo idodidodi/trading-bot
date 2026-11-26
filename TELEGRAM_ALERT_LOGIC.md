@@ -1,5 +1,12 @@
 # Telegram alert logic — canonical reference
 
+
+## RSI divergence heading — reviewed 2026-11-26
+
+`alert_display.public_text` uses `Bull/Bear RSI div {TF} {asset}`, preserving
+`Hidden` where applicable. It normalizes older headings at the send boundary.
+This release preserves the existing compact heading behavior.
+
 ## Per-timeframe delivery sound — local change, reviewed 2026-11-26
 
 Personal categories accept their legacy silence boolean or a map of `default`,

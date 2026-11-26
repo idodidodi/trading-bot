@@ -1,6 +1,7 @@
 """Public Telegram labels; never used for feed selection or delivery identities."""
 from functools import lru_cache
 from pathlib import Path
+import re
 import xml.etree.ElementTree as ET
 
 
@@ -57,6 +58,15 @@ def public_text(text):
             parts[0] = display_name(symbol)
             line = ' · '.join(parts)
         lines.append(line)
+    # Merge RSI titles with their asset line after provider/name normalization.
+    if len(lines) > 1:
+        title = re.fullmatch(
+            r'(BULLISH|BEARISH|Bull|Bear) (Hidden )?RSI (?:divergence(?: · (?:candle closed|structurally confirmed))?|div \S+)',
+            lines[0])
+        asset = lines[1].split(' · ')
+        if title and len(asset) == 2:
+            direction = 'Bull' if title[1] in ('BULLISH', 'Bull') else 'Bear'
+            lines[:2] = [f'{direction} {title[2] or ""}RSI div {asset[1]} {asset[0]}']
     result = '\n'.join(lines).rstrip()
     if provider:
         result += '\n--------------------\nProvider: ' + provider
