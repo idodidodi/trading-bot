@@ -71,7 +71,7 @@ def load_rules():
     if not source:
         raise ValueError('Missing close-based divergence price source in skill.')
     rules['price_source'] = source[1]
-    rules['skill_hash'] = hashlib.sha256(text.encode()).hexdigest()[:16]
+    rules['skill_hash'] = hashlib.sha256(text.partition('\n## Hidden divergence extension\n')[0].encode()).hexdigest()[:16]
     return rules
 
 
@@ -111,14 +111,21 @@ def validate_signal(body, rules):
         raise ValueError('Invalid band touch price')
     if (body['direction'] == 'bullish' and touch > body['price2']) or (body['direction'] == 'bearish' and touch < body['price2']):
         raise ValueError('Band touch inconsistent with pivot price')
-    if body['direction'] == 'bullish':
-        valid = body['price2'] < body['price1'] and rsi_divergence_matches(body['rsi1'], body['rsi2'], 'bullish', rules.get('rsi_tolerance', 0)) and touch <= body['band2']
-    else:
-        valid = body['price2'] > body['price1'] and rsi_divergence_matches(body['rsi1'], body['rsi2'], 'bearish', rules.get('rsi_tolerance', 0)) and touch >= body['band2']
+    kind = body.get('divergence_type', 'regular')
+    if kind not in ('regular', 'hidden'):
+        raise ValueError('Invalid divergence type')
+    first, second = ('price2', 'price1') if kind == 'hidden' else ('price1', 'price2')
+    rsi_first, rsi_second = (body['rsi2'], body['rsi1']) if kind == 'hidden' else (body['rsi1'], body['rsi2'])
+    price_match = body[second] < body[first] if body['direction'] == 'bullish' else body[second] > body[first]
+    band_match = touch <= body['band2'] if body['direction'] == 'bullish' else touch >= body['band2']
+    valid = price_match and rsi_divergence_matches(rsi_first, rsi_second, body['direction'], rules.get('rsi_tolerance', 0)) and band_match
     if not valid:
         raise ValueError('Divergence or band-touch rule failed')
     # Store only known fields; never persist the webhook authentication secret.
     clean = {k: body[k] for k in ('symbol', 'timeframe', 'direction', *keys, 'pivot1', 'pivot2', 'confirmed_at', 'spacing', 'rules')}
+    if kind == 'hidden':
+        clean['divergence_type'] = kind
+        clean['version'] = 'rsi-hidden-v1-' + rules['skill_hash']
     if 'band_touch_price' in body:
         clean['band_touch_price'] = touch
     if any(k in body for k in ('signal_status', 'alert_timing', 'pivot_closed_at')):
@@ -168,6 +175,7 @@ class Store:
         if delivery_status == 'pending' and payload.get('signal_status') != 'provisional':
             delivery_status = 'cancelled'
         identity = [payload[k] for k in ('symbol', 'timeframe', 'direction', 'pivot1', 'pivot2')]
+        if payload.get('divergence_type') == 'hidden': identity.append('hidden')
         if payload.get('signal_status') == 'provisional': identity.append('warmup')
         if payload.get('review_slot'): identity.append(payload['review_slot'])
         key = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
@@ -218,15 +226,17 @@ def signal_alert_identity(payload):
 
 
 def signal_alert_event(payload):
-    return 'divergence:' + hashlib.sha256(json.dumps(signal_alert_identity(payload)).encode()).hexdigest()
+    identity = signal_alert_identity(payload)
+    if payload.get('divergence_type') == 'hidden': identity.append('hidden')
+    return 'divergence:' + hashlib.sha256(json.dumps(identity).encode()).hexdigest()
 
 
 def signal_alert_delivered(store, payload):
     # Include pre-grouping deliveries so upgrading does not repeat an alert
     # when another reference pivot for an already delivered candle arrives.
     with store.connect() as db:
-        return db.execute("SELECT 1 FROM signals\n            WHERE status IN ('sent','suppressed')\n            AND (payload::jsonb->>'symbol')=%s\n            AND (payload::jsonb->>'timeframe')=%s\n            AND (payload::jsonb->>'direction')=%s\n            AND (payload::jsonb->>'pivot2')::bigint=%s\n            AND CASE WHEN (payload::jsonb->>'signal_status')='provisional'\n                THEN 'provisional' ELSE 'confirmed' END=%s LIMIT 1",
-            signal_alert_identity(payload)).fetchone() is not None
+        return db.execute("SELECT 1 FROM signals\n            WHERE status IN ('sent','suppressed')\n            AND (payload::jsonb->>'symbol')=%s\n            AND (payload::jsonb->>'timeframe')=%s\n            AND (payload::jsonb->>'direction')=%s\n            AND (payload::jsonb->>'pivot2')::bigint=%s\n            AND CASE WHEN (payload::jsonb->>'signal_status')='provisional'\n                THEN 'provisional' ELSE 'confirmed' END=%s AND COALESCE(payload::jsonb->>'divergence_type','regular')=%s LIMIT 1",
+            signal_alert_identity(payload) + [payload.get('divergence_type', 'regular')]).fetchone() is not None
 
 
 def message(payload):
@@ -249,12 +259,13 @@ def message(payload):
         timing += f"\nDetected: {stamp(payload['detected_at'])}"
     if not provisional:
         timing += f"\nConfirmed: {stamp(payload['confirmed_at'])}"
-    return (f"{payload['direction'].upper()} RSI divergence{' · candle closed' if provisional else ' · structurally confirmed'}\n"
+    from wyckoff_context import line as wyckoff_line
+    return (f"{payload['direction'].upper()} {'Hidden ' if payload.get('divergence_type') == 'hidden' else ''}RSI divergence{' · candle closed' if provisional else ' · structurally confirmed'}\n"
             f"{payload['symbol']} · {payload['timeframe']}\n"
             f"Price: {payload['price1']:g} → {payload['price2']:g}\n"
             f"RSI({payload['rules']['rsi_period']}): {payload['rsi1']:.2f} → {payload['rsi2']:.2f}\n"
             f"{'Lower' if payload['direction'] == 'bullish' else 'Upper'} BB touch: {payload['band2']:g}\n"
-            f"{timing}")
+            f"{timing}" + wyckoff_line(payload))
 
 
 def telegram_connection_error(exc):
@@ -346,7 +357,7 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             key,text,attempts=note
             try:
                 # Strategy alerts share RSI's sound policy, even overnight.
-                is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:', 'rsi-pb:', 'ma-cross:'))
+                is_signal = key.startswith(('pin-bars:', 'bb-pin-bars:', 'rsi-pb:', 'ma-cross:', 'trend-pin-bars:'))
                 from pinbar_chart import notification_sender
                 send = send_telegram if current_dry_run else notification_sender(store, key, send_telegram)
                 outcome = 'dry-run' if current_dry_run else deliver_routed(store, token, chat_id, text, 'notification:' + key, send, silent=not is_signal and quiet_hours(), notification_key=key)
@@ -369,8 +380,9 @@ def delivery_worker(store, token, chat_id, dry_run, stop):
             continue
         key, raw, attempts = row
         payload = json.loads(raw)
-        if payload.get('review_slot') or payload.get('signal_status') != 'provisional':
-            # Retire legacy clock reviews and confirmation alerts, including retries.
+        from rsi_profiles import superseded_alert
+        if superseded_alert(payload) or payload.get('review_slot') or payload.get('signal_status') != 'provisional':
+            # Retire superseded RSI3, legacy clock reviews and confirmation alerts, including retries.
             # Keep their findings and completed delivery history intact.
             with store.connect() as db:
                 db.execute("UPDATE signals SET status='cancelled',error=NULL WHERE id=%s", (key,))
@@ -686,6 +698,9 @@ def main():
         prepare_store(store)
         scanner_thread = threading.Thread(target=resilient_worker(scanner_worker, 'scanner'), args=(store, config, rules, stop), daemon=True)
         scanner_thread.start()
+        from stock_rsi_runtime import worker as stock_rsi_worker
+        threading.Thread(target=resilient_worker(stock_rsi_worker, 'stock-rsi-watch'),
+            args=(store, rules, token, dry_run, stop), name='stock-rsi-watch', daemon=True).start()
         if os.environ.get("COLMEX_FILES_DIR"):
             from colmex_runtime import worker as colmex_worker
             colmex_thread = threading.Thread(target=resilient_worker(colmex_worker, "colmex"),

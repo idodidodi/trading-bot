@@ -19,13 +19,16 @@ def route_for(market, strategy):
         return 'other-signals'
     if not market or not strategy:
         return 'general'
-    strategy = 'pin-bars' if strategy in ('pin-bars', 'bb-pin-bars') else strategy
+    strategy = 'pin-bars' if strategy in ('pin-bars', 'bb-pin-bars', 'trend-pin-bars') else strategy
     return f'{market_group(market)}.{strategy}'
 
 
-def personal_silent(person, route, now=None):
+def personal_silent(person, route, now=None, timeframe=None):
     """Evaluate each attempt in the recipient's timezone; start inclusive, end exclusive."""
-    if person.get('silent', {}).get(route, False):
+    sound = person.get('silent', {}).get(route, False)
+    if isinstance(sound, dict):
+        sound = sound.get(timeframe, sound.get('default', False))
+    if sound:
         return True
     quiet = person.get('quiet_hours') or {}
     if not quiet.get('enabled', False):
@@ -55,7 +58,10 @@ def deliver_personal(store, token, text, event, send, silent=False, payload=None
         chat = person['routes'].get(route)
         if not chat:
             continue  # No fallback to somebody else's General group.
+        from near_alerts import allows_destination
         allowed = person['enabled'].get(route, True)
+        if strategy in ('rsi','pin-bars','bb-pin-bars','trend-pin-bars'):
+            allowed = allowed and allows_destination(store,chat,payload,strategy)
         # Exclude findings predating enrollment, including a backlog after restart.
         observed = (payload or {}).get('detected_at') or (payload or {}).get('confirmed_at')
         if observed and observed / 1000 < float(person['created_at']):
@@ -78,7 +84,7 @@ def deliver_personal(store, token, text, event, send, silent=False, payload=None
                 candidate=proposal(payload,chase_person,int(time.time()*1000)) if chase_person else None
                 if candidate:sender=partial(sender,dismissal_actions=chase_buttons(candidate['id']))
             deliver(store, token, saved_chat, text, event,
-                    sender, silent=silent or personal_silent(person, route))
+                    sender, silent=silent or personal_silent(person, route, timeframe=(payload or {}).get('timeframe')))
             if chase_person:
                 current=next((p for p in chasing_people(store) if str(p['user_id'])==str(person['user_id'])),None)
                 if current:enroll(store,payload,current)

@@ -1,6 +1,11 @@
+export function rsiRulesForSymbol(rules,symbol,timeframe){
+ const profile='near-5m-rsi14-v1';
+ if(timeframe!=='5m'||!['NEARUSD','NEAR/USD'].includes(symbol.split(':').at(-1))||rules.rsi_profile===profile)return rules;
+ return {...rules,rsi_period:14,rsi_profile:profile,skill_hash:profile+':'+rules.skill_hash};
+}
 export {followupWindows} from './followup.mjs';
 // Mirrors scanner.detect: all eligible close-pivot pairs; only P2 needs a BB touch.
-export function detect(candles,rules,symbol,timeframe,provisional=false){
+export function detect(candles,rules,symbol,timeframe,provisional=false,includeHidden=true){
  const n=rules.rsi_period,b=rules.bb_period,left=rules.pivot_left,right=rules.pivot_right;
  const rsi=[],lower=[],upper=[];let gain=0,loss=0;
  for(let i=0;i<candles.length;i++){
@@ -39,8 +44,11 @@ export function detect(candles,rules,symbol,timeframe,provisional=false){
    const improvement=direction==='bullish'?rsi[i]-rsi[first]:rsi[first]-rsi[i];
    const rsiMatch=improvement>0||(tolerance>0&&improvement>=-tolerance);
    const divergence=direction==='bullish'?prices[i]<prices[first]&&rsiMatch:prices[i]>prices[first]&&rsiMatch;
-   if(!divergence||!bandTouch)continue;
+   const hiddenPrice=direction==='bullish'?prices[i]>prices[first]:prices[i]<prices[first];
+   const hidden=includeHidden&&hiddenPrice&&(-improvement>0||(tolerance>0&&-improvement>=-tolerance));
+   if(!(divergence||hidden)||!bandTouch)continue;
    const s={symbol,timeframe,direction,price1:prices[first],price2:prices[i],rsi1:rsi[first],rsi2:rsi[i],band1:bands[first],band2:bands[i],band_touch_price:touch,pivot1:candles[first].start,pivot2:candles[i].start,pivot1_closed_at:candles[first].end,pivot2_closed_at:candles[i].end,confirmed_at:candles[event].end,spacing,rules};
+   if(hidden)Object.assign(s,{divergence_type:'hidden',version:'rsi-hidden-v1-'+rules.skill_hash});
    if(provisional)Object.assign(s,{signal_status:'provisional',alert_timing:'pivot_close',pivot_closed_at:candles[i].end});
    signals.push(s);
    }

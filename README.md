@@ -1,5 +1,13 @@
 # Signal service architecture
 
+**Current production (verified 2026-11-26):** Clerk handles authentication only.
+The Linux Clerk API and scanner share local PostgreSQL `trading_runtime`; all
+application settings are stored there. The active dashboard is
+[app.family-trading-bot.dynv6.net](https://app.family-trading-bot.dynv6.net), hosted
+on Cloudflare Pages `family-trading-bot-dashboard`. See `AGENTS.md` for deployment
+paths. Supabase references below describe the historical architecture, not the
+current production database or authentication provider.
+
 This project detects and publishes versioned market signals and owns Telegram delivery. Broker execution, paper/demo accounts and trade simulations live in the independent [trading executor](https://github.com/idodidodi/trading-executor). See [the API contract](SIGNAL_API.md), [manual cutover](SIGNAL_SERVICE_MIGRATION.md), and [canonical Telegram behavior](TELEGRAM_ALERT_LOGIC.md). Existing installation instructions below are historical where they describe paper trading.
 
 # Family Trading Bot

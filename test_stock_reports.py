@@ -37,7 +37,7 @@ class ReportTests(unittest.TestCase):
 
     def test_dst_next_sunday_and_early_close(self):
         before=instant('2026-10-24T08:00:00')/1000
-        self.assertEqual(reports.seconds_to_scan(before),25*3600)
+        self.assertEqual(reports.seconds_to_scan(before),300)
         p=reports.period('weekly',instant('2026-11-29T08:00:00'))
         self.assertEqual(datetime.fromtimestamp(reports.expected_close(p)/1000,reports.NY).hour,13)
         p=reports.period('weekly',instant('2026-04-05T08:00:00'))
@@ -90,6 +90,8 @@ class ReportTests(unittest.TestCase):
         many=[row | dict(ticker=f'Z{i:03d}',name='A very long company name '*3) for i in range(100)]
         reader=PdfReader(BytesIO(render(run,'rsi-pb','bullish',many)))
         self.assertGreater(len(reader.pages),1)
+        self.assertIn('Z000',reader.pages[0].extract_text())
+        self.assertIn('CANDLE PERIOD',reader.pages[-1].extract_text())
         self.assertIn('Z099',''.join(p.extract_text() for p in reader.pages))
 
     def test_metadata_parser_and_snapshot_fallback(self):
@@ -110,8 +112,9 @@ class DurableReportTests(PostgresTestCase):
         self.now=instant('2026-11-01T08:00:00')
 
     def process(self, **kwargs):
-        with patch('stock_reports.eligible',return_value=True),patch('stock_report_data.membership',return_value=fixture()['membership']), \
+        with patch('stock_reports.time.time',return_value=self.now/1000),patch('stock_reports.eligible',return_value=True),patch('stock_report_data.membership',return_value=fixture()['membership']), \
              patch('stock_report_data.fetch_batch',return_value={}) as fetch,patch('local_settings.delivery_dry_run',return_value=kwargs.get('dry',False)), \
+             patch('stock_report_data.market_caps',return_value={'source':'fixture','values':{}}), \
              patch('telegram_documents.deliver_document',side_effect=kwargs.get('send_error')) as send:
             reports.run_due(self.store,self.config,load_rules(),self.now)
         return fetch,send
@@ -159,7 +162,7 @@ class DurableReportTests(PostgresTestCase):
         self.assertIn('missed',[r['state'] for r in reports.status(self.store)['runs']])
 
     def test_provider_retry_resumes_without_refreshing_membership_or_rules(self):
-        with patch('stock_reports.datetime',wraps=datetime) as clock,patch('stock_reports.eligible',return_value=True),patch('stock_report_data.membership',return_value=fixture()['membership']), \
+        with patch('stock_reports.time.time',return_value=self.now/1000),patch('stock_reports.datetime',wraps=datetime) as clock,patch('stock_reports.eligible',return_value=True),patch('stock_report_data.membership',return_value=fixture()['membership']), \
              patch('stock_report_data.fetch_batch',side_effect=ValueError('unavailable')),patch('telegram_documents.deliver_document') as send:
             clock.now.return_value=datetime.fromtimestamp(self.now/1000,reports.ZONE)
             reports.run_due(self.store,self.config,load_rules(),self.now)
@@ -204,7 +207,7 @@ class DurableReportTests(PostgresTestCase):
         coverage=[dict(ticker='AAPL',strategy=s,reason='',candles=250) for s in reports.STRATEGIES]
         with patch('stock_reports.evaluate',return_value=(rows,coverage)):
             _,send=self.process()
-        self.assertEqual(send.call_count,16)
+        self.assertEqual(send.call_count,8) # weekly/monthly RSI only; pin PDFs move to pre-close
         with self.store.connect() as db:
             self.assertEqual(db.execute("SELECT count(*) FROM stock_report_runs WHERE state='sent'").fetchone()[0],2)
             for table in ('signals','pin_bar_signals','bb_pin_bar_signals','rsi_pb_signals','notification_queue','scan_state','pin_bar_state','bb_pin_bar_state','rsi_pb_state'):
@@ -239,6 +242,48 @@ class DocumentDeliveryTests(unittest.TestCase):
 
 
 class DocumentRoutingTests(PostgresTestCase):
+    def test_dedicated_group_covers_every_timeframe_strategy_and_auxiliary_pdf(self):
+        import os
+        from telegram_documents import deliver_document
+        store=TestStore()
+        with patch.dict(os.environ,TELEGRAM_BOT_TOKEN='123:fake',TELEGRAM_STOCK_REPORT_CHAT_ID='-5347004785'), \
+             patch('telegram_documents.send_document',return_value=42) as send, \
+             patch('telegram_routing.deliver_routed') as routed:
+            for frame in ('daily','weekly','monthly'):
+                for strategy in ('rsi','rsi-pb','pin-bars','bb-pin-bars',None):
+                    event=f'{frame}:{strategy}'
+                    self.assertEqual(deliver_document(store,event,'report.pdf',strategy,'Report',b'PDF'),'sent')
+                    self.assertEqual(deliver_document(store,event,'report.pdf',strategy,'Report',b'PDF'),'suppressed')
+            self.assertEqual(send.call_count,15)
+            self.assertTrue(all(c.args[1]=='-5347004785' for c in send.call_args_list))
+            self.assertTrue(all(c.kwargs['silent'] for c in send.call_args_list[1:]))
+            routed.assert_not_called()
+
+    def test_dedicated_destination_failure_does_not_fallback(self):
+        import os
+        from telegram_documents import deliver_document
+        from platform_app import TelegramDestinationError
+        store=TestStore()
+        with patch.dict(os.environ,TELEGRAM_BOT_TOKEN='123:fake',TELEGRAM_STOCK_REPORT_CHAT_ID='-5347004785'), \
+             patch('telegram_documents.send_document',side_effect=TelegramDestinationError('gone')) as send, \
+             patch('telegram_routing.deliver_routed') as routed:
+            with self.assertRaises(TelegramDestinationError):
+                deliver_document(store,'failed-report','coverage.pdf',None,'Report',b'PDF')
+            send.assert_called_once()
+            routed.assert_not_called()
+        with store.connect() as db:
+            self.assertIsNone(db.execute('SELECT outcome FROM telegram_delivery').fetchone()[0])
+
+    def test_invalid_dedicated_group_fails_without_sending(self):
+        import os
+        from telegram_documents import deliver_document
+        store=TestStore()
+        for value in ('5347004785','group-name','-0'):
+            with patch.dict(os.environ,TELEGRAM_STOCK_REPORT_CHAT_ID=value),patch('telegram_documents.send_document') as send:
+                with self.assertRaises(ValueError):
+                    deliver_document(store,'invalid','report.pdf','rsi','Report',b'PDF')
+                send.assert_not_called()
+
     def test_stock_route_general_fallback_and_repeat_suppression(self):
         import os
         from psycopg.types.json import Jsonb

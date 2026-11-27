@@ -58,7 +58,7 @@ def render(signal):
 
 def notification_sender(store, key, send):
     strategy, _, identity = key.partition(':')
-    table = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals'}.get(strategy)
+    table = {'pin-bars': 'pin_bar_signals', 'bb-pin-bars': 'bb_pin_bar_signals', 'trend-pin-bars':'trend_pin_bar_signals'}.get(strategy)
     if not table:
         return send
     with store.connect() as db:

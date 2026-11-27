@@ -9,10 +9,10 @@ files=['test_auth_stub.sql','schema.sql','backtests.sql','providers.sql','sharin
        'momentum.sql','family-upgrade.sql','pin-bars.sql','csv-backtests.sql',
        'asset-strategies.sql','bb-pin-bars.sql','backtest-period.sql','backtest-sorting-pagination.sql','telegram-delivery.sql',
        'telegram-routing.sql','rsi-pb.sql','postgres-runtime.sql','postgres-dashboard.sql','postgres-worker-role.sql',
-       'telegram-checklist.sql','stock-reports.sql','telegram-personal.sql','divergence-chasing.sql','kraken-intraday.sql','crypto-auto-chase.sql','bybit-demo.sql','signal-service.sql','signal-discovery.sql','rsi-context-cache.sql','colmex.sql','ma-cross.sql','telegram-notification-sound.sql']
+       'telegram-checklist.sql','stock-reports.sql','telegram-personal.sql','divergence-chasing.sql','kraken-intraday.sql','crypto-auto-chase.sql','bybit-demo.sql','signal-service.sql','signal-discovery.sql','rsi-context-cache.sql','colmex.sql','ma-cross.sql','telegram-notification-sound.sql','telegram-asset-subscriptions.sql','near-group-preferences.sql']
 with psycopg.connect(test_dsn(),autocommit=True) as db:
     if db.execute("SELECT to_regclass('public.dashboard_records')").fetchone()[0]:
         raise SystemExit('Use a NEW empty trading_bot_test database. This script does not drop databases or existing schemas.')
-    for name in files:
+    for name in files+['stock-rsi-watch.sql','telegram-group-sound.sql']:
         db.execute((Path(__file__).resolve().parent.parent/'cloud'/name).read_text(),prepare=False)
 print('Disposable test schemas installed. Run python -m unittest discover -q with the same test DSN.')

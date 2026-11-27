@@ -13,15 +13,17 @@ END = timestamp('2021-01-01T00:00:00Z')
 
 
 def replay(candles, rules, symbol, timeframe, *, provisional=False, start=START, end=END):
+    from rsi_profiles import for_symbol
+    rules = for_symbol(rules, symbol, timeframe)
     # Exclude future candles before calculating indicators and confirming pivots.
     bars = check_candles(candles, end)
-    signals = [s for s in detect(bars, rules, symbol, timeframe, provisional=provisional) if start <= s['confirmed_at'] < end]
+    signals = [s for s in detect(bars, rules, symbol, timeframe, provisional=provisional, include_hidden=True) if start <= s['confirmed_at'] < end]
     from finding_followup import both
     from finding_feedback import finding_id
     followups = {finding_id('backtest', s): both(s, bars) for s in signals}
     warmup = sum(c.end <= start for c in bars)
-    complete = bool(bars and warmup >= minimum_history(rules) and bars[-1].end >= end - {'1h': 3600000, '4h': 14400000, 'daily': 86400000, 'weekly': 604800000, 'monthly': 2678400000}[timeframe])
-    return dict(status='replayed' if complete else 'partial history', candles=len(bars), warmup_candles=warmup, signals=signals, followups=followups,
+    complete = bool(bars and warmup >= minimum_history(rules) and bars[-1].end >= end - {'5m': 300000, '15m': 900000, '30m': 1800000, '1h': 3600000, '4h': 14400000, 'daily': 86400000, 'weekly': 604800000, 'monthly': 2678400000}[timeframe])
+    return dict(rules=rules, status='replayed' if complete else 'partial history', candles=len(bars), warmup_candles=warmup, signals=signals, followups=followups,
                 note='Calendar range checked; trading-session gaps are not verified.')
 
 

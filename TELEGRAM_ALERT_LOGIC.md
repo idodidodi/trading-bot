@@ -1,15 +1,652 @@
 # Telegram alert logic — canonical reference
 
-Reviewed **2026-11-26** for local RSI heading consolidation; **2026-11-23** for SPX/DAX timeframes and asset-save feedback; **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
 
-## RSI divergence heading — local change (2026-11-26)
+## RSI divergence heading — reviewed 2026-11-26
 
-`alert_display.public_text` merges the title and asset/timeframe line into
-`Bull/Bear RSI div {TF} {asset}` (preserving `Hidden` when present). It also
-normalizes older full divergence headings at the send boundary. Existing asset
-display names and provider attribution are preserved; all content below the
-asset/timeframe line stays unchanged. This formatting change has not been
-verified in production.
+`alert_display.public_text` uses `Bull/Bear RSI div {TF} {asset}`, preserving
+`Hidden` where applicable. It normalizes older headings at the send boundary.
+This release preserves the existing compact heading behavior.
+
+## Per-timeframe delivery sound — local change, reviewed 2026-11-26
+
+Personal categories accept their legacy silence boolean or a map of `default`,
+`5m`, `15m`, `30m`, `1h`, `4h`, `daily`, `weekly`, `monthly` booleans.
+Explicit timeframe values override the category default; missing frames and
+messages without a timeframe inherit it. Quiet hours and incoming silence still
+apply. Old clients omitting sound settings preserve them. Validation rejects
+unknown frame keys and non-booleans; revision conflicts require reloading.
+
+Settings lists NEAR, RSI Higher TF Reached, RSI Lower TF Reached, Stock RSI Setup Ready
+and RSI Stock Setup Invalidated. The installation owner can save separate
+silence choices per timeframe for these shared groups. Viewers cannot change
+them. Choices affect everyone in the selected group. Defaults permit sound,
+subject to Telegram/client mute settings and the existing per-destination
+one-sound-per-minute cap. Personal quiet hours do not apply to these shared
+copies. Preferences never suppress messages, enable the watch lane, add scan
+frames, or replay old alerts. The current stock watch scans lower 15m/30m/1h/4h
+and higher daily/weekly; saving sound choices for other frames does not enable them.
+
+NEAR dedicated RSI and trend-pin-bar copies use the payload timeframe through `telegram_asset_subscriptions.deliver_subscriptions`; incoming silence still wins. Other asset subscriptions are unaffected. Existing NEAR strategy/frame selections and enrollment checks are unchanged.
+
+The watch worker reevaluates preferences on each delivery attempt. Lower,
+ready and lower-invalidation events use `event.lower`; parent-only events use
+`event.higher`. A failed preference read leaves delivery retryable.
+Apply the migrations to Linux-local PostgreSQL `trading_runtime`, through its existing administrator path (not Supabase). Clerk authenticates requests; the Linux gateway supplies application identity and permission claims. Apply `cloud/telegram-notification-sound.sql` then
+`cloud/telegram-group-sound.sql` before UI/worker publication. The former updates
+its existing API wrapper in place so later settings endpoints remain available.
+Sources: `web/app.js` (`personalTelegramControls`, `stockGroupSoundControls`),
+`telegram_personal.personal_silent`, `telegram_group_sound.silent_for_event`,
+`stock_rsi_runtime.flush`. Verified locally with disposable Postgres and mocked
+Telegram delivery; production rollout is not verified.
+
+
+## Stock RSI higher/lower-timeframe watches — delayed SIP update local, 2026-11-25
+
+Last reviewed **2026-11-25** against `stock_rsi_watch.py`, `stock_rsi_data.py`,
+`stock_rsi_runtime.py`, `platform_app.main`, and `cloud/stock-rsi-watch.sql`.
+The earlier implementation is deployed with the watch disabled; the delayed-SIP
+update described below is local and has not been published or enabled. Existing periodic PDF schedules, RSI + PB
+PDFs, report destination, portfolio routes and ordinary scanner alerts are unchanged.
+
+### Schedule and candle definitions
+
+- Skip daily watches on the **first trading session of each week**, including a
+  Tuesday after a Monday holiday (explicitly reconfirmed 2026-11-25).
+- On other trading sessions, daily discovery begins three hours before the
+  regular close. Tracking continues until 15 minutes before the next trading
+  session opens. On the last session of the week it overlaps the weekly watch.
+- Weekly discovery begins three hours before the last trading session's regular
+  close. This is one continuous cycle through the next trading session's opening,
+  normally Friday to Monday. There is no Monday restart or separate Monday watch.
+- Calendar: `market_calendar`, America/New_York, scheduled holidays and early
+  closes. Israel display times follow Asia/Jerusalem DST; 23:00 is not hardcoded.
+  Unscheduled exchange closures require a calendar update.
+- Higher-timeframe discovery uses the current daily/weekly candle only, while
+  provisional. The parent is re-evaluated at the regular close, then frozen closed;
+  post-market trades do not extend it. New parents are not admitted once the delayed
+  data cutoff reaches that close. This allows delivery of a pre-close observation
+  during the first 16 minutes after the wall-clock close, explicitly marked delayed.
+- Lower timeframes are **15m, 30m, 1h, 4h**, independently, in the same direction.
+  Use Alpaca SIP split-adjusted data, regular plus 04:00–20:00 New York extended
+  sessions. Clock-aligned 4h buckets are 04–08, 08–12, 12–16 and 16–20; 1h/30m/15m
+  align to local clock boundaries. No overnight/weekend prices are invented.
+  Tracking persists through closed hours and resumes when actual bars are available.
+- Completed native 15m bars plus completed minutes construct provisional lower
+  candles. All watch requests use explicit historical `feed=sip`, split adjustment,
+  and a watermark of `floor(wall clock to minute) - 16 minutes`, retaining a
+  one-minute buffer beyond the free historical SIP restriction. Missing/stale
+  endings (over two minutes) suppress evaluation; a closing candle is evaluated
+  only once the watermark reaches its end. Cached split-adjusted history is
+  refreshed at each New York date boundary. At least 250 candles are required.
+  Freshness is measured relative to the delayed watermark, not the wall clock.
+  No IEX or real-time fallback is used. Schedule start/expiry and delivery shutdown
+  remain wall-clock based: daily stops 15 minutes before next open, weekly at next
+  open. Consequently the final delayed portion at expiry is not reported later.
+
+### Qualification, limits and messages
+
+Use the existing regular RSI detector and its frozen per-cycle rules, including
+P2 Bollinger touch, RSI tolerance and pivot spacing. No hidden divergence or
+pin-bar requirement. The first pivot must be confirmed; the second is evaluated
+with `provisional=True` (no future/right-hand candle confirmation). “Ready” means
+the exact previously reported lower pivot pair survives its candle close, not
+that a right-hand pivot or the higher candle has necessarily closed.
+
+One parent is admitted per symbol/direction/cycle. Choose its most recent qualifying
+P1 deterministically; recheck that exact pair. Lower events also retain their exact
+pair, but several qualifying P1s in one P2 candle count as one lower match. A candle
+already closed at the data watermark when first observed cannot enter the provisional stage. A forming
+candle may have started before its parent watch, but its first observation must
+follow admission in data time and it must still be open in that delayed snapshot.
+It may already be closed by wall clock, particularly on the 15m timeframe.
+
+The target is five distinct validated stocks per direction per cycle. Repeated
+timeframes/candles on one stock do not increase that count. Stop admitting parents
+for a filled direction. Daily cycles stop creating new lower events once both
+targets are reached, while settling already reported pending candles. Weekly
+cycles keep tracking admitted parents until expiry, with **four announced distinct
+lower candles per stock per timeframe** (up to sixteen). Provisional and close
+messages share one slot; invalidated matches consume their announced slot. An
+invalid parent is not recycled during that cycle. Historical validated counts are
+not reduced if a later parent invalidation is reported.
+
+Dedicated destinations (exported positive IDs verified via read-only Telegram
+`getChat` on 2026-11-25; actual API IDs below):
+
+| Stage | Group | Bot API chat ID |
+| --- | --- | --- |
+| Forming higher divergence | RSI Higher TF Reached | `-5596046632` |
+| Forming same-direction lower divergence | RSI Lower TF Reached | `-5462582401` |
+| Exact lower pair valid at close | Stock RSI Setup Ready | `-5481883301` |
+| Higher or lower invalidation, with failed condition | RSI Stock Setup Invalidated | `-5517376122` |
+
+Every newly generated watch alert (higher, lower, ready and invalidation) has
+**DELAYED DATA** in its title and states the **16-minute buffer plus polling/delivery
+time**. It shows the delayed data cutoff, detection timestamp and send timestamp
+in Israel time with UTC offset. Higher/lower **PROVISIONAL/CLOSED in delayed data**
+is separate from each candle's status by clock at delivery. A lower provisional
+observation arriving after wall-clock close explicitly says it is historical and
+awaits delayed close validation. Pivot prices/RSI and the shared parent identifier
+remain included. The data cutoff is the permitted evaluation boundary, not a claim
+that every symbol traded at that exact instant; existing freshness guards still apply.
+Invalidations explain failed price, RSI, pivot or band-touch conditions. Unavailable
+data is never an invalidation or a no-match. The third group receives only validated
+closures whose provisional lower message was delivered. If delivery fails until
+the delayed watermark reaches the lower candle's close, skip that stale provisional message and its ready
+message. Successful Telegram acceptance followed by a lost commit remains an
+at-least-once edge case, as with existing delivery.
+
+### Coverage, persistence and rollout
+
+Search S&P 500 → remaining Nasdaq US common stocks → remaining S&P MidCap 400 →
+other US-listed US common stocks. Nasdaq/broader fallback requires verified market
+cap of at least **USD 2 billion**; absent cap cannot pass. FMP classifications and
+security-name exclusions remove ETFs, funds, warrants, preferred shares, rights,
+units and debt. Share-class tickers are normalized for Alpaca. Index membership
+uses the existing refreshed/cached membership sources, with fallback dates recorded.
+If FMP's screener is unavailable, continue known S&P 500/S&P 400 membership and
+explicitly record Nasdaq/broader coverage unavailable. Never call that a complete
+US scan. Broad-universe records are frozen per cycle; provider failures retry.
+
+The existing signal process owns a separate watch thread using the same worker
+ownership/effects gate, not another scanner process or execution engine. It polls
+at 30-second intervals, checks admitted parents/lower candles before the next
+50-symbol discovery batch, and records coverage/errors. This is best-effort polling;
+request duration and universe size affect detection latency. There is no guaranteed
+instantaneous delivery or guaranteed five matches when market conditions lack them.
+
+`stock_rsi_watches` stores cycle rules, discovery cursor, coverage, counts, exact
+pivot pairs, matches and ordered delivery events. State/outbox are checkpointed
+before sends; `telegram_delivery.deliver` provides per-event deduplication, existing
+sound-slot behavior, worker ownership checks and retry leases. No ordinary routing,
+personal fanout, PDF delivery or trading-order integration is involved. Expired
+cycles cannot generate or deliver fresh alerts. Local dry-run/Telegram controls
+remain effective. Worker ownership loss propagates to the shared shutdown guard.
+
+Apply the SQL migration explicitly, then opt in with `STOCK_RSI_WATCH_ENABLED=true`
+only after access and group permissions are verified. The default is false.
+Read-only checks on 2026-11-25 found **recent Alpaca SIP access rejected** and **FMP
+company-screener subscription access rejected**. Subsequent authenticated GET-only
+checks using production credentials verified delayed SIP access (HTTP 200): AAPL,
+MSFT and SPY on November 23–24 included pre-market from 04:00 NY and after-hours
+through 19:59 (MSFT November 24 ended 19:56). Today's window ending 17 minutes
+before the request returned 121 minute bars per symbol. History requests returned
+551 daily and 1,359 hourly bars per symbol. These samples establish account access,
+not full-universe completeness or every timeframe's signal accuracy. Broad Nasdaq
+and other US coverage remains limited by FMP entitlement; index fallback records
+that limitation. No test messages were sent. The delayed implementation can be
+enabled only after publication approval and source/deployment verification.
+Local verification uses `test_stock_rsi_watch.py` with mocked providers/Telegram
+and a disposable loopback PostgreSQL database; it does not establish production
+signal accuracy or actual delivery readiness.
+Delayed-SIP local verification on 2026-11-25: **68 tests passed**, including all
+28 watch tests and Alpaca/report/delivery regressions, using a newly created
+disposable loopback PostgreSQL database with mocked providers and Telegram.
+New regressions cover delayed query cutoffs, higher close deferral, post-close
+discovery of delayed provisional data, 15m provisional-to-ready transitions,
+message labels and delayed delivery deadlines versus wall-clock cycle expiry.
+Verification on 2026-11-25: 100 targeted scanner/report/watch/delivery tests passed;
+the 23 watch tests passed again after final data-validation and delivery-expiry
+changes. Compilation and `git diff --check` passed. Read-only `getChatMember`
+confirmed the bot is an administrator in the first two groups and a member in the
+ready/invalidation groups; actual end-to-end delivery has not been exercised.
+
+Post-publication receipt (recorded locally after the verified rollout): commit
+`0bfc1ff880112fd2a0a0b17cffe8b5a166367703`, branch `codex/stock-rsi-watch`, deployed
+to `trading-linux:/home/ido/apps/trading-bot-postgres` on 2026-11-25. Exact-SHA
+[Linux/Windows tests, builds and frozen-app smoke tests](https://github.com/idodidodi/trading-bot/actions/runs/45595851818)
+and [desktop builds](https://github.com/idodidodi/trading-bot/actions/runs/45595852089)
+passed; the Cloudflare branch check passed. Legacy executable publication remained
+intentionally skipped. No production UI deployment was requested or performed.
+Every installed runtime blob matched the commit. Health and source manifest matched
+scanner `94697a0433fdd8aa`, UI `6097720c5ac73e84`; exactly one worker held ownership.
+The additive watch schema and worker grants were verified, with zero watch rows.
+`STOCK_RSI_WATCH_ENABLED=false` is explicitly set in the production environment;
+the disabled worker path and sixteen simulated ready events passed without live
+sends or production signal writes. Unauthenticated API access returned the expected
+401. Source rollback backup:
+`/home/ido/apps/trading-source-backups/20261125T103731594047Z`.
+The rollout bundle, private environment backup, schema backup and verification
+scripts are in `/home/ido/stock-rsi-watch-rollout`. Activation remains blocked on
+the data entitlements described above.
+
+Reviewed **2026-11-24** for the prepared NEAR 5m RSI ATR gate; **2026-11-24** for exclusive periodic stock-PDF routing (local, not deployed); **2026-11-23** for verified stock-report schedules, daily RSI PDFs and market-cap metadata; **2026-11-23** for additive NEAR routing (local, not deployed); **2026-11-22** for the prepared trend-only pin-bar correction; **2026-11-21** for the locally prepared NEAR 5m RSI14 override (not deployed); **2026-11-20** for regular/hidden RSI and the explicit NEAR-only Telegram subscription (source and rollout requirements reviewed); **2026-11-19** for Pin-Bar candle photos and caption controls; **2026-11-19** for staged Clerk identity handling (local only, not deployed); **2026-11-18** for fresh configuration reads with conditional payload transfer (prepared locally, not deployed); **2026-11-15** for the opt-in local PostgreSQL working backend (verified deployed at `ebe79c1` on 2026-11-18); **2026-11-14** for market-session request eligibility; **2026-11-13** for optional local cache freshness/publication; **2026-11-07** for global five-minute Telegram exclusion and personal sound controls; other sections retain their stated review scope. This file is the single current alert-behavior reference. Historical strategy/deployment notes describe their releases; when they conflict, use the implementations cited here. Telegram delivery, credentials, recipient data and callback ownership remain in this service.
+
+## NEAR 5m RSI large-candle exception — prepared locally (2026-11-24)
+
+For the NEAR group's plain RSI alerts only, the selected 5m checkbox now means
+exception-only delivery: the divergence's second pivot candle must either itself
+have a high-low range of at least 3× preceding ATR(14), or immediately follow a
+candle meeting that threshold. Both bullish/bearish and regular/hidden divergences
+use the same gate. RSI remains 14 close. Other frames, assets, pin-bar alerts and
+Wyckoff annotations are unchanged. The checkbox stays selected to enable exceptions;
+unchecking it suppresses exceptions too. Settings explains this behavior.
+
+`near_rsi_atr.annotation` computes Wilder ATR from true ranges: seed with 14 ranges,
+then `(13 * previous ATR + TR) / 14`. True range includes the previous close;
+the initial available candle uses its high-low range. Compare each candidate's
+high-low range against ATR **before** that candidate, excluding its own true range.
+Equality at 3× qualifies. Only closed candles through the divergence close are used;
+no future data, direction/color requirement or longer lookback exception is added.
+A gap resets ATR history and a non-adjacent prior candle cannot qualify. Insufficient
+history or zero ATR does not qualify. Evidence records the qualifying candle,
+ATR, range, ratio and whether it is the signal candle or its immediate predecessor.
+
+`scanner.scan_once` attaches this evidence after signal validation, before storage.
+`telegram_asset_subscriptions.eligible` calls `near_rsi_atr.allows` during delivery:
+missing, old-version or nonqualifying evidence suppresses the 5m RSI alert, including
+previously queued retries. Qualified alerts keep existing enrollment, destination
+routing and deduplication. Findings and RSI scans remain available to other consumers;
+5m scanning is still necessary to find exceptional alerts. No subscription/schema
+migration or RSI baseline reset is needed. This change is not yet deployed.
+Local verification: 99 backend regression tests passed against disposable Postgres,
+including current production routing; 16 UI tests and the static build passed.
+
+
+
+## Current Portfolio — verified activated (2026-11-24)
+
+Read-only Telegram API verification confirmed the user-supplied Current Portfolio
+group is `-5276778238`, with `idodiTradingBot` an administrator. Production managed
+configuration revision 51 is fully applied and enables CRWV, ALK, NVDA, ANT, AMAT
+and AUR on 4h, daily, weekly and monthly. All six enable RSI, Pin Bars and daily
+SMA crosses; all except ALK also enable RSI + PB. This change does not enable
+additional strategies or alter scan qualification. ANT remains subject to limited
+history following its recent enrollment.
+
+The local `telegram_portfolio.py` delivery hook adds copies to this group for
+those exact six canonical IDs and the four listed frames. Notification metadata
+is read from the relevant signal table; RSI uses its structured payload. Existing
+market and personal routing remains in place. Reports, demos, unknown notification
+types, other assets and lower timeframes are excluded. The example configuration
+is disabled: activation requires `telegram-portfolio.json` beside the runtime
+modules, enabled with a positive enrollment timestamp. Findings whose confirmation
+predates enrollment cannot be copied, including old queued findings. Membership
+is the latest user-supplied list, not every asset marked portfolio. Sunday updates
+replace the list; retained assets preserve enrollment and new assets receive a new
+`asset_enrolled_at` timestamp. Removed symbols stop receiving copies. No reply
+leaves the current list unchanged. The reminder is scheduled for Sundays at 09:00
+Asia/Jerusalem.
+
+Copies reuse `telegram_delivery.deliver` with the original event identity and
+separate chat destination for durable deduplication and retries, existing sound
+settings and shared dismissal behavior. A portfolio delivery RuntimeError leaves
+the event retryable after attempting existing groups. Worker ownership and
+retryable database exceptions propagate. No fallback sends portfolio-only copies
+to another destination. A portfolio send may succeed before another destination
+fails; the normal ledger prevents sending its copy twice on retry. Trend-pin-bar
+copies, if such a strategy is enabled in future, reject retired reversal findings.
+
+Verification: five local and staged-production unit tests cover exact assets/frames, enrollment,
+notification strategy metadata, report/demo exclusion, independent shared delivery
+on portfolio failure and worker ownership propagation. Telegram membership and
+managed configuration were inspected without sending alerts or starting a scanner.
+Publication was authorized and the existing Linux worker was updated at 10:12
+Israel time on November 24. `PORTFOLIO_DEPLOYMENT.json` records the source commit,
+base routing hash, deployed hashes and backup. Both deployed file hashes matched;
+the worker is active and managed revision 51 remains fully applied. A live-config
+smoke test using mocked delivery accepted all 24 symbol/frame combinations and
+rejected lower frames, other symbols and pre-enrollment findings without writes,
+alerts or orders. Five tests passed against the staged production module. The
+production routing retains its existing fixes; `scripts/patch-portfolio-routing.py`
+applies only this hook. Natural portfolio delivery has not yet been observed;
+GitHub checks are verified separately against the final pushed SHA.
+Sources: `telegram_portfolio.py`, `telegram_routing.py`
+(`deliver_routed`), `telegram-portfolio.example.json`, `test_telegram_portfolio.py`.
+
+## S&P 500 PDF reports — local update, production not yet verified (2026-11-23)
+
+Sources: `stock_reports.schedules/period/new_run/evaluate/process/artifacts/eligible`,
+`stock_report_data.fetch_batch/fetch_preclose/market_caps`, `stock_report_pdf.render`,
+`telegram_documents.deliver_document`, and `cloud/stock-reports.sql`.
+
+- When `stock_reports.enabled` is true, the independent full-constituent report scan
+  runs without price preselection or portfolio exclusion. It writes report rows and
+  PDF bytes only: it never creates live signals, orders, strategy baselines or pending
+  RSI + PB setups. Permanent-asset alert behavior is unchanged.
+- **Daily RSI divergence and RSI + PB:** each US trading session, scheduled 20 minutes
+  after the regular close to allow closing data to arrive. Only completed daily candles
+  are evaluated. Each strategy/direction has its own matching PDF (up to four), with all
+  matching stocks in that PDF. No daily standalone Pin Bars or BB Pin Bars reports.
+- **Weekly/monthly standalone Pin Bars and BB Pin Bars:** existing matching PDFs move
+  to two hours before close on the last trading session of the week/month. Both bullish
+  and bearish directions remain separate. The later Sunday/first-of-month run no longer
+  includes these strategies. No additional after-close copy is created.
+- **Weekly/monthly RSI divergence and RSI + PB:** retain Sunday 08:00 / first calendar
+  day 08:00 Asia/Jerusalem, respectively, for the preceding completed week/month.
+  RSI uses the existing `scanner.detect(..., provisional=True)` pivot-close stage:
+  its input candle is closed, but later right-side pivot confirmation is not required.
+  RSI + PB retains its existing immediate-next-candle qualification and direction rules.
+  Daily RSI reports use these same detector semantics; “after close” is not a change
+  to confirmed-pivot detection. No indicator parameters were changed.
+- The existing `market_calendar` determines sessions, scheduled holidays, early closes,
+  and New York DST. Unexpected exchange closures require a calendar update. Different
+  timeframes due on the same date produce independent report sets. The worker revisits
+  reports at most every five minutes when idle; scan/provider/Telegram latency means
+  actual delivery follows the scheduled instant rather than guaranteeing an exact minute.
+- Pre-close reports freeze their snapshot at the scheduled instant, not the retry time.
+  They combine closed native historical candles with one partial current candle built
+  from completed daily bars earlier in the period and regular-session one-minute bars
+  through the snapshot. Missing earlier sessions or a last minute bar more than five
+  minutes stale make the snapshot unavailable. Later trades are excluded even on retry.
+  PDFs/captions say **Provisional**; the price column says **Latest price (USD)** and the
+  time group says **Snapshot**, not final close. These signals can change before close.
+- All matching PDF stock tables now include **Market cap (USD)**, formatted in M/B/T.
+  FMP `market-capitalization-batch` uses the existing `FMP_API_KEY`; entitlement, rate
+  limits, malformed values or absent credentials can leave cells **Unavailable**.
+  Lookup is only for matching unique tickers, once per report run; the snapshot is
+  persisted and reused across its PDFs/retries. PDF notes identify source, retrieval
+  time and available provider dates. Values are latest available company market caps,
+  not historical values at the signal candle. They never filter signals or change
+  non-PDF alerts. Market-cap production access has not been verified for this update.
+- Membership and company/sector metadata refresh together. On refresh failure, use the
+  latest saved membership, then the dated repository universe; missing names/sectors are
+  disclosed as unavailable. Target 250 history candles, with each strategy enforcing its
+  own minimum. Limited warm-up is disclosed separately and does not invalidate an
+  otherwise eligible signal. Newly listed stocks may have shorter history.
+- Empty strategy/direction pairs with evaluated data share the existing no-matches PDF;
+  missing/short history goes into coverage notes instead of being treated as no matches.
+  Coverage may add another PDF beyond the four matching PDFs. A stock may qualify for
+  both RSI strategies. PDF grouping still uses signal candle open/end timestamps.
+- Runs freeze membership, feed, rules, strategy subset, period, cutoff and deadline.
+  Checkpoints, ownership leases, persisted PDF bytes and existing Telegram reservations
+  remain. Daily retries use the New York session identity and remain eligible until New
+  York midnight, including after Israel midnight. Pre-close retries expire at that day's
+  session close; legacy RSI runs expire at Israel midnight. Provider failures retry hourly
+  when at least an hour remains, otherwise produce disclosed unavailable coverage.
+  Expired unfinished runs become `missed`; no historical catch-up runs are created.
+  Already saved legacy runs/PDFs keep their frozen contents and original identity.
+- **Dedicated PDF routing (local change, not yet deployed on 2026-11-24):** when
+  `TELEGRAM_STOCK_REPORT_CHAT_ID` is set, every periodic stock PDF goes exclusively
+  to that group: daily/weekly/monthly, all strategies/directions, and no-match/coverage
+  PDFs. This bypasses strategy/General and personal/subscription fan-out for PDFs only;
+  ordinary signal alert routing is unchanged. A failed dedicated destination is retried
+  under the existing report deadline and never falls back to another group. The shared
+  delivery ledger, worker ownership check, one-sound-per-minute cap and report dry-run
+  gates remain. Empty configuration preserves legacy PDF routing. Invalid positive or
+  nonnumeric IDs fail before sending. Previously delivered documents are not replayed.
+  Read-only Telegram `getChat` verified the requested group as **Periodic Stocks Reports**,
+  Bot API chat ID **-5347004785**, type `group`, with document sending allowed.
+  The positive exported ID 5347004785 is not the Bot API destination.
+  Source: `telegram_documents.deliver_document`, `telegram_delivery.deliver`.
+  Local verification: 42 report/schedule/delivery tests passed against disposable
+  Postgres with mocked Telegram, including all PDF categories, duplicate suppression,
+  the shared sound cap, invalid IDs and no fallback after destination failure.
+
+
+Deployment prerequisite: reapply `cloud/stock-reports.sql` as schema owner to allow
+`daily` in the existing run table; it preserves historical rows/documents and permissions.
+Local verification: 84 report, schedule, RSI, RSI + PB and Alpaca tests passed on the
+production-based branch against disposable Postgres, with report-provider/Telegram calls
+mocked. The upgrade was rerun over the old timeframe constraint and retained saved PDFs.
+Single-page and 100-stock multipage PDF previews were rendered and visually inspected.
+No production scanner was started and no test alerts/orders were sent.
+This section describes local code only; it does not claim this release is running in production.
+
+
+Verified production rollout (2026-11-23): source
+`35c180fc52fc0373383052a67d82588a7c2f7b41`, branch `codex/stock-report-schedules`,
+is installed at `trading-linux:/home/ido/apps/trading-bot-postgres`. This verification
+supersedes the pre-publication status above. The active runtime database is local
+PostgreSQL `trading_runtime`, not Supabase. The report migration preserved counts,
+content checksums, delivery flags and report configuration. A full database dump is
+at `/home/ido/stock-report-rollout-35c180f/trading_runtime-before.dump`; source backup:
+`/home/ido/apps/trading-source-backups/20261123T170815929713Z`.
+All installed runtime Git blobs matched the approved commit. Served scanner fingerprint
+`a06a2b6d08b98509` and unchanged UI `484da62cc65f7d4d` matched the source manifest.
+Both existing services were active; exactly one worker owner and the API's 401
+unauthenticated boundary were verified. Pure schedule/PDF smoke tests passed without
+persisting report rows, starting a scanner or sending test Telegram alerts/orders.
+A read-only FMP sample returned AAPL market cap dated 2026-11-23; this does not prove
+coverage for every constituent or future natural delivery.
+[Linux/Windows tests, builds and frozen-app smoke tests](https://github.com/idodidodi/trading-bot/actions/runs/45223092693)
+and [desktop checks](https://github.com/idodidodi/trading-bot/actions/runs/45223092615)
+passed on that exact SHA. The Cloudflare branch-preview check passed; production UI
+redeployment was unnecessary. Legacy executable publication stayed disabled.
+This rollout note is a local verification record, not another published source revision.
+
+## Additive NEAR routing — prepared locally (2026-11-23)
+
+This section supersedes the exclusive-routing and scan-demand behavior of the
+November 21 release below. Production was inspected read-only on November 23 and
+still has those exclusions; the correction here is not yet deployed.
+
+The NEAR subscription is an additional destination. NEAR RSI follows the existing
+shared crypto RSI route (General remains its fallback) and enabled personal RSI
+routes, as well as the dedicated subscription. Trend pullback pin bars similarly
+use shared/personal crypto pin-bar routes plus the dedicated subscription. Legacy
+EMA/BB pin bars again reach eligible other groups, but remain excluded from the
+dedicated NEAR group, whose pin-bar choice selects only trend pullbacks. Retired
+reversal payloads remain suppressed before delivery to any destination.
+
+The general 5m Telegram mute remains: only explicit subscriptions receive those
+copies. Dedicated group selections and enrollment cutoffs apply only to that
+destination, including when it also appears in a shared or personal route. Other
+personal opt-outs, enrollment times and sound preferences remain effective.
+Deduplication is by bot/destination plus event, so one event reaches each eligible
+group once, including when multiple routes name the same group. A dedicated
+subscription delivery failure leaves the event retryable but does not prevent
+personal copies; accepted destinations are skipped on retry. Missing shared
+configuration does not prevent NEAR subscription or personal delivery.
+
+Other eligible shared/personal groups now count as scan consumers even when NEAR
+checkboxes are off. Trend pullback scans can remain active for those groups on
+supported configured frames; existing asset eligibility and higher-frame RSI
+context dependencies still apply. A dedicated destination alone does not count
+as broad demand when its box is off. Resumed strategies retain fresh cutoffs and
+baseline behavior; this change does not reset queues or replay suppressed history.
+
+Sources: `near_alerts.needed/plan/allows_destination`,
+`telegram_routing.select/deliver_routed`, `telegram_personal.route_for/deliver_personal`,
+`telegram_asset_subscriptions.deliver_subscriptions`, `telegram_delivery.deliver`,
+`scan_schedule.identity`, `candle_strategy.scan`.
+Verification: 82 targeted tests passed against disposable Postgres with mocked Telegram transport; regression tests
+in `test_near_redundant_routing.py` cover independent copies, destination dedup,
+opt-outs, retry isolation, scan demand, 5m exclusion and retired reversals.
+No production settings, queue rows, messages or orders were changed.
+
+## Trend-only pin-bar correction — prepared locally (2026-11-22)
+
+This correction supersedes the reversal qualification described for the November 21
+release below. `trend_pin_bars.load_rules/detect` version `trend-pin-bars-v4` only
+emits trend-aligned pullback pins: bearish after a downward impulse and upward
+pullback, bullish after an upward impulse and downward pullback. Existing wick,
+five-candle impulse and 1–12 candle pullback criteria are unchanged. The standalone
+countertrend reversal fallback is removed. The exact Kraken 4h bearish alert closing
+22 November at 18:00 Israel is now rejected, as is its bullish mirror. The previously
+accepted 19:00 reversal is also rejected under the user's corrected requirement;
+04:30 remains accepted and 13:45 remains excluded. No future candles are used.
+
+`telegram_asset_subscriptions.deliver_subscriptions` rejects queued new-pin-bar
+payloads unless `setup` is `trend_pullback`, including retries from the retired
+reversal rule. Existing delivered messages and stored history remain intact. The
+version change establishes fresh strategy baselines without historical replay.
+Settings now labels this strategy “Pin bars: trend pullback.” RSI, Wyckoff annotation,
+selected timeframes and the exclusive NEAR destination are unchanged. This correction
+has not yet been pushed or deployed; the production record below describes v3.
+
+## NEAR notification controls — verified production (2026-11-21)
+
+The owner-only Settings grid chooses RSI divergence and pin bars (trend pullback plus reversal)
+independently on 5m, 15m, 30m, 1h, 4h, daily and weekly. The existing single NEAR
+subscription remains the destination authority; no browser-supplied chat/user ID
+is accepted. `cloud/near-group-preferences.sql` verifies installation ownership
+and runtime identity, serializes saves and checks revisions. Empty selections
+pause that category for this group. Group migrations cascade preferences.
+Unchanged selections retain their enrollment cutoffs; newly enabled cells receive
+a fresh cutoff. Old queued alerts cannot bypass an unchecked box via broad routes.
+Legacy EMA/BB pin-bar copies are excluded from this group's broad route; the grid's
+pin-bar row selects the new pullback/reversal rules. NEAR RSI and the new pin bars go only to the explicit NEAR group on every
+selected frame. There is no General, market-category or personal-group fallback,
+even on a delivery failure. Legacy NEAR EMA/BB pin-bar copies are suppressed;
+other assets retain their existing routing. Other NEAR strategies such as RSI + PB
+are outside this subscription change.
+Sources: `web/app.js` (`nearGroupControls`), `telegram_asset_subscriptions.py`,
+`telegram_routing.py`, `near_alerts.allows_destination`.
+
+Migration initially enrolls trend pin bars on the existing enabled NEAR RSI
+subscription's frames, using the migration time as enrollment. Rerunning preserves
+saved settings. It creates independent trend state/signals and demand-state tables.
+These alerts use the existing notification queue, photo renderer and per-destination
+ledger, with one signal identity per source, strategy version, frame, direction and
+candle. Repeated scans do not resend. This feature requires the SQL migration before
+scanner/API/UI deployment; the migration and release are now verified below.
+
+For NEAR only, the normal scanner considers active group subscriptions, live signal-service subscribers. Broad shared and personal Telegram routes no
+longer count as consumers of NEAR RSI/pin bars because these alerts are group-only. Needed higher
+RSI frames remain scanned for a subscribed 5m context consumer; RSI + PB and its
+opposing evidence remain separate dependencies. Legacy EMA and BB pin-bar checks
+can be skipped when no consumer needs them. If a frame has no strategies left,
+the scanner performs no feed fetch or strategy evaluation. Selections are refreshed
+on the next cycle; delivery rechecks current settings. A resumed strategy starts
+at a fresh cutoff rather than replaying its paused interval. Sources:
+`near_alerts.snapshot/needed/plan`, `scanner.scan_once`, `scan_schedule.identity`,
+`candle_strategy.scan`. Conservative signal-service demand does not prune by
+strategy version or direction; these subscribers may still require inspection.
+
+### Pullback and reversal pin-bar qualification
+
+`trend_pin_bars.py` is independent of existing EMA/BB pin-bar strategies. It uses
+five completed pre-pullback candles: at least three of the four close-to-close
+changes agree with the trend, and net movement exceeds the mean high-low range
+of those five candles. One to twelve subsequent candles may alternate direction, but their closes must
+remain at or behind the impulse’s strongest final close and the final pre-signal
+close must be against the trend. Including the signal candle's extreme, retracement must be
+positive and no more than two-thirds of the trend's first-to-last close move; the signal
+close must remain inside the pullback rather than beyond the prior trend close.
+A bullish trend requires a dominant lower wick; a bearish trend requires a dominant
+upper wick. The dominant wick must exceed twice the body and exceed the other wick;
+the short wick is at most 0.66 of the long wick. Body color does not determine bias.
+The signal is emitted at pin-bar close, including during an ongoing pullback: no
+later candle or breakout confirmation is used. Version: `trend-pin-bars-v3`.
+
+The user’s Bybit NEARUSDT perpetual 15m example at 2026-11-21 04:30 UTC−4 is
+verified against saved public OHLC in `tests/fixtures/near-bybit-2026-11-21-0430.json`:
+a six-candle mixed pullback with approximately 55.38% retracement qualifies at
+04:45 UTC−4 without any later candles. This is a regression example, not a live
+feed change: live NEAR stays on Kraken spot. The user accepted the 19:00 reversal and explicitly excluded 13:45 indecision.
+Both now have historical regression fixtures; 19:00 qualifies and 13:45 does not.
+
+Reversal pins use the same strict wick/body criteria. The preceding ten candles
+must have net movement opposite the pin’s direction exceeding their mean high-low
+range. A bearish pin must reach or exceed their highest high; a bullish pin must
+reach or fall below their lowest low. No subsequent reversal confirmation is needed.
+When one candle qualifies for both setups it emits only one finding, prioritizing
+trend pullback. The saved `setup` and Telegram heading distinguish `trend pullback`
+from `reversal`. The Settings pin-bar row enables both accepted setups; no indecision
+category is enabled. A real Kraken 15m example closing on 2026-11-21 at 17:45
+Israel time was reviewed with `Wyckoff stage (estimated): Markup`; the estimate
+used only history available at that close, including Kraken volume.
+
+### Wyckoff stage annotation
+
+NEAR RSI and pin-bar findings save an informational estimate from the same frame,
+using only candles closed by the signal's timestamp. The Telegram line is
+`Wyckoff stage (estimated): Accumulation`, Markup, Distribution, Markdown or Unclear.
+It does not gate signals or claim a full Wyckoff schematic/phase identification.
+`kraken_feed.fetch_kraken` retains finite nonnegative volume from OHLC element 6,
+keyed by candle start, excludes the final uncommitted bar and uses the existing
+paced request. There is no separate volume request. Invalid/missing volume does
+not block an otherwise valid price signal; the line explicitly says `no volume`.
+Volume is attached to the fetched snapshot and summarized in the saved finding's
+annotation, not retrofitted into the historical OHLC cache.
+
+`wyckoff_context.analyze` requires 40 completed candles. The latest 20 define mean
+high-low range, net move and directional efficiency (absolute net move divided by
+sum of absolute close changes). A move of at least three mean ranges with efficiency
+at least 0.35 estimates Markup/Markdown. Otherwise a range with net movement at most
+two mean ranges and total width at most eight mean ranges can estimate Accumulation
+following a preceding 20-candle decline of at least three mean ranges, or Distribution
+after an equivalent rise. Range estimates additionally require valid volume on all
+40 candles, positive total volume and recent volume-weighted close-location pressure
+at least +0.10 or at most -0.10 respectively. Other cases remain Unclear. These are
+explicit implementation heuristics, not thresholds prescribed by Wyckoff.
+Sources: [Kraken OHLC](https://docs.kraken.com/api-reference/market-data/get-ohlc-data),
+[Wyckoff method](https://www.wyckoffanalytics.com/wyckoff-method/),
+`wyckoff_context.py`, `near_alerts.annotation`, `platform_app.message`,
+`trend_pin_bars.message`, `pin_bars.message`.
+
+The final marked-example revision passed all 12 focused engine/database/settings
+tests, all 16 UI tests and the dashboard build. Both accepted historical candles
+qualify using only data through their own closes; the excluded 13:45 candle fails.
+
+Local verification: the integrated 80-test backend suite passed against disposable
+PostgreSQL; five focused engine tests (including an added range/volume test) and 16
+UI tests passed. Browser interaction verified the real settings component with
+mock data and its checkbox/save feedback. Real Kraken NEAR/USD history supplied
+three 5m examples (two bearish, one bullish), without replaying them into queues.
+No production settings, alerts or orders were changed during this verification.
+
+### Production verification — 2026-11-21
+
+Deployed source `410b93ad041352061caef87da4564a1ac065eb40` from branch
+`codex/near-notification-controls` to `trading-linux:/home/ido/apps/trading-bot-postgres`
+and the existing scanner/API services. Applied `cloud/near-group-preferences.sql`
+to `trading_runtime` after verifying a private database backup. Health and installed
+source matched UI fingerprint `4af21f3a4d4e3544` and scanner `758bf630e4d515b1`;
+exactly one scanner owned the worker lock. The authenticated owner API read passed.
+The sole destination is `-1004484031372`; RSI and new pin bars are selected on
+5m, 15m, 30m, 1h, 4h, daily and weekly. All seven pin-bar baselines initialized
+naturally. Legacy pin-bar calculations still run where live signal-service subscribers
+need them, but their NEAR Telegram copies remain suppressed. Higher-timeframe RSI
+context remains an independent scan consumer.
+
+Cloudflare Pages production deployment `22040f83-8a33-4fe4-80d9-8f068464a7df`
+serves the exact built assets at https://app.family-trading-bot.dynv6.net with the
+existing Clerk configuration unchanged. The deployment metadata records the exact
+source SHA; Pages' production branch metadata remains `codex/clerk-auth`.
+[Pages deployment](https://22040f83.family-trading-bot-dashboard.pages.dev).
+[Linux/Windows builds and frozen-app smoke tests](https://github.com/idodidodi/trading-bot/actions/runs/44953509127)
+and [desktop checks](https://github.com/idodidodi/trading-bot/actions/runs/44953509054)
+passed on that SHA, as did the external Workers build check. The legacy publication
+job remained intentionally disabled. No test alerts or orders were sent; these checks
+do not claim receipt of a future qualifying alert. Wyckoff labels remain estimates.
+
+The implementation and historical regression fixtures are committed in the isolated
+checkout `/private/tmp/near-notification-ui`; the original working checkout's unrelated
+changes were preserved. This post-deployment record is a local documentation update,
+not an additional published source revision.
+
+## NEAR/USD five-minute RSI profile (prepared 2026-11-21)
+
+Only the configured asset `NEARUSD`, symbol `NEAR/USD`, on `5m` uses RSI 14
+on candle closes with the existing Wilder smoothing. This replaces RSI 3 for
+all four plain RSI divergence types: regular/hidden, bullish/bearish. The
+Bollinger, pivot, tolerance and closed-candle qualification rules remain unchanged.
+Other assets, other NEAR timeframes and RSI + PB retain their existing parameters.
+Sources: `rsi_profiles.py`, `scanner.scan_once`, `scanner.indicators`.
+
+The profile has its own version and scan-state identity. Its first scan establishes
+a fresh baseline without sending historical matches. Only that profile is scanned
+for NEAR 5m; no parallel RSI 3 path is enabled. The delivery worker cancels pending
+or retrying plain NEAR 5m RSI 3 queue rows before routing. Findings and completed
+sent ledgers remain intact. Existing pivot-close event grouping and per-recipient
+deduplication still apply: multiple comparisons for one event send once, while
+regular and hidden events remain distinct. Sources: `platform_app.delivery_worker`,
+`platform_app.signal_alert_event`, `telegram_asset_subscriptions.deliver_subscriptions`.
+
+Stored-history Python and legacy cloud replay entrypoints apply the same scoped
+profile; Python replay rows expose their effective rules. CSV upload replay still
+supports 1h and above only. Generic detection engines remain parameter-driven so
+RSI + PB keeps its own rules. No broker execution allowlist is changed: a pinned
+older strategy version does not authorize execution of the new RSI14 version.
+Sources: `backtest.replay`, `cloud/functions/backtests/engine.mjs`,
+`cloud/functions/backtests/index.ts`, `csv_backtests.parse`, `signal_contract.py`.
+
+Production was read-only verified at source `96decf4536c5eb0d32b913767e9f70ae87a0dbf1`
+before this change. The enabled NEAR-only subscription now points to supergroup
+`-1004484031372`, following migration of the original group `-5412729128`.
+It retains 5m, 15m, 30m, 1h, 4h, daily and weekly. The earlier migration recovery
+verified bot membership and natural delivery; this change does not reset enrollment,
+change routing or send test messages. Group renaming alone does not change routing.
+The RSI14 override described above remains local until explicitly approved and
+verified deployed; it does not claim a change to current production calculations.
+
+Local verification: 65 Python tests passed against a fresh disposable PostgreSQL
+database, plus both JavaScript replay suites. Coverage includes all four divergence
+types, Wilder close calculation, scoped parameters, a fresh scanner baseline,
+restart deduplication, old queue cancellation and one subscribed delivery for
+multiple comparisons. Telegram transport was mocked; no test alerts were sent.
 
 
 ## Staged Clerk authentication and personal settings
@@ -36,19 +673,21 @@ bounded low-priority process (`local_csv_replay.py`), with no scanner or sender.
 `cloud/local-replays.sql` preserves SQL authorization and rechecks CSV save
 permissions. Production routing and the final data transfer remain unverified.
 
+
 ## Configuration read freshness
 
 `managed_assets.get` checks both one-time migration flags and the current configuration content hash on every call. Unchanged payloads reuse a process-local parsed copy, while revisions and applied revisions are always read freshly. Changes to payload content are fetched immediately even if an external writer leaves the revision unchanged. Returned configurations are independent copies. Database failures propagate; there is no time-based cache or stale fallback. The migration lock/recheck, explicit strategy opt-outs, worker ownership and effect checks remain authoritative. Sources: `managed_assets.get`, `managed_assets.migrate_rsi_pb`, `managed_assets.migrate_ma_cross`, `postgres_store.assert_worker`.
 
 ## Qualification and timing
 
-- RSI findings are validated against the Markdown-derived rules, including close-based divergence, inclusive RSI tolerance, pivot spacing and second-pivot Bollinger-band wick touch. A provisional divergence is available at the pivot candle close. Structural confirmation after the configured right candles remains a finding but does not send another Telegram alert. Legacy clock-review slots are cancelled. Multiple first-pivot references share the logical second-pivot alert identity. Sources: `platform_app.py:83` (`validate_signal`), `platform_app.py:166` (`Store.insert`), `platform_app.py:214` (`signal_alert_identity`), `scanner.py:144` (`detect`), `platform_app.py:327` (`delivery_worker`).
+- RSI findings are validated against the Markdown-derived rules, including close-based divergence, inclusive RSI tolerance, pivot spacing and second-pivot Bollinger-band wick touch. A provisional divergence is available at the pivot candle close. Structural confirmation after the configured right candles remains a finding but does not send another Telegram alert. Legacy clock-review slots are cancelled. Multiple first-pivot references share the logical second-pivot alert identity within their divergence type. Hidden findings have separate identities and a Hidden RSI message label; old records without a type are regular. Sources: `platform_app.py` (`validate_signal`, `Store.insert`, `signal_alert_event`, `signal_alert_delivered`, `delivery_worker`), `scanner.py` (`detect`).
 - Scanner baselines, selected-universe start times, continuous-feed gaps and provider freshness gates remain in `scanner.scan_once`. First runs establish a baseline rather than flood Telegram with history. Catch-up findings are summarized, not sent as new signal alerts. No new API subscriber, replay or acknowledgment resets any baseline or queues a Telegram message.
 - Pin-Bars and BB Pin-Bars use independently versioned closed-candle rules and the existing selection/baseline cutoff. A newly persisted eligible signal enqueues its existing notification only outside catch-up. BB Pin-Bars share the Pin-Bars routing category. Sources: `pin_bars.py`, `bb_pin_bars.py`, `candle_strategy.py:12` (`scan`).
 - RSI + PB holds a versioned pending RSI setup and evaluates only its next expected candle, with market/session-aware scheduling. It does not substitute a later candle. Qualification, opposite-wick shape, direction, stale-data protection and missing-next-candle handling remain in `rsi_pb.py:28`, `:37`, `:82`, `:95`, and `:131`. Only new qualifying non-catch-up findings enqueue `rsi-pb:<id>` notifications. Source message rendering: `rsi_pb.message`.
 - Daily momentum detection remains available in the dashboard and signal API. This change does not introduce a new momentum Telegram route or emit simulated trade outcomes from the signal service.
 - `quiet_hours` is 23:30–06:30 Asia/Jerusalem, with timezone/DST conversion. Existing callers decide when to use silent delivery; the separation does not broaden that policy. Source: `platform_app.py:271` and `send_telegram`.
 
+<<<<<<< HEAD
 ## Candle diagram delivery (EMA and BB Pin Bars)
 
 Local source sends each `pin-bars:` and `bb-pin-bars:` queued alert as one PNG photo with the existing formatted signal text as its caption. At persistence time, save up to 24 closed OHLC candles ending at the signal candle in `chart_candles`; later delivery uses that snapshot without fetching current data or including candles after the signal. The diagram outlines the signal candle, shows OHLC prices and the Israel-time confirmation, and uses green/red bodies for close versus open (body color does not define signal bias). Existing stored signals without a snapshot render their single saved OHLC candle. No schema migration or qualification/version change is required.
@@ -57,6 +696,96 @@ The photo uses the existing routed delivery reservation and message ID, personal
 
 Sources: `pinbar_chart.py` (`snapshot`, `render`, `notification_sender`, `photo_request`), `candle_strategy.py` (`scan`), `platform_app.py` (`delivery_worker`, `send_telegram`), `telegram_personal.py` (`prepare_message`), `telegram_dismissal.py` (`edit`, `handle`, `expire`), `telegram_checklist.py` (`prepare`, `handle`). Production rollout is not yet verified. On 2026-11-19 Telegram accepted one preview in each of the owner’s four verified personal Pin Bars groups (Forex, Crypto, Stocks, Other); this does not verify production rollout. Personal preview tests use explicitly labeled synthetic data, silent delivery and no callback controls; production routing and control persistence are tested separately against a disposable database.
 
+=======
+## Hidden RSI and exact-asset Telegram subscriptions
+
+Implementation; verify activation against the installed source and subscription row:
+
+- The live RSI scanner and Python/hosted RSI replays include regular and hidden
+  divergences. Hidden bullish requires Close[P2] > Close[P1] and
+  RSI[P2] ≤ RSI[P1] + 1; hidden bearish requires Close[P2] < Close[P1] and
+  RSI[P2] ≥ RSI[P1] − 1. The existing 2–60 spacing, strict closing-price pivots,
+  RSI 3/Wilder, BB20/2, and P2 lower-band bullish / upper-band bearish wick touch
+  remain. Equal price pivots do not qualify. The inclusive RSI tolerance can
+  admit up to one point against the ideal RSI direction, as for regular signals.
+- Core regular rules retain version `b4b8c578656c86fb`; the appended skill extension
+  is versioned separately. Hidden evidence carries `divergence_type=hidden` and
+  `version=rsi-hidden-v1-<core hash>`, which the signal API preserves. Finding IDs,
+  Telegram event IDs and previously delivered/suppressed checks distinguish the
+  types. Both types alert at pivot close; later structural confirmation is not a
+  second Telegram alert. Hidden API lifecycle updates use the hidden version.
+- The reusable Python detector remains regular-only unless explicitly enabled.
+  RSI + PB, existing chasing consumers, and the regular higher-timeframe context
+  stay regular-only. Hidden deliveries do not enroll automatic chasing. No
+  executor configuration or version allowlist is changed: the separate NEAR RSI
+  demo executor requires explicit reviewed strategy versions, so its existing
+  regular-version approval does not authorize hidden signals. Regular baselines,
+  regular publication version, and RSI + PB version remain unchanged.
+- `cloud/telegram-asset-subscriptions.sql` adds operator-managed subscriptions
+  keyed by chat and canonical asset ID. The worker has SELECT only. The additional
+  copy requires a provisional pivot-close RSI payload, exact asset/timeframe,
+  enabled subscription, and signal close at/after enrollment. Old records without
+  an asset ID, other symbols, other strategies, monthly findings for this
+  subscription, and pre-enrollment backlog are excluded. Re-enabling through the
+  configuration script advances enrollment.
+- Copies use the existing destination/event delivery ledger, 90-second leases,
+  retries and sound slots; failures stay retryable. They have no General fallback.
+  Private-chat Done/Undo belongs to the destination's Telegram user ID. These
+  operator subscriptions are independent of personal category/silence preferences;
+  disable them in their own subscription row. Dry-run and worker/effects ownership
+  still gate external delivery. No manual test message is sent during activation.
+- An explicit 5m subscription is the only exception to the existing broad 5m mute.
+  Shared/group/category destinations remain suppressed. For 5m, the queue outcome
+  still records broad suppression; actual direct-copy success is in
+  `telegram_delivery` and the delivery activity log. Other timeframes keep normal
+  shared delivery followed by the additional exact-asset copy.
+
+`scripts/configure-near-alerts.py` previews by default; `--apply` uses the
+**authoritative runtime database** via `TRADING_CONFIG_DATABASE_URL` (or the
+existing `TRADING_DATABASE_URL`). Apply requires an operator connection permitted
+to update config and subscriptions; it does not run the scanner. It selects the
+existing exact `NEARUSD` / `NEAR/USD` asset, requires its confirmed Kraken feed,
+and configures group **Chasing**, Bot API chat **-5412729128** for **5m, 15m, 30m, 1h, 4h, daily, weekly** RSI.
+It preserves other assets and existing non-RSI strategy coverage using
+`strategy_timeframes`; the asset frame list is the union needed by all strategies,
+while the new subscription is limited to the seven requested frames. Existing
+monthly RSI scanning/context and other destinations are preserved. The scanner
+intersects strategy limits with enabled asset frames. There is no monthly RSI
+copy to this new subscription.
+The script rejects shared routes already pointing at this chat. Existing personal
+references also fail closed unless `--replace-personal-route` is explicitly given;
+that option removes only references to this exact group, preserving all other
+recipients and destinations. It locks/checks the config revision, commits the
+route replacement/config/subscription atomically and reads config/subscription back.
+New frames establish their normal no-history-alert baseline. No alert is promised
+when data is unavailable or no pattern meets the filters.
+
+Read-only production inspection, 2026-11-20: runtime revision 47 was applied;
+NEAR was enabled for monthly/weekly/daily/4h/1h/5m and used Kraken for all except
+monthly. The authoritative runtime is PostgreSQL `trading_runtime` on Linux
+loopback, with runtime/effects enabled. Read-only Kraken requests returned 720 closed candles for each requested frame
+except weekly (231, still above the strategy minimum). Neither shared routing,
+the fallback, nor personal registrations targeted 5412729128. The user supplied the Telegram export for private group Chasing (export ID
+5412729128). Read-only `getChat` then verified Bot API ID **-5412729128**, title
+**Chasing**, type **group**; the positive export ID is not a private-user chat.
+`getMe` identified `@idodiTradingBot`. The verified group has one existing personal `chasing` route owned by Telegram
+user 8016839817; the approved NEAR-only enrollment replaces that reference using
+the explicit flag. Other routes are preserved. This subscription honors the
+existing group-dismissal enable setting and uses group dismissal
+controls and does not bind buttons to the positive export ID as a user identity.
+The Supabase management SQL endpoint was unavailable, but is not the authoritative
+configuration destination. These checks changed no production settings and sent
+no messages or orders. Deploy the existing Linux scanner/service and the additive
+SQL/config changes together; no Cloudflare UI publication is required. Hosted replay
+source retains parity but is not proof of an active hosted runtime deployment.
+
+Sources: `scanner.py`, `platform_app.py`, `signal_contract.py`, `signal_service.py`,
+`rsi_context.py` (regular context input), `rsi_pb.py`, `managed_assets.py`,
+`telegram_routing.py`, `telegram_asset_subscriptions.py`,
+`cloud/telegram-asset-subscriptions.sql`, `scripts/configure-near-alerts.py`,
+`cloud/functions/backtests/engine.mjs`, `cloud/functions/csv-backtests/rules.mjs`,
+`skills/rsi-divergence/SKILL.md`.
+>>>>>>> 74f1cc5 (Add hidden RSI divergences and exact NEAR Telegram subscriptions)
 
 ## Daily SMA crosses (Golden / Death cross)
 
@@ -268,7 +997,7 @@ Deployment prerequisite: apply `cloud/telegram-notification-sound.sql` after the
 
 ## Five-minute Telegram exclusion — reviewed 2026-11-07
 
-Five-minute (`5m`) signal alerts are suppressed before destination selection and delivery, for every market and strategy, including shared routes, General fallback, personal copies and queued retries. RSI uses its structured payload; EMA/BB Pin Bars, RSI + PB and SMA-cross notifications resolve their persisted signal payload. Missing queued strategy records delay delivery instead of sending without a timeframe check. Suppression is recorded by the existing worker queue status handling. Previously delivered messages are not removed. Reports, summaries and connection tests retain their existing behavior.
+Five-minute (`5m`) signal alerts remain suppressed for shared routes, General fallback, personal category copies and queued retries. The sole new exception is an enabled exact asset/timeframe RSI subscription described above; it sends only to its enrolled destination before the broad-route suppression returns. RSI uses its structured payload; EMA/BB Pin Bars, RSI + PB and SMA-cross notifications resolve their persisted signal payload. Missing queued strategy records delay delivery instead of sending without a timeframe check. Suppression is recorded by the existing worker queue status handling. Previously delivered messages are not removed. Reports, summaries and connection tests retain their existing behavior.
 
 Market scanning, five-minute candle processing, stored findings, higher-timeframe context and signal subscriber publication remain unchanged. Existing 1h/4h/daily/weekly/monthly Telegram behavior is preserved; this is not a new 1h/4h-only policy. Commit `50633b8` enabled NEAR 5m processing without adding an independent Telegram filter; its parent already routed all qualifying timeframes. Read-only production inspection on 2026-11-07 found 11 NEAR 5m deliveries to the configured Crypto RSI destination over the preceding seven days, all on November 7, and no other 5m crypto deliveries. This correction is locally verified only until separately deployed.
 
@@ -391,17 +1120,9 @@ sessions with distinct next-open times. This is not production deployment verifi
 
 `working_postgres.py` and `local_cache.py` add a loopback-only PostgreSQL backend for provider-response caching, candle copies and publication acknowledgements. Existing cache TTL and 24-hour republishing remain. Configured local failures propagate; there is no silent hosted-history fallback. Local CSV replay reads the local store. Shared worker fencing, provider quota reservations, command ownership, finding identities, callbacks, delivery offsets and deduplication remain in Supabase. No new live alert is generated by seeding or replay. This describes prepared local code, not a verified production configuration.
 
-### SPX and DAX timeframe updates — 2026-11-23
+### Preserved deployed Assets controls — 2026-11-24
 
-Verified through the production Assets editor: revision 49 saves SPX
-(`SPX500#`, Colmex-MT4) with 4h and 1h; revision 50 saves DAX
-(`GER40#`, Colmex-MT4) with daily, 4h and 1h. Existing strategies and
-enabled states are retained. Last observed scanner acknowledgement is 49;
-DAX revision 50 application and new-frame candle readiness remain unverified.
-Monthly/weekly are unsupported by the Colmex adapter. Daily SMA crosses
-continue to require 201 closed daily candles independently of selected frames.
-The local Assets editor now validates unsupported selected frames and shows
-saving/errors beside Save asset; successful saves reopen the saved row with
-an acknowledgement that does not claim scanner application or candle readiness.
-This UI fix is local, not yet deployed. Sources: production Assets editor;
-`web/app.js` (`loadAssets`); `colmex_feed.py`.
+The ATR settings release includes the previously deployed UI-only change
+`44fae6c`: asset-save feedback is inline and unsupported Colmex timeframes are
+validated in the Assets editor. This preserves existing user controls while adding
+the NEAR ATR explanation. It does not change asset selections or scanner logic.

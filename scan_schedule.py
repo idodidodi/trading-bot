@@ -14,6 +14,7 @@ def identity(asset, timeframe, rules):
     from market_sessions import VERSION
     fields.update(timeframe=timeframe,skill=rules['skill_hash'],session_version=VERSION,
                   market=asset.get('market'))
+    if asset.get('_resume'):fields['demand_resume']=asset['_resume']
     fields['scan_strategies'] = sorted(asset.get('scan_strategies', ['rsi', 'pin-bars']))
     if asset['provider']=='colmex':
         import os

@@ -123,6 +123,11 @@ def validate_asset(asset):
     frames=asset.get('timeframes')
     if not isinstance(frames,list) or not frames or any(f not in SUPPORTED_TIMEFRAMES for f in frames) or len(frames)!=len(set(frames)):
         raise ValueError('Choose at least one supported candle timeframe')
+    limits = asset.get('strategy_timeframes', {})
+    if (not isinstance(limits, dict) or any(s not in SUPPORTED_SCAN_STRATEGIES for s in limits)
+            or any(not isinstance(fs, list) or not fs or any(f not in SUPPORTED_TIMEFRAMES for f in fs)
+                   or len(fs) != len(set(fs)) for fs in limits.values())):
+        raise ValueError('Invalid strategy timeframe limits')
     for key in ('symbol','exchange','tradingview_symbol'):
         value=asset.get(key,'')
         if not isinstance(value,str) or (value and not TOKEN.fullmatch(value)):

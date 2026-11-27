@@ -1,6 +1,7 @@
 """Routed PDF attachment delivery using existing durable Telegram reservations."""
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 import uuid
@@ -45,10 +46,23 @@ def send_document(token, chat, caption, filename, content, silent=False, source_
 
 
 def deliver_document(store, event, filename, strategy, caption, content):
+    def send(token,chat,text,**kwargs):
+        return send_document(token,chat,text,filename,content,**kwargs)
+
+    report_chat = os.environ.get('TELEGRAM_STOCK_REPORT_CHAT_ID', '').strip()
+    if report_chat:
+        if not re.fullmatch(r'-[1-9][0-9]*', report_chat):
+            raise ValueError('TELEGRAM_STOCK_REPORT_CHAT_ID must be a negative Telegram group ID')
+        # All periodic documents share this destination, including coverage and
+        # no-match PDFs. Do not reuse frozen strategy routes or fan out personal
+        # copies. A rejected destination remains retryable instead of leaking
+        # a report to General. The shared delivery ledger and sound cap remain.
+        from telegram_delivery import deliver
+        return deliver(store, os.environ.get('TELEGRAM_BOT_TOKEN',''), report_chat,
+                       caption, event, send)
+
     from telegram_routing import remember, deliver_routed
     with store.connect() as db:
         remember(db,event,'stocks' if strategy else None,strategy)
-    def send(token,chat,text,**kwargs):
-        return send_document(token,chat,text,filename,content,**kwargs)
     return deliver_routed(store,os.environ.get('TELEGRAM_BOT_TOKEN',''),os.environ.get('TELEGRAM_CHAT_ID',''),
                           caption,event,send)

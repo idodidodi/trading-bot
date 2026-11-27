@@ -67,7 +67,7 @@ def run(body, now=None):
     market=body.get('market','crypto')
     if market not in ('crypto','forex','stock'):raise ValueError('Select a supported market calendar')
     signals=(rsi_pb.detect(bars,rules,source,symbol,frame,dict(market=market)) if strategy=='rsi-pb' else
-             engine.detect(bars,rules,source,symbol,frame) if engine else detect(bars,rules,symbol,frame,provisional=strategy=='warmup'))
+             engine.detect(bars,rules,source,symbol,frame) if engine else detect(bars,rules,symbol,frame,provisional=strategy=='warmup', include_hidden=True))
     # Outcomes describe the next 5/10 closed candles, without inventing trade rules.
     starts=[b.start for b in bars]
     for signal in signals:

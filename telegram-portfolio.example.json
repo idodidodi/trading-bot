@@ -1,0 +1,7 @@
+{
+  "enabled": false,
+  "name": "Current Portfolio",
+  "chat_id": "-5276778238",
+  "assets": ["CRWV", "ALK", "NVDA", "ANT", "AMAT", "AUR"],
+  "enrolled_at": 0
+}

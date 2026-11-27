@@ -8,10 +8,20 @@ DO $$BEGIN
   ALTER FUNCTION public.dashboard_api(uuid,text,jsonb) RENAME TO dashboard_api_before_notification_sound;
  END IF;
 END $$;
+-- Update this wrapper in place if later migrations have wrapped it. Reapplying
+-- sound preferences must not remove NEAR or dedicated-group API endpoints.
+DO $install$
+DECLARE target text;
+BEGIN
+ SELECT p.proname INTO target FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+ WHERE n.nspname='public' AND p.proname LIKE 'dashboard_api%'
+   AND p.prosrc LIKE '%Invalid silent preferences%' LIMIT 1;
+ target:=coalesce(target,'dashboard_api');
+ EXECUTE replace($definition$
 CREATE OR REPLACE FUNCTION public.dashboard_api(installation uuid,operation text,input jsonb DEFAULT '{}')
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 #variable_conflict use_variable
-DECLARE pref public.telegram_alert_preferences; defaults jsonb; k text; v jsonb; reg jsonb; sound jsonb; quiet jsonb;
+DECLARE pref public.telegram_alert_preferences; defaults jsonb; k text; v jsonb; reg jsonb; sound jsonb; quiet jsonb; frame text; setting jsonb;
 BEGIN
  IF split_part(operation,'?',1)='/api/telegram-alerts' THEN
   IF auth.uid() IS NULL OR NOT public.dashboard_can_view(installation) THEN RAISE EXCEPTION 'Not authorized'; END IF;
@@ -32,7 +42,13 @@ BEGIN
    quiet:=coalesce(input->'quiet_hours',pref.quiet_hours,'{"enabled":false,"start":"22:00","end":"07:00","timezone":"UTC"}');
    IF jsonb_typeof(sound) IS DISTINCT FROM 'object' THEN RAISE EXCEPTION 'Invalid silent preferences'; END IF;
    FOR k,v IN SELECT * FROM jsonb_each(sound) LOOP
-    IF NOT k=ANY(public.telegram_route_keys()) OR jsonb_typeof(v)<>'boolean' THEN RAISE EXCEPTION 'Invalid silent category'; END IF;
+    IF NOT k=ANY(public.telegram_route_keys()) OR jsonb_typeof(v) NOT IN ('boolean','object') THEN RAISE EXCEPTION 'Invalid silent category'; END IF;
+    IF jsonb_typeof(v)='object' THEN
+     FOR frame,setting IN SELECT * FROM jsonb_each(v) LOOP
+      IF NOT frame=ANY(ARRAY['default','5m','15m','30m','1h','4h','daily','weekly','monthly'])
+        OR jsonb_typeof(setting)<>'boolean' THEN RAISE EXCEPTION 'Invalid silent timeframe'; END IF;
+     END LOOP;
+    END IF;
    END LOOP;
    IF jsonb_typeof(quiet) IS DISTINCT FROM 'object'
      OR (quiet-'enabled'-'start'-'end'-'timezone')<>'{}'
@@ -56,6 +72,8 @@ BEGIN
  END IF;
  RETURN public.dashboard_api_before_notification_sound(installation,operation,input);
 END $$;
+$definition$, 'FUNCTION public.dashboard_api(', 'FUNCTION public.'||quote_ident(target)||'(');
+END $install$;
 REVOKE ALL ON FUNCTION public.dashboard_api_before_notification_sound(uuid,text,jsonb) FROM PUBLIC,anon,authenticated;
 REVOKE ALL ON FUNCTION public.dashboard_api(uuid,text,jsonb) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.dashboard_api(uuid,text,jsonb) TO authenticated;

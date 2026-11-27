@@ -81,3 +81,7 @@ If both directions occurred within the recent window, include both. Deduplicate 
 ## Working in this repository
 
 Cloud tasks already run in isolated environments. Use the existing checkout; do not create a Git worktree unless the user explicitly requests one. Follow `README.md` for the independent platform: `scanner.py` fetches/reads candles, calculates indicators, and detects signals using numeric defaults from this file; `platform_app.py` runs the scanner, dashboard, and Telegram delivery. Configure assets and timeframes in `scanner.json` and restart after configuration or skill changes. TradingView files are retained only as an optional legacy integration. Do not claim a live scan succeeded without retrieving data and evaluating the rules above.
+
+## Hidden divergence extension
+
+The live RSI scanner and RSI replay explicitly enable hidden divergences. Hidden bullish requires a higher closing low and RSI[P2] <= RSI[P1] + 1.0; hidden bearish requires a lower closing high and RSI[P2] >= RSI[P1] - 1.0. Retain the same pivot spacing and P2 lower-band (bullish) or upper-band (bearish) wick touch. Label hidden findings separately. The reusable detector defaults to regular-only, preserving RSI + PB, chasing, and execution context consumers. Hidden signals have their own rsi-hidden-v1 version; the core regular-rule hash above is unchanged.

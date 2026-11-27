@@ -2,9 +2,13 @@
 -- Replaces rotating stock selection; preserves permanent portfolio configuration.
 BEGIN;
 CREATE TABLE IF NOT EXISTS bot_runtime.stock_report_runs(
- id text PRIMARY KEY,day text NOT NULL,frame text NOT NULL CHECK(frame IN ('weekly','monthly')),
+ id text PRIMARY KEY,day text NOT NULL,frame text NOT NULL CHECK(frame IN ('daily','weekly','monthly')),
  state text NOT NULL,payload text NOT NULL,owner text,
  locked_until double precision NOT NULL DEFAULT 0,next_attempt double precision NOT NULL DEFAULT 0);
+-- Upgrade existing installations without rewriting saved report payloads/documents.
+ALTER TABLE bot_runtime.stock_report_runs DROP CONSTRAINT IF EXISTS stock_report_runs_frame_check;
+ALTER TABLE bot_runtime.stock_report_runs ADD CONSTRAINT stock_report_runs_frame_check
+ CHECK(frame IN ('daily','weekly','monthly'));
 CREATE TABLE IF NOT EXISTS bot_runtime.stock_report_documents(
  id text PRIMARY KEY,run_id text NOT NULL REFERENCES bot_runtime.stock_report_runs(id),
  filename text NOT NULL,strategy text,caption text NOT NULL,content bytea NOT NULL,delivered boolean NOT NULL DEFAULT false);
