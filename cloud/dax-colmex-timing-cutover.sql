@@ -7,7 +7,7 @@ DO $$
 DECLARE source_name constant text := 'colmex:Colmex-MT4:GER40#';
         item text;
 BEGIN
-  IF EXISTS (SELECT 1 FROM migration_runs WHERE snapshot_hash='colmex-dax-session-2026-11-27-v1') THEN
+  IF EXISTS (SELECT 1 FROM scan_state WHERE asset='cutover:colmex-dax-session-2026-11-27-v1' AND timeframe='all') THEN
     RETURN;
   END IF;
   DELETE FROM candle_cache WHERE feed=source_name;
@@ -26,7 +26,7 @@ BEGIN
     payload=(payload::jsonb || '{"timing_superseded":"colmex-dax-session-2026-11-27-v1"}'::jsonb)::text
     WHERE payload::jsonb->>'source'=source_name;
   DELETE FROM scan_schedule WHERE payload::jsonb->>'provider'='colmex' AND payload::jsonb->>'symbol'='GER40#';
-  INSERT INTO migration_runs(snapshot_hash,manifest) VALUES('colmex-dax-session-2026-11-27-v1',
-    '{"source":"colmex:Colmex-MT4:GER40#","action":"reset candle cache and baselines; cancel unsent legacy signals; retain audit history"}');
+  INSERT INTO scan_state(asset,timeframe,last_end) VALUES('cutover:colmex-dax-session-2026-11-27-v1','all',
+    (extract(epoch from clock_timestamp())*1000)::bigint);
 END $$;
 COMMIT;

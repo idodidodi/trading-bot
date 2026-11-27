@@ -49,7 +49,9 @@ class DaxCutoverTests(PostgresTestCase):
                 db.execute('INSERT INTO candle_cache VALUES(%s,%s,%s,0,1,1,2,1,2)',(feed,key,'4h'))
         sql=(Path(__file__).parent/'cloud/dax-colmex-timing-cutover.sql').read_text()
         for _ in range(2):
-            with store.connect() as db:db.execute(sql,prepare=False)
+            with store.connect() as db:
+                db.execute('SET LOCAL ROLE trading_worker')
+                db.execute(sql,prepare=False)
         with store.connect() as db:
             self.assertEqual(db.execute('SELECT id,status FROM notification_queue ORDER BY id').fetchall(),[('pin-bars:dax','cancelled'),('pin-bars:spx','pending')])
             self.assertEqual(db.execute('SELECT feed FROM candle_cache').fetchall(),[(other,)])
