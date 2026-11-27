@@ -1086,3 +1086,28 @@ The ATR settings release includes the previously deployed UI-only change
 `44fae6c`: asset-save feedback is inline and unsupported Colmex timeframes are
 validated in the Assets editor. This preserves existing user controls while adding
 the NEAR ATR explanation. It does not change asset selections or scanner logic.
+
+## Isolated crypto weekly research exception — reviewed 2026-11-27
+
+`research/crypto_weekly_backtest.py` is local research, not a production alert
+path; it never opens a runtime database, sends Telegram messages, places orders
+or starts a scanner. No live routing, provider or schedule changes are deployed.
+It uses the existing regular RSI detector (`scanner.detect`, `platform_app.load_rules`),
+250-bar warmup, lower frames 15m/30m/1h/4h, matching direction and an exact still-valid
+weekly pivot pair. The lower candle must close, but the parent weekly candle may
+still be provisional. There is no requirement for a prior lower provisional
+notification, no delivery delay/cost simulation and no notification expiry.
+Each admitted parent may produce four closed matches per lower timeframe. Later
+parent invalidations retain earlier entries in the research audit. A direction
+stops admitting new parents once five distinct coins have validated; admitted
+parents may finish their slots. A previously invalidated parent is not recycled.
+
+The crypto pilot's user-confirmed default window is three hours before
+Monday 00:00 UTC through 24 hours afterward; zero or 48 hours are alternative
+configurable research scenarios. This does not change live stock schedules.
+Parent discovery ends at the weekly close; the exact parent freezes there for
+subsequent lower matches. The weekly history is reconstructed strictly as of
+each entry. Public Binance spot data is read-only, with no production resources.
+Verification: `test_crypto_weekly_backtest.py` covers provisional and closed-parent
+entries, later invalidation, per-TF limits, nonempty causal detector comparisons,
+UTC week boundaries, missing data, timestamp units and directional outcomes.
