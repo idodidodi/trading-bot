@@ -1,11 +1,41 @@
 # Telegram alert logic — canonical reference
 
-## Stock RSI higher/lower-timeframe watches — delayed SIP update local, 2026-11-25
+## Weekly strategy research mode — local implementation, reviewed 2026-11-27
+
+`research/weekly_rsi_backtest.py` is an isolated historical study, not a live alert
+change. It uses the regular RSI/P2 Bollinger-touch detector with the frozen rule
+snapshot, confirmed P1 and no future/right-hand confirmation for P2. The weekly
+watch begins three hours before the last session close and ends at the next
+session open. The weekly parent is reconstructed from then-visible prices,
+rechecked while provisional and frozen at regular close. A valid lower close
+can enter while the weekly parent is still provisional; the exact admitted
+weekly pair must remain valid at entry. Later parent invalidation is retained
+as an event and does not erase earlier entries. No invalid parent is recycled.
+
+User-authorized research exceptions: zero feed/delivery delay, no trading costs,
+entry at the qualifying lower candle close without requiring a prior delivered
+provisional notification. Four qualifying **closed matches** per stock per lower
+TF are allowed; invalid provisional notifications do not consume research slots.
+Lower TFs remain 15m/30m/1h/4h with actual extended-hours bars. Five distinct
+validated stocks per direction stop new parent admissions; already admitted
+weekly parents continue their slots until expiry. Symbols are processed in
+deterministic alphabetical order at each historical timestamp. Missing parent
+data blocks entry; an exact closing minute is required for lower entries.
+
+All qualifying entries remain in raw output. The chronological stock/week/direction
+summary selects the first entry, breaking simultaneous ties by the lowest TF;
+a later lower-TF entry cannot replace it using future knowledge. This differs
+deliberately from the retrospective review table's lowest-TF deduplication.
+Current prices, Telegram routing, delivery queues, positions and production
+settings are not part of research. See `docs/weekly-rsi-backtest.md` for CLI/data
+and outcome definitions. This section does not authorize production activation.
+
+## Stock RSI higher/lower-timeframe watches — delayed SIP deployed enabled, 2026-11-25
 
 Last reviewed **2026-11-25** against `stock_rsi_watch.py`, `stock_rsi_data.py`,
 `stock_rsi_runtime.py`, `platform_app.main`, and `cloud/stock-rsi-watch.sql`.
-The earlier implementation is deployed with the watch disabled; the delayed-SIP
-update described below is local and has not been published or enabled. Existing periodic PDF schedules, RSI + PB
+The delayed-SIP implementation described below is deployed and enabled.
+The publication receipt at the end of this section records the verified production state. Existing periodic PDF schedules, RSI + PB
 PDFs, report destination, portfolio routes and ordinary scanner alerts are unchanged.
 
 ### Schedule and candle definitions
@@ -1086,3 +1116,32 @@ The ATR settings release includes the previously deployed UI-only change
 `44fae6c`: asset-save feedback is inline and unsupported Colmex timeframes are
 validated in the Assets editor. This preserves existing user controls while adding
 the NEAR ATR explanation. It does not change asset selections or scanner logic.
+
+
+### Delayed-SIP publication receipt — recorded locally after deployment
+
+On 2026-11-25, approved commit `02d4ecb0261f3437ac186d867c7f34d365a65f71`
+on `codex/delayed-alpaca-rsi` was pushed, verified, then deployed to
+`trading-linux:/home/ido/apps/trading-bot-postgres`. `STOCK_RSI_WATCH_ENABLED=true`.
+This supersedes the disabled state in the earlier rollout receipt.
+
+- [Linux/Windows regression, build and frozen-app smoke checks](https://github.com/idodidodi/trading-bot/actions/runs/45686925904): passed. Legacy publish intentionally skipped.
+- [Both desktop builds and installer smoke checks](https://github.com/idodidodi/trading-bot/actions/runs/45686926162): passed.
+- [Cloudflare branch preview check](https://dash.cloudflare.com/e1ad777d3bfb5c9d840ec7bb18616e3f/workers/services/view/family-trading-bot/production/previews/codex-delayed-alpaca-rsi/builds/ae40d978-5335-4ac2-be39-844ecf87d6e4): passed; no production UI deployment performed.
+- Every installed runtime blob matched the commit; health and manifest matched
+  scanner `692f4a038d4fc723`, UI `6097720c5ac73e84`, version `1.0.6`.
+  Exactly one worker held the ownership lock.
+- Read-only installed-code provider smoke returned AAPL history counts:
+  15m 5,436; 30m 2,718; 1h 1,359; 4h 340; daily parent 271.
+  Source candle ends and the parent snapshot respected the delayed cutoff.
+- First observed production daily cycle scanned 50 symbols, admitted 13 setups,
+  and recorded 13 delayed higher events as delivered, without cycle error keys.
+  This is an initial health observation, not a completed universe scan or proof
+  of every lower-timeframe outcome. A memory-only delayed provisional-to-ready
+  smoke passed; no test alerts/orders or extra scanner were started.
+- Nasdaq/broader US coverage still records FMP entitlement unavailability.
+- Source backup: `/home/ido/apps/trading-source-backups/20261125T194457632562Z`.
+  Private environment backup remains in the private rollout directory.
+
+This receipt is a local post-publication record; the deployed source SHA above
+remains the exact CI-verified implementation.
