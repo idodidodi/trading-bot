@@ -39,6 +39,10 @@ def next_start(bar, timeframe, asset=None):
     from scanner import interval_end
     from market_calendar import is_stock, is_forex, stock_trading_day, stock_close, NY, forex_market_open, next_forex_open
     asset = asset or {}
+    if asset.get('provider') == 'colmex' and asset.get('symbol') == 'GER40#':
+        from colmex_mt4.history import dax_next_start
+        period = {'1h':3600, '4h':14400, 'daily':86400}[timeframe]
+        return dax_next_start(bar.end//1000, period)*1000
     stock, forex = is_stock(asset), is_forex(asset)
     if asset.get('symbol') == '^GSPC':
         stock = True

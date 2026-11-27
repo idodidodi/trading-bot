@@ -17,6 +17,8 @@ def identity(asset, timeframe, rules):
     if asset.get('_resume'):fields['demand_resume']=asset['_resume']
     fields['scan_strategies'] = sorted(asset.get('scan_strategies', ['rsi', 'pin-bars']))
     if asset['provider']=='colmex':
+        if asset.get('symbol') == 'GER40#':
+            fields['candle_timing'] = 'colmex-dax-session-2026-11-27-v1'
         import os
         from pathlib import Path
         path=Path(os.environ.get('COLMEX_TIME_POLICY','/nonexistent'))

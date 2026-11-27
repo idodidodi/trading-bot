@@ -36,6 +36,11 @@ def fetch_colmex(asset, timeframe):
     now = time.time()
     require_open(asset, int(now*1000))
     reader = bridge()
+    if asset['symbol'] == 'GER40#':
+        try:
+            from colmex_mt4.history import dax_next_close, DAX_TIMING_VERSION
+        except ImportError:
+            raise ValueError('DAX requires the session-aligned colmex-mt4 2.3.0 bridge') from None
     policy_path = os.environ.get('COLMEX_TIME_POLICY', '')
     if not policy_path:
         raise ValueError('Colmex historical timezone mapping is not verified')
@@ -48,5 +53,9 @@ def fetch_colmex(asset, timeframe):
         ['Colmex MT4 bid candles; UTC boundaries; native H1/M5 backfill with verified session coverage'
          if os.environ.get('COLMEX_HISTORY_DIR') else
          'Colmex MT4 bid candles; verified UTC mapping; complete contiguous M1 buckets only'])
+    if asset['symbol'] == 'GER40#':
+        result.notes = [f'Colmex MT4 bid candles; {DAX_TIMING_VERSION}; Europe/Berlin session-aligned OHLC']
+        result.next_close_at = dax_next_close(now, reader.FRAMES[timeframe])*1000
+        return result
     result.next_close_at = (int(now)//reader.FRAMES[timeframe]+1)*reader.FRAMES[timeframe]*1000
     return result

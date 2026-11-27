@@ -1126,3 +1126,44 @@ The ATR settings release includes the previously deployed UI-only change
 `44fae6c`: asset-save feedback is inline and unsupported Colmex timeframes are
 validated in the Assets editor. This preserves existing user controls while adding
 the NEAR ATR explanation. It does not change asset selections or scanner logic.
+
+
+## DAX Colmex candle timing — local, awaiting deployment (2026-11-27)
+
+Exact feed `colmex:Colmex-MT4:GER40#` uses the Europe/Berlin trading
+session 02:10–22:00 Monday–Friday. H1 and H4 begin at session open and
+advance by their duration; the final bar ends at 22:00 even when shortened.
+Winter H4 UTC starts are 01:10/05:10/09:10/13:10/17:10; summer starts are
+00:10/04:10/08:10/12:10/16:10. Daily OHLC covers the whole same session;
+this is a session aggregate, not independently verified native D1 metadata.
+Native H1 exports and archived H4 HST timestamps were inspected read-only on
+2026-11-27. The previous 00:00/04:00 UTC aggregation was incorrect for DAX.
+
+All consumers receive the corrected OHLC and actual end timestamps: RSI,
+EMA/BB pin bars, RSI+PB, daily SMA crosses, candle charts and confirmation
+captions. RSI+PB next-candle lookup skips closed sessions/weekends. Scan deadlines
+use the same session boundaries; schedule identity changes for DAX only.
+No candle is eligible before its actual end; missing active intervals still
+fail closed. Existing request/session gates remain: the final session bar may
+be processed at the next open if no fresh eligible export is available at close.
+M1-only fallback follows the same DAX session policy. Other symbols are unchanged.
+
+Cutover requires Python bridge 2.3.0 plus the parent adapter, with the existing
+scanner/delivery service stopped. Back up affected rows, apply
+`cloud/dax-colmex-timing-cutover.sql` once, and clear only this feed's
+`candle_cache` series/acknowledgements in configured local SQLite/working-Postgres
+caches. This removes old candle/state mixtures and pending RSI+PB setups, cancels
+unsent legacy alerts and marks retained historical findings `timing_superseded`.
+First successful scans establish fresh baselines without historical alert replay.
+Previously delivered Telegram messages and past signal-stream events remain audit
+history; no retrospective replacement alerts are sent. Inspect active DAX follow-up
+sessions before resuming, so superseded evidence is not reused.
+
+Offline replay of 74 corrected H4 bars from native M5/H1 exports found no bearish
+pin bar on 2026-11-26; the prior 14:00 Israel/25180.33 alert used the wrong window.
+Production has not yet been changed or verified for this correction.
+
+Sources: separate exporter `history.py` (`dax_windows`, `aggregate_native`,
+`dax_next_close`, `dax_next_start`), `reader.py` (`candles`); parent
+`colmex_feed.py`, `scan_schedule.py`, `rsi_pb.py`,
+`cloud/dax-colmex-timing-cutover.sql`, `test_dax_timing.py`.
