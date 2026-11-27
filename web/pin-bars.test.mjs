@@ -28,8 +28,8 @@ test('Pin-Bars strategy selection renders independent evidence, coverage and pag
  assert.match(text(get('content')),/short wick ≤ 66% of long wick/);
  const descendants=n=>[n,...n.children.filter(c=>c instanceof Element).flatMap(descendants)];
  const all=descendants(get('content'));
- const strategy=all.find(n=>n.tag==='select');
- assert.ok(strategy.children.some(n=>n.value==='pin-bars'));
+ const strategy=all.find(n=>n.tag==='button'&&n.textContent==='Pin-Bars');
+ assert.ok(strategy);
  assert.equal(vm.runInContext("strategySelector('backtest').children[0].children.some(n=>n.value==='pin-bars')",context),true);
  all.find(n=>n.tag==='button'&&n.textContent==='Next').onclick();
  await new Promise(resolve=>setImmediate(resolve));
@@ -62,7 +62,6 @@ test('Pin-Bars strategy selection renders independent evidence, coverage and pag
  assert.doesNotMatch(text(get('content')),/Fast EMA:|wick >|waiting setups/);
  assert.ok(requested.includes('/api/ma-cross?view=signals&page=0'));
  assert.equal(vm.runInContext("strategySelector('backtest').children[0].children.some(n=>n.value==='ma-cross')",context),false);
- strategy.value='rsi';
  // A stale Pin-Bars response must not overwrite another strategy's view.
  vm.runInContext("strategyViews.live='rsi'",context);
  await vm.runInContext('pinBarFindings()',context);
