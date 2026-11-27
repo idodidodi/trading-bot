@@ -241,11 +241,122 @@ let page=0,showArchived=false;
 const backtestSort={key:'confirmed_at',order:'asc'};
 const strategyViews={live:'rsi',backtest:'rsi'};
 function strategySelector(source){const label=node('label','Strategy '),select=node('select');select.setAttribute('aria-label','Strategy view');for(const [key,name] of [['rsi','RSI divergence'],['momentum','Daily momentum'],['pin-bars','Pin-Bars'],['bb-pin-bars','BB Pin-Bars'],['rsi-pb','RSI + PB'],['ma-cross','Daily SMA 50/200 crosses']]){if(key==='ma-cross'&&source!=='live')continue;const option=node('option',name);option.value=key;select.append(option);}select.value=strategyViews[source];select.onchange=()=>{strategyViews[source]=select.value;page=0;if(source==='backtest'){csvReportId=null;csvPage=0;}findings(source).catch(e=>message(e.message,true));};label.append(select);return label;}
+const signalAssetFilter={query:'',asset:'',timeframe:'',direction:'',from:'',to:''};
+const signalTimeFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jerusalem',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+function signalLocalMinute(value){
+ if(value==null||!Number.isFinite(new Date(value).getTime()))return '';
+ const parts=Object.fromEntries(signalTimeFormatter.formatToParts(new Date(value)).map(p=>[p.type,p.value]));
+ return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+function matchesSignalFilters(signal){
+ const f=signalAssetFilter;
+ if(!matchesSignalAsset(signal.symbol)||(f.timeframe&&signal.timeframe!==f.timeframe)||(f.direction&&signal.direction!==f.direction))return false;
+ if(!f.from&&!f.to)return true;
+ const minute=signalLocalMinute(signal.confirmed_at);
+ return !!minute&&(!f.from||minute>=f.from)&&(!f.to||minute<=f.to);
+}
+function matchesSignalAsset(symbol){
+ const name=String(symbol||'');
+ return (!signalAssetFilter.asset||name===signalAssetFilter.asset)&&name.toLowerCase().includes(signalAssetFilter.query.trim().toLowerCase());
+}
+const signalHistoryCache=new Map();
+let signalRequestVersion=0,signalLoadingVersion=0;
+function signalHistory(path,key){
+ let entry=signalHistoryCache.get(path);
+ if(!entry||Date.now()-entry.created>60000){entry={path,key,created:Date.now(),pages:[],pending:new Map()};signalHistoryCache.set(path,entry);}
+ return entry;
+}
+async function signalHistoryPage(entry,index){
+ if(entry.pages[index])return entry.pages[index];
+ if(!entry.pending.has(index))entry.pending.set(index,(async()=>{
+  try{const data=await request(entry.path+'&page='+index);
+   if(!(data[entry.key]||[]).length&&data.has_more)throw Error('Unable to retrieve all signal results.');
+   entry.pages[index]=data;return data;
+  }finally{entry.pending.delete(index);}
+ })());
+ return entry.pending.get(index);
+}
+async function completeSignalHistory(entry,isCurrent=()=>true){
+ for(let p=0;p<=10000;p++){if(!isCurrent())throw Object.assign(Error('Superseded signal request'),{superseded:true});if(!(await signalHistoryPage(entry,p)).has_more)return;}
+ throw Error('Signal history exceeds the supported page limit.');
+}
+function signalHistoryAssets(entry){
+ return [...new Set(entry.pages.flatMap(data=>(data?.[entry.key]||[]).map(r=>entry.key==='findings'?r.signal.symbol:r.symbol)))].sort((a,b)=>a.localeCompare(b));
+}
+async function filteredSignalPage(path,key){
+ const version=++signalRequestVersion,targetPage=page,entry=signalHistory(path,key);
+ const filtered=Object.values(signalAssetFilter).some(Boolean);
+ const first=await signalHistoryPage(entry,0);
+ if(filtered)await completeSignalHistory(entry,()=>version===signalRequestVersion);
+ else for(let p=1;p<=targetPage&&entry.pages[p-1]?.has_more;p++)await signalHistoryPage(entry,p);
+ if(version!==signalRequestVersion)throw Object.assign(Error('Superseded signal request'),{superseded:true});
+ const assets=signalHistoryAssets(entry);
+ const loadAssets=async()=>{await completeSignalHistory(entry);return signalHistoryAssets(entry);};
+ if(!filtered){page=Math.min(targetPage,entry.pages.length-1);return {...entry.pages[page],assets,loadAssets};}
+ const records=entry.pages.flatMap(data=>data[key]||[]).filter(r=>matchesSignalFilters(key==='findings'?r.signal:r));
+ page=Math.min(targetPage,Math.max(0,Math.ceil(records.length/50)-1));
+ return {...first,[key]:records.slice(page*50,(page+1)*50),has_more:records.length>(page+1)*50,total_count:records.length,page_count:Math.ceil(records.length/50),assets,loadAssets};
+}
+function searchableSignalAsset(assets,loadAssets){
+ const wrap=node('div');wrap.className='signal-asset-choice';
+ const caption=node('span','Asset'),trigger=button(signalAssetFilter.asset||'All assets',()=>toggle());
+ trigger.setAttribute('aria-label','Filter by asset');trigger.setAttribute('aria-haspopup','dialog');trigger.setAttribute('aria-expanded','false');
+ const popup=node('div');popup.className='signal-asset-popup';popup.hidden=true;popup.setAttribute('role','dialog');popup.setAttribute('aria-label','Choose asset');
+ const search=node('input');search.type='search';search.placeholder='Search assets…';search.setAttribute('aria-label','Search assets');
+ const list=node('div');list.className='signal-asset-options';const note=node('small');note.setAttribute('role','status');
+ const selection={value:signalAssetFilter.asset};let choices=assets,loaded=!loadAssets,loading=false;
+ function choose(value){selection.value=value;trigger.textContent=value||'All assets';close();}
+ function close(){popup.hidden=true;trigger.setAttribute('aria-expanded','false');trigger.focus?.();}
+ function render(){list.replaceChildren();const query=search.value?.trim().toLowerCase()||'';
+  for(const value of ['',...choices].filter(value=>!value||value.toLowerCase().includes(query))){const option=button(value||'All assets',()=>choose(value));option.setAttribute('aria-pressed',String(value===selection.value));list.append(option);}
+  if(query&&!choices.some(value=>value.toLowerCase().includes(query)))list.append(node('p','No matching assets.'));
+ }
+ async function toggle(){if(!popup.hidden){close();return;}popup.hidden=false;trigger.setAttribute('aria-expanded','true');render();search.focus?.();
+  if(!loaded&&!loading){loading=true;note.textContent='Loading all assets…';note.className='signals-loading';try{choices=await loadAssets();loaded=true;note.textContent='';render();}catch(e){note.textContent=e.message+' Close and reopen to retry.';}finally{loading=false;note.className='';}}
+ }
+ search.oninput=render;search.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();const match=choices.find(value=>value.toLowerCase().includes(search.value.trim().toLowerCase()));if(match)choose(match);}};popup.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();close();}if(e.key==='ArrowDown'&&e.target===search){e.preventDefault();list.querySelector?.('button')?.focus();}};
+ wrap.onfocusout=e=>{if(e.relatedTarget&&!wrap.contains(e.relatedTarget)){popup.hidden=true;trigger.setAttribute('aria-expanded','false');}};
+ popup.append(search,note,list,button('Done',close));wrap.append(caption,trigger,popup);return {element:wrap,selection};
+}
+function signalAssetControls(assets,loadAssets){
+ const form=node('form'),asset=searchableSignalAsset(assets,loadAssets);
+ form.className='signal-filters';
+ const fields={asset:asset.selection};
+ form.append(asset.element);
+ for(const [key,title,options] of [
+  ['timeframe','Timeframe',[['','All timeframes'],...Object.entries({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'1 hour','30m':'30 minutes','15m':'15 minutes','5m':'5 minutes'})]],
+  ['direction','Direction',[['','All directions'],['bullish','Bullish'],['bearish','Bearish']]]
+ ]){
+  const wrapper=node('label',title+' '),input=node('select');input.setAttribute('aria-label','Filter by '+title.toLowerCase());
+  for(const [value,text] of options){const option=node('option',text);option.value=value;input.append(option);}
+  input.value=signalAssetFilter[key];wrapper.append(input);form.append(wrapper);fields[key]=input;
+ }
+ for(const [key,title] of [['from','From · Israel time'],['to','To · Israel time']]){
+  const wrapper=node('label',title+' '),input=node('input');input.type='datetime-local';input.value=signalAssetFilter[key];input.setAttribute('aria-label',title);wrapper.append(input);form.append(wrapper);fields[key]=input;
+ }
+ const apply=()=>{
+  if(fields.from.value&&fields.to.value&&fields.from.value>fields.to.value){message('The start date and time must be before the end date and time.',true);return;}
+  signalAssetFilter.query='';for(const [key,input] of Object.entries(fields))signalAssetFilter[key]=input.value;
+  page=0;findings('live').catch(e=>message(e.message,true));
+ };
+ form.onsubmit=e=>{e.preventDefault();apply();};
+ form.append(button('Refresh signals',()=>{signalHistoryCache.clear();page=0;findings('live').catch(e=>message(e.message,true));}),button('Apply filters',apply),button('Clear filters',()=>{for(const key of Object.keys(signalAssetFilter))signalAssetFilter[key]='';page=0;findings('live').catch(e=>message(e.message,true));}));
+ form.append(node('small','Filter by signal time, in Israel time. From and To include the selected minute.'));
+ return form;
+}
 async function findings(source){
+ if(source!=='live')return renderFindings(source);
+ const version=++signalLoadingVersion;
+ status.textContent='Loading signals…';status.className='signals-loading';content.setAttribute('aria-busy','true');
+ try{await renderFindings(source);}catch(e){if(!e.superseded&&version===signalLoadingVersion)throw e;}
+ finally{if(version===signalLoadingVersion){content.setAttribute('aria-busy','false');status.className='';status.textContent='';}}
+}
+async function renderFindings(source){
  if(['pin-bars','bb-pin-bars','rsi-pb','ma-cross'].includes(strategyViews[source]))return source==='live'?pinBarFindings(strategyViews[source]):csvBacktestFindings(strategyViews[source]);
  if(strategyViews[source]==='momentum')return momentumFindings(source);
- const result=await request(`/api/findings?source=${source}&page=${page}&archived=${showArchived}${source==='backtest'?`&sort=${backtestSort.key}&order=${backtestSort.order}`:''}`);if(strategyViews[source]!=='rsi')return;content.replaceChildren(node('h2',source==='live'?'Signal workspace':'Historical research'));
+ const result=source==='live'?await filteredSignalPage(`/api/findings?source=live&archived=${showArchived}`,'findings'):await request(`/api/findings?source=${source}&page=${page}&archived=${showArchived}&sort=${backtestSort.key}&order=${backtestSort.order}`);if(strategyViews[source]!=='rsi')return;content.replaceChildren(node('h2',source==='live'?'Signal workspace':'Historical research'));
  content.append(strategySelector(source));
+ if(source==='live')content.append(signalAssetControls(result.assets,result.loadAssets));
  if(source==='live'){const label=node('label','Show archived'),check=node('input');check.type='checkbox';check.checked=showArchived;check.onchange=()=>{showArchived=check.checked;page=0;findings(source).catch(e=>message(e.message,true));};label.prepend(check);content.append(label);}
  const metrics=node('div');metrics.className='metrics';for(const [label,value] of [['Findings on this page',result.findings.length],['Markets covered',(result.summary||[]).length],['Needs attention',(result.summary||[]).filter(r=>/unavailable|insufficient|partial/.test(r.status)).length]]){const card=node('div');card.append(node('span',label),node('strong',value));metrics.append(card);}content.append(metrics);
  if(source==='backtest'){
@@ -279,7 +390,7 @@ async function findings(source){
 }
 async function changeFinding(r,action){
  if(action==='delete'&&!confirm('Delete this signal from the workspace? It cannot be restored.'))return;
- try{await request('/api/finding-state',{source:'live',finding_id:r.id,action,revision:r.state_revision||0});await findings('live');message(action==='archive'?'Signal archived.':action==='restore'?'Signal restored.':'Signal deleted.');}catch(e){message(e.message,true);}
+ try{await request('/api/finding-state',{source:'live',finding_id:r.id,action,revision:r.state_revision||0});signalHistoryCache.clear();await findings('live');message(action==='archive'?'Signal archived.':action==='restore'?'Signal restored.':'Signal deleted.');}catch(e){message(e.message,true);}
 }
 async function configureBacktest(){try{const options=await request('/api/backtests');const dialog=$('backtest-dialog'),form=$('backtest-form');form.replaceChildren(node('p',`Replay ${options.year} history with the selected data source. Missing combinations are reported as unavailable.`));
  const checks=(title,values)=>{const field=node('fieldset');field.append(node('legend',title));const selected=[];for(const value of values){const l=node('label',value),i=node('input');i.type='checkbox';i.value=value;i.checked=title!=='Timeframes'||value!=='1h';selected.push(i);l.prepend(i);field.append(l);}form.append(field);return()=>selected.filter(i=>i.checked).map(i=>i.value);};
@@ -682,7 +793,8 @@ async function momentumFindings(source){
   content.append(node('p','Momentum backtests refresh from daily scan history. The RSI replay controls apply to the RSI view.'));
   content.append(exportCSVButton('momentum-backtest-results',async()=>data.signals||[]));
  }
- const signals=data.signals||[],market=node('select');market.setAttribute('aria-label','Momentum market');
+ if(source==='live')content.append(signalAssetControls([...new Set((data.signals||[]).map(s=>s.symbol))].sort()));
+ const signals=(data.signals||[]).filter(s=>source!=='live'||matchesSignalFilters({...s,timeframe:s.timeframe||'daily'})),market=node('select');market.setAttribute('aria-label','Momentum market');
  for(const [key,name] of [['all','Stocks and crypto'],['stock','US stocks'],['crypto','Crypto']]){const o=node('option',name);o.value=key;market.append(o);}
  const panel=node('section');content.append(market,panel);
  const price=v=>Number(v.toPrecision(7));
@@ -696,8 +808,8 @@ async function momentumFindings(source){
 async function pinBarFindings(strategy='pin-bars'){
  const cross=strategy==='ma-cross',combined=strategy==='rsi-pb',bb=strategy==='bb-pin-bars',title=cross?'Daily SMA 50/200 crosses':combined?'RSI + PB':bb?'BB Pin-Bars':'Pin-Bars';
  content.replaceChildren(node('h2',`Loading ${title}…`),strategySelector('live'));
- const data=await request('/api/'+strategy+'?page='+page);if(strategyViews.live!==strategy)return;
- content.replaceChildren(node('h2',`${title} signals`),strategySelector('live'));
+ const data=await filteredSignalPage('/api/'+strategy+'?view=signals','signals');if(strategyViews.live!==strategy)return;
+ content.replaceChildren(node('h2',`${title} signals`),strategySelector('live'),signalAssetControls(data.assets,data.loadAssets));
  const wickLimit=Number.isFinite(data.rules.max_short_wick_ratio)?` · short wick ≤ ${data.rules.max_short_wick_ratio*100}% of long wick`:'';
  content.append(node('p',cross?'50-day / 200-day close-based SMA · golden and death crosses · completed daily candles only.':combined?'RSI Divergence and PinBars · next candle only · opposite wick shape · no EMA filters · direction follows RSI.':bb?`BB ${data.rules.bb_period}/${data.rules.bb_multiplier} · wick > ${data.rules.ratio} × body${wickLimit} · bullish lower-BB touch or bearish upper-BB touch · no EMA filters.`:`EMA ${data.rules.fast}/${data.rules.slow} · wick > ${data.rules.ratio} × body${wickLimit} · touch either EMA · confirmed at the signal candle close.`));
  content.append(node('p',data.scanned_at?'Latest scan: '+displayTime(data.scanned_at):'Awaiting the first scan.'));
@@ -705,7 +817,7 @@ async function pinBarFindings(strategy='pin-bars'){
  const rows=data.signals.map(s=>{const evidence=node('details');evidence.append(node('summary','Candle evidence'),node('p',`OHLC: ${s.open} / ${s.high} / ${s.low} / ${s.close}`),node('p',pinBarEvidence(s)),node('p',`Source: ${s.source} · candle: ${displayTime(s.candle_at)} · ${s.rules.seed} · version: ${s.version}`));return [s.symbol,s.timeframe,s.direction.toUpperCase(),displayTime(s.confirmed_at),evidence,manageAssetButton(s)];});
  content.append(table(['Asset','Timeframe','Direction','Confirmed','Evidence','Actions'],rows));
  if(!rows.length)content.append(node('p',`No new ${title} signals recorded. The first successful scan establishes a baseline.`));
- const nav=node('div');if(page>0)nav.append(button('Previous',()=>{page--;pinBarFindings(strategy).catch(e=>message(e.message,true));}));if(data.has_more)nav.append(button('Next',()=>{page++;pinBarFindings(strategy).catch(e=>message(e.message,true));}));content.append(nav);
+ const nav=node('div');if(page>0)nav.append(button('Previous',()=>{page--;findings('live').catch(e=>message(e.message,true));}));if(data.has_more)nav.append(button('Next',()=>{page++;findings('live').catch(e=>message(e.message,true));}));content.append(nav);
  content.append(node('h3',`${title} coverage`),table(['Asset','Timeframe','Provider','Status','Latest candle','Details'],data.coverage.map(r=>[r.asset,r.timeframe,r.provider,r.check_state||r.status,r.last_closed_at?displayTime(r.last_closed_at):'—',[r.reason||`${cross?'':`${r.waiting_setups||0} waiting setups · `}${r.candles||0} closed candles · ${r.new_signals||0} new signals${r.limited_history?' · limited indicator history':''}`,r.data_notes].filter(Boolean).join(' · ')])));
 }
 
