@@ -267,7 +267,7 @@ function matchesSignalAsset(symbol){
  const name=String(symbol||'');
  return (!signalAssetFilter.asset||name===signalAssetFilter.asset)&&name.toLowerCase().includes(signalAssetFilter.query.trim().toLowerCase());
 }
-const signalHistoryCache=new Map();
+const signalHistoryCache=new Map(),signalCatalogCache=new Map();
 let signalRequestVersion=0,signalLoadingVersion=0;
 // Cache is keyed by the complete filter, never by unfiltered history. Each
 // navigation makes at most one page request; cursors survive cache expiry.
@@ -277,7 +277,7 @@ async function filteredSignalPage(path,key){
  const filters={strategy,...signalAssetFilter,archived:path.includes('archived=true')};
  const cacheKey=JSON.stringify(filters);
  let entry=signalHistoryCache.get(cacheKey);
- if(!entry){entry={pages:[],pending:new Map(),cursors:[null],assets:null};signalHistoryCache.set(cacheKey,entry);}
+ if(!entry){entry={pages:[],pending:new Map(),cursors:[null]};signalHistoryCache.set(cacheKey,entry);}
  const targetPage=page;
  if(targetPage>0&&!entry.cursors[targetPage])throw Error('Results changed. Refresh signals to restart pagination.');
  const cached=entry.pages[targetPage];
@@ -297,11 +297,14 @@ async function filteredSignalPage(path,key){
  }
  if(version!==signalRequestVersion)throw Object.assign(Error('Superseded signal request'),{superseded:true});
  const data=entry.pages[targetPage].data;
+ const catalogKey=JSON.stringify([strategy,filters.archived]);
  const loadAssets=async()=>{
-  if(!entry.assets||Date.now()-entry.assetsCreated>60000){entry.assets=(await request('/api/signal-query',{strategy,archived:filters.archived,catalog:true})).assets;entry.assetsCreated=Date.now();}
-  return entry.assets;
+  let catalog=signalCatalogCache.get(catalogKey);
+  if(!catalog||Date.now()-catalog.created>60000){catalog={created:Date.now()};signalCatalogCache.set(catalogKey,catalog);}
+  if(!catalog.pending&&!catalog.assets)catalog.pending=request('/api/signal-query',{strategy,archived:filters.archived,catalog:true}).then(data=>catalog.assets=data.assets).finally(()=>{catalog.pending=null;});
+  return catalog.assets||await catalog.pending;
  };
- const assets=entry.assets||[...new Set((data[key]||[]).map(r=>key==='findings'?r.signal.symbol:r.symbol))].sort();
+ const assets=signalCatalogCache.get(catalogKey)?.assets||[...new Set((data[key]||[]).map(r=>key==='findings'?r.signal.symbol:r.symbol))].sort();
  return {...data,assets,loadAssets};
 }
 let activeSignalPopup=null;
@@ -327,21 +330,22 @@ function signalChoiceControl(title,options,value,onChoose=()=>{},ariaLabel){
  search.oninput=render;search.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();const match=options.find(([,text])=>text.toLowerCase().includes((search.value||'').trim().toLowerCase()));if(match)choose(...match);}if(e.key==='ArrowDown'){e.preventDefault();list.querySelector?.('button')?.focus();}};
  control.onOpen=()=>{search.value='';render();search.focus?.();};render();control.popup.append(search,list,button('Done',()=>control.close()));return {...control,selection};
 }
-function signalDateRangeControl(){
+function signalDateRangeControl(onChange=()=>{}){
  const control=signalFilterPopup('Date & time','Any date & time','Filter by date and time'),fields={};control.element.className+=' signal-date-choice';
  const note=node('small','Signal time · Israel. Both bounds include the selected minute.'),error=node('small');error.setAttribute('role','alert');error.className='error';
  const summary=()=>{const from=fields.from.value.replace('T',' '),to=fields.to.value.replace('T',' ');control.trigger.textContent=from&&to?`${from} → ${to}`:from?`From ${from}`:to?`Through ${to}`:'Any date & time';control.trigger.title=control.trigger.textContent;};
- for(const [key,title] of [['from','From · Israel time'],['to','To · Israel time']]){const label=node('label',title),input=node('input');input.type='datetime-local';input.value=signalAssetFilter[key];input.setAttribute('aria-label',title);input.oninput=()=>{error.textContent='';summary();};label.append(input);control.popup.append(label);fields[key]=input;}
- const done=()=>{if(fields.from.value&&fields.to.value&&fields.from.value>fields.to.value){error.textContent='The start must be before the end.';return;}error.textContent='';summary();control.close();};
- const actions=node('div');actions.className='signal-date-actions';actions.append(button('Clear range',()=>{fields.from.value='';fields.to.value='';error.textContent='';summary();}),button('Done',done));
+ for(const [key,title] of [['from','From · Israel time'],['to','To · Israel time']]){const label=node('label',title),input=node('input');input.type='datetime-local';input.value=signalAssetFilter[key];input.setAttribute('aria-label',title);input.oninput=()=>{error.textContent='';summary();};input.onchange=()=>{if(valid())onChange();};label.append(input);control.popup.append(label);fields[key]=input;}
+ const valid=()=>{if(Object.values(fields).some(input=>input.validity&&!input.validity.valid))return false;if(fields.from.value&&fields.to.value&&fields.from.value>fields.to.value){error.textContent='The start must be before the end.';return false;}error.textContent='';summary();return true;};
+ const done=()=>{if(!valid())return;control.close();onChange();};
+ const actions=node('div');actions.className='signal-date-actions';actions.append(button('Clear range',()=>{fields.from.value='';fields.to.value='';error.textContent='';summary();onChange();}),button('Done',done));
  control.popup.append(note,error,actions);control.onOpen=()=>fields.from.focus?.();summary();return {...control,fields};
 }
-function searchableSignalAsset(assets,loadAssets){
+function searchableSignalAsset(assets,loadAssets,onChoose=()=>{}){
  const control=signalFilterPopup('Asset',signalAssetFilter.asset||'All assets'),{element:wrap,trigger,popup,close}=control;
  const search=node('input');search.type='search';search.placeholder='Search assets…';search.setAttribute('aria-label','Search assets');
  const list=node('div');list.className='signal-asset-options';const note=node('small');note.setAttribute('role','status');
  const selection={value:signalAssetFilter.asset};let choices=assets,loaded=!loadAssets,loading=false;
- function choose(value){selection.value=value;trigger.textContent=value||'All assets';close();}
+ function choose(value){selection.value=value;trigger.textContent=value||'All assets';close();onChoose(value);}
  function render(){list.replaceChildren();const query=search.value?.trim().toLowerCase()||'';
   for(const value of ['',...choices].filter(value=>!value||value.toLowerCase().includes(query))){const option=button(value||'All assets',()=>choose(value));option.setAttribute('aria-pressed',String(value===selection.value));list.append(option);}
   if(query&&!choices.some(value=>value.toLowerCase().includes(query)))list.append(node('p','No matching assets.'));
@@ -353,7 +357,7 @@ function searchableSignalAsset(assets,loadAssets){
  popup.append(search,note,list,button('Done',()=>close()));return {element:wrap,selection};
 }
 function signalAssetControls(assets,loadAssets){
- const form=node('form'),asset=searchableSignalAsset(assets,loadAssets);
+ const form=node('form'),asset=searchableSignalAsset(assets,loadAssets,()=>apply());
  form.className='signal-filters';
  const fields={asset:asset.selection};
  form.append(strategySelector('live'),asset.element);
@@ -361,16 +365,18 @@ function signalAssetControls(assets,loadAssets){
   ['timeframe','Timeframe',[['','All timeframes'],...Object.entries({monthly:'Monthly',weekly:'Weekly',daily:'Daily','4h':'4 hours','1h':'1 hour','30m':'30 minutes','15m':'15 minutes','5m':'5 minutes'})]],
   ['direction','Direction',[['','All directions'],['bullish','Bullish'],['bearish','Bearish']]]
  ]){
-  const choice=signalChoiceControl(title,options,signalAssetFilter[key]);form.append(choice.element);fields[key]=choice.selection;
+  const choice=signalChoiceControl(title,options,signalAssetFilter[key],()=>apply());form.append(choice.element);fields[key]=choice.selection;
  }
- const dates=signalDateRangeControl();form.append(dates.element);Object.assign(fields,dates.fields);
+ const dates=signalDateRangeControl(()=>apply());form.append(dates.element);Object.assign(fields,dates.fields);
  const apply=()=>{
   if(fields.from.value&&fields.to.value&&fields.from.value>fields.to.value){message('The start date and time must be before the end date and time.',true);return;}
-  signalAssetFilter.query='';for(const [key,input] of Object.entries(fields))signalAssetFilter[key]=input.value;
+  const next={query:'',...Object.fromEntries(Object.entries(fields).map(([key,input])=>[key,input.value]))};
+  if(Object.keys(next).every(key=>signalAssetFilter[key]===next[key]))return;
+  Object.assign(signalAssetFilter,next);
   page=0;findings('live').catch(e=>message(e.message,true));
  };
  form.onsubmit=e=>{e.preventDefault();apply();};
- const actions=node('div');actions.className='signal-filter-actions';actions.append(button('Refresh signals',()=>{signalHistoryCache.clear();page=0;findings('live').catch(e=>message(e.message,true));}),button('Apply filters',apply),button('Clear filters',()=>{for(const key of Object.keys(signalAssetFilter))signalAssetFilter[key]='';page=0;findings('live').catch(e=>message(e.message,true));}));
+ const actions=node('div');actions.className='signal-filter-actions';actions.append(button('Refresh signals',()=>{signalHistoryCache.clear();signalCatalogCache.clear();page=0;findings('live').catch(e=>message(e.message,true));}),button('Clear filters',()=>{for(const key of Object.keys(signalAssetFilter))signalAssetFilter[key]='';page=0;findings('live').catch(e=>message(e.message,true));}));
  form.append(actions);
  form.append(node('small','Filter by signal time, in Israel time. From and To include the selected minute.'));
  return form;
@@ -420,7 +426,7 @@ async function renderFindings(source){
 }
 async function changeFinding(r,action){
  if(action==='delete'&&!confirm('Delete this signal from the workspace? It cannot be restored.'))return;
- try{await request('/api/finding-state',{source:'live',finding_id:r.id,action,revision:r.state_revision||0});signalHistoryCache.clear();await findings('live');message(action==='archive'?'Signal archived.':action==='restore'?'Signal restored.':'Signal deleted.');}catch(e){message(e.message,true);}
+ try{await request('/api/finding-state',{source:'live',finding_id:r.id,action,revision:r.state_revision||0});signalHistoryCache.clear();signalCatalogCache.clear();await findings('live');message(action==='archive'?'Signal archived.':action==='restore'?'Signal restored.':'Signal deleted.');}catch(e){message(e.message,true);}
 }
 async function configureBacktest(){try{const options=await request('/api/backtests');const dialog=$('backtest-dialog'),form=$('backtest-form');form.replaceChildren(node('p',`Replay ${options.year} history with the selected data source. Missing combinations are reported as unavailable.`));
  const checks=(title,values)=>{const field=node('fieldset');field.append(node('legend',title));const selected=[];for(const value of values){const l=node('label',value),i=node('input');i.type='checkbox';i.value=value;i.checked=title!=='Timeframes'||value!=='1h';selected.push(i);l.prepend(i);field.append(l);}form.append(field);return()=>selected.filter(i=>i.checked).map(i=>i.value);};

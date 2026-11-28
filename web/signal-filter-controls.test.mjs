@@ -56,3 +56,25 @@ test('closing asset popup cancels catalog continuation without surfacing an erro
  reject(Object.assign(Error('Superseded'),{superseded:true}));await new Promise(resolve=>setImmediate(resolve));
  assert.equal(descend(asset.element).find(item=>item.attributes.role==='status').textContent,'');
 });
+
+test('asset, timeframe, direction and committed date changes apply immediately without an Apply button',()=>{
+ const ctx=setup();ctx.requests=[];ctx.findings=async()=>{ctx.requests.push(JSON.parse(JSON.stringify(ctx.signalAssetFilter)));};
+ ctx.signalAssetFilter={query:'',asset:'',timeframe:'',direction:'',from:'',to:''};
+ ctx.strategySelector=()=>new Element('div');ctx.signalHistoryCache=new Map();ctx.signalCatalogCache=new Map();
+ vm.runInContext(source.slice(source.indexOf('function signalAssetControls('),source.indexOf('async function findings(')),ctx);
+ const form=vm.runInContext("signalAssetControls(['EURUSD','BTCUSD'])",ctx);
+ const find=text=>descend(form).find(e=>e.tag==='button'&&e.textContent===text);
+ assert.equal(find('Apply filters'),undefined);
+ descend(form).find(e=>e.attributes['aria-label']==='Filter by asset').onclick();
+ find('EURUSD').onclick();assert.equal(ctx.requests.length,1);assert.equal(ctx.requests[0].asset,'EURUSD');assert.equal(ctx.page,0);
+ find('4 hours').onclick();assert.equal(ctx.requests.length,2);assert.equal(ctx.requests[1].timeframe,'4h');
+ find('Bullish').onclick();assert.equal(ctx.requests.length,3);assert.equal(ctx.requests[2].direction,'bullish');
+ find('Bullish').onclick();assert.equal(ctx.requests.length,3);
+ const from=descend(form).find(e=>e.attributes['aria-label']==='From · Israel time');
+ const to=descend(form).find(e=>e.attributes['aria-label']==='To · Israel time');
+ from.value='2026-11-27T12:00';from.oninput();assert.equal(ctx.requests.length,3);
+ from.onchange();assert.equal(ctx.requests.length,4);assert.equal(ctx.requests[3].from,from.value);
+ to.value='2026-11-26T12:00';to.onchange();assert.equal(ctx.requests.length,4);
+ to.value='2026-11-27T13:00';to.onchange();assert.equal(ctx.requests.length,5);assert.equal(ctx.requests[4].to,to.value);
+ find('Clear range').onclick();assert.equal(ctx.requests.length,6);assert.equal(ctx.requests[5].from,'');
+});

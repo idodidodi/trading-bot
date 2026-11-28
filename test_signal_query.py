@@ -107,6 +107,16 @@ class SignalQueryTests(unittest.TestCase):
         self.db.execute('UPDATE bot_runtime.runtime_control SET enabled=false');self.db.commit()
         with self.assertRaises(psycopg.errors.InsufficientPrivilege):self.call()
 
+    def test_catalog_excludes_deleted_archived_and_unmapped_only_assets(self):
+        for name in ['ACTIVE','ARCHIVED','DELETED']:
+            signal=self.signal(name);signal['symbol']=name;self.insert(name,signal)
+        self.db.execute("INSERT INTO bot_runtime.finding_state VALUES('ARCHIVED','archived',1,0),('DELETED','deleted',1,0)")
+        self.db.execute("INSERT INTO bot_runtime.signals(id,payload,received) VALUES('orphan',%s,0)",(json.dumps(dict(symbol='UNMAPPED',timeframe='4h',direction='bullish',confirmed_at=1)),))
+        self.db.execute("INSERT INTO bot_runtime.legacy_findings VALUES('live','old',%s)",(json.dumps(dict(id='old',signal=dict(symbol='LEGACY',confirmed_at=1))),))
+        self.db.commit()
+        self.assertEqual(self.call(dict(catalog=True))['assets'],['ACTIVE','LEGACY'])
+        self.assertEqual(self.call(dict(catalog=True,archived=True))['assets'],['ACTIVE','ARCHIVED','LEGACY'])
+
     def test_scanner_can_maintain_search_index(self):
         with psycopg.connect(test_dsn()) as db:
             db.execute('SET LOCAL ROLE trading_worker')

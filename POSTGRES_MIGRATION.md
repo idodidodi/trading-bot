@@ -435,3 +435,19 @@ measured five requests per case: medians 3.8 ms initial page, 3.17 ms 4-hour,
 5.39 ms combined, 0.8 ms empty, 110.4 ms asset catalog and 2.48 ms old-date.
 The catalog was 1,109 JSON bytes. Hardware and data differ; these numbers do not
 constitute verified production speed after deployment.
+
+Asset-catalog follow-up: `signal_asset_candidates(text)` walks the existing
+symbol indexes once per distinct name. The catalog then checks for a visible
+finding per candidate, preserving archived/deleted/unmapped exclusions without
+hashing all evidence. No new indexes, scanner writes or delivery rules are
+introduced. Reapply only `signal-query.sql`, then publish the corresponding UI;
+the API Python file/service does not require an update or restart.
+The UI shares/deduplicates its 60-second asset catalog cache by strategy and
+archive mode, independently of the result filters. Refresh and finding-state
+changes invalidate it. Asset/timeframe/direction choices apply immediately;
+complete date input changes apply after native validation, and invalid ranges
+stay in the editor without a request. The Apply filters button is removed.
+A read-only production SELECT equivalent to the new catalog returned 168 names
+in 52.069 ms (EXPLAIN execution time, 2026-11-28); the local 13,000-row fixture
+catalog median fell from 110.4 ms to 3.6 ms. Neither figure includes browser/HTTP
+latency. Verify the actual dropdown timing after publication.

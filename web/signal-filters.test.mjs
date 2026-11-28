@@ -81,3 +81,18 @@ test('loading feedback starts immediately and only latest request may clear it',
  pending[1].reject(Error('Offline'));await assert.rejects(second,/Offline/);
  assert.equal(status.className,'');assert.equal(attributes['aria-busy'],'false');
 });
+
+test('asset catalogs share in-flight requests and cache across filter changes but isolate strategy and archives',async()=>{
+ const ctx=context();let finish,catalogCalls=0;
+ ctx.request=async(path,body)=>body.catalog?(catalogCalls++,await new Promise(resolve=>finish=resolve)):{signals:[],has_more:false};
+ const first=await vm.runInContext("filteredSignalPage('/api/pin-bars?view=signals','signals')",ctx);
+ const one=first.loadAssets(),two=first.loadAssets();assert.equal(catalogCalls,1);
+ finish({assets:['A','B']});await Promise.all([one,two]);
+ vm.runInContext("signalAssetFilter.timeframe='4h'",ctx);
+ const filtered=await vm.runInContext("filteredSignalPage('/api/pin-bars?view=signals','signals')",ctx);
+ assert.deepEqual(Array.from(await filtered.loadAssets()),['A','B']);assert.equal(catalogCalls,1);
+ const other=await vm.runInContext("filteredSignalPage('/api/bb-pin-bars?view=signals','signals')",ctx);
+ const three=other.loadAssets();assert.equal(catalogCalls,2);finish({assets:['C']});await three;
+ vm.runInContext("[...signalCatalogCache.values()][0].created=0",ctx);
+ const expired=first.loadAssets();assert.equal(catalogCalls,3);finish({assets:['A','B','D']});await expired;
+});

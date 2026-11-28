@@ -37,6 +37,26 @@ CREATE OR REPLACE VIEW bot_runtime.signal_search_rows AS
 ;
 REVOKE ALL ON bot_runtime.signal_search_rows,bot_runtime.signal_search_live,bot_runtime.signal_search_legacy FROM PUBLIC,anon,authenticated;
 
+-- Walk the existing asset indexes once per distinct name, not once per signal.
+-- This avoids parsing/hashing every evidence payload just to populate a menu.
+CREATE OR REPLACE FUNCTION bot_runtime.signal_asset_candidates(strategy text)
+RETURNS SETOF text LANGUAGE plpgsql STABLE SET search_path=pg_catalog AS $$
+DECLARE table_name text; expression text; restriction text;
+BEGIN
+ IF strategy NOT IN ('rsi','pin-bars','bb-pin-bars','rsi-pb','ma-cross') THEN RAISE EXCEPTION 'Invalid strategy';END IF;
+ FOREACH table_name IN ARRAY CASE strategy WHEN 'rsi' THEN ARRAY['signals','legacy_findings']
+ WHEN 'pin-bars' THEN ARRAY['pin_bar_signals'] WHEN 'bb-pin-bars' THEN ARRAY['bb_pin_bar_signals']
+ WHEN 'rsi-pb' THEN ARRAY['rsi_pb_signals'] ELSE ARRAY['ma_cross_signals'] END LOOP
+  expression:=CASE table_name WHEN 'legacy_findings' THEN '(payload::jsonb->''signal''->>''symbol'')' ELSE '(payload::jsonb->>''symbol'')' END;
+  restriction:=CASE table_name WHEN 'legacy_findings' THEN 'source=''live'' AND ' ELSE '' END;
+  RETURN QUERY EXECUTE format('WITH RECURSIVE names(symbol) AS (
+   (SELECT %1$s FROM bot_runtime.%2$I WHERE %3$s %1$s IS NOT NULL ORDER BY %1$s LIMIT 1)
+   UNION ALL SELECT (SELECT %1$s FROM bot_runtime.%2$I WHERE %3$s %1$s>names.symbol ORDER BY %1$s LIMIT 1)
+   FROM names WHERE symbol IS NOT NULL) SELECT symbol FROM names WHERE symbol IS NOT NULL',expression,table_name,restriction);
+ END LOOP;
+END $$;
+REVOKE ALL ON FUNCTION bot_runtime.signal_asset_candidates(text) FROM PUBLIC,anon,authenticated;
+
 CREATE OR REPLACE FUNCTION public.dashboard_signal_query(inst uuid,filters jsonb DEFAULT '{}'::jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,bot_runtime AS $$
 DECLARE
@@ -61,7 +81,9 @@ BEGIN
  IF strategy='rsi' THEN predicate:=predicate||format(' AND NOT EXISTS (SELECT 1 FROM bot_runtime.finding_state st WHERE st.finding_id=r.id AND (st.status=''deleted'' OR (NOT %L::boolean AND st.status=''archived'')))',archived);END IF;
  -- Catalog is independent of the current asset/time/date selection.
  IF catalog THEN
-  EXECUTE 'SELECT coalesce(jsonb_agg(symbol ORDER BY symbol),''[]''::jsonb) FROM (SELECT DISTINCT r.symbol FROM bot_runtime.signal_search_rows r WHERE '||predicate||' AND r.symbol IS NOT NULL) a' INTO items;
+  EXECUTE 'SELECT coalesce(jsonb_agg(symbol ORDER BY symbol),''[]''::jsonb) FROM
+   (SELECT DISTINCT symbol FROM bot_runtime.signal_asset_candidates($1) symbol) candidates
+   WHERE EXISTS (SELECT 1 FROM bot_runtime.signal_search_rows r WHERE '||predicate||' AND r.symbol=candidates.symbol OFFSET 0)' INTO items USING strategy;
   RETURN jsonb_build_object('assets',items);
  END IF;
  FOREACH field IN ARRAY ARRAY['asset','timeframe','direction'] LOOP
