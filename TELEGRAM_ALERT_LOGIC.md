@@ -55,6 +55,9 @@ Sources: `stock_rth.aggregate/next_close`, `alpaca_feed.fetch_alpaca/fetch_alpac
 `backtest.run_backtest`, `stock_report_data.fetch_batch`, `rsi_pb.retain_pending`,
 `scan_schedule._next_due`. Regression tests: `test_stock_rth.py` and the existing
 Alpaca, scanner, RSI + PB, stock-report, market-session and four-group watch suites.
+`.github/workflows/stock-rth.yml` runs those tests on every GitHub push and pull
+request, with no path filters, against disposable PostgreSQL (never production).
+It also supports manual runs; local uncommitted edits do not trigger GitHub Actions.
 
 
 
