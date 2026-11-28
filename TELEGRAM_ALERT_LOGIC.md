@@ -1,6 +1,6 @@
 # Telegram alert logic — canonical reference
 
-## Weekly strategy research mode — local implementation, reviewed 2026-11-27
+## Weekly strategy research mode — local implementation, reviewed 2026-11-28
 
 `research/weekly_rsi_backtest.py` is an isolated historical study, not a live alert
 change. It uses the regular RSI/P2 Bollinger-touch detector with the frozen rule
@@ -29,6 +29,24 @@ deliberately from the retrospective review table's lowest-TF deduplication.
 Current prices, Telegram routing, delivery queues, positions and production
 settings are not part of research. See `docs/weekly-rsi-backtest.md` for CLI/data
 and outcome definitions. This section does not authorize production activation.
+
+`research/weekly_rsi_exits.py` adds cache-only post-entry annotations and bracket
+exit research to the completed annual study. The user-confirmed retest level is
+the latest lower-TF P2 **close price**, with a ±0.1% band. A favorable minute-close
+departure must precede a later observed minute trading into that band; the
+departure minute itself cannot count. Observe through the fifth regular close
+after entry. Retest is descriptive, not a future-aware entry filter or a new
+Telegram qualification. Original lower-close entries remain unchanged.
+
+Stops/targets are research-only: the tested percentage/R grid is saved in the
+output, with $1,000 fixed notional per entry, no compounding, delay or costs.
+Adverse gap stops use the next observed open, targets use the limit price, and
+same-minute dual hits use stop-first with a separate target-first sensitivity.
+Unhit brackets time-exit at the fifth regular close. Full-sample and per-stock
+best fits are labeled retrospective; a chronological half-year check learns
+settings only from earlier entries whose entire outcome window precedes the
+boundary, purging overlaps. No chosen parameter is applied to the live scanner,
+Telegram alerts, positions or production settings.
 
 ## Stock RSI higher/lower-timeframe watches — delayed SIP deployed enabled, 2026-11-25
 
