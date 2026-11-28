@@ -451,3 +451,40 @@ A read-only production SELECT equivalent to the new catalog returned 168 names
 in 52.069 ms (EXPLAIN execution time, 2026-11-28); the local 13,000-row fixture
 catalog median fell from 110.4 ms to 3.6 ms. Neither figure includes browser/HTTP
 latency. Verify the actual dropdown timing after publication.
+
+### Other dashboard tabs: read optimization (2026-11-28)
+
+Apply `cloud/dashboard-read-performance.sql` after the current runtime migrations.
+It patches only the read branches in the existing `bot_runtime.api` dispatcher,
+retaining its membership, runtime activation and editor checks. The new private
+`backtest_page(text)` helper is not executable by public/anonymous/authenticated
+roles. No API or scanner restart is needed. Keep a pre-apply dump of
+`pg_get_functiondef('bot_runtime.api(uuid,text,jsonb)'::regprocedure)` for rollback.
+Reapplying the migration is safe and unknown dispatcher anchors fail closed.
+
+Publish the matching UI to Pages `family-trading-bot-dashboard` with the existing
+Clerk public configuration. Deploy SQL first: the Clerk UI now uses `/api/overview`
+for coverage and version status. Local/legacy UI keeps its existing endpoint.
+Backtests retain their current URL and response format, sort options, pagination,
+reviews, follow-ups and latest-report counts. Only the latest raw report is parsed;
+legacy findings are used only when no saved run exists. Assets renders its main
+controls without awaiting the separate Colmex response. Overview, Assets,
+Backtests and the Colmex section show loading indicators.
+
+Baseline live click/reload-to-content observations: Overview 5.60 s, Backtests
+5.93 s, Logs 0.63 s and Assets 1.26 s. These include browser automation overhead
+and are not isolated HTTP timings. Read-only production EXPLAIN measurements:
+optimized Backtests page query 154.65 ms, scanner-status read 2.72 ms and
+error-filtered logs 49.42 ms. These database measurements do not establish deployed
+end-to-end latency; repeat live measurements after approved publication. No Logs
+query change is warranted by this evidence. Settings version status benefits from
+the same lightweight Overview endpoint.
+
+Validation: disposable database comparisons against the previous Backtests query
+cover all five sort fields in both directions across three pages, duplicate/latest
+reports, archived/deleted rows, feedback/follow-ups and legacy/empty/null reports.
+Access-control and migration-reapplication checks are included. The browser UI
+regression covers a pending Colmex response without blocking main asset controls.
+After publication, verify exact-SHA checks, Pages manifest, Overview coverage,
+Backtests sorting/paging, Assets/Colmex readiness and unchanged Logs behavior.
+Rollback UI first, then restore the saved dispatcher definition if needed.

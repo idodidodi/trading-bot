@@ -165,6 +165,7 @@ async function loadColmexRequests(parent){
  const section=node('section');section.className='colmex-requests';parent.append(section);
  section.append(node('h3','Colmex MT4 · requested forex pairs'));
  if(!online){section.append(node('p','Sign in to the hosted dashboard to manage your personal Colmex requests.'));return;}
+ const loading=settingsLoading('Loading Colmex requests…');section.append(loading);
  try{
   const value=await request('/api/colmex'),feed=value.feed||{},age=Date.now()/1000-Number(feed.updated_at||0);
   const fresh=feed.status==='collecting'&&age>=-5&&age<=120;
@@ -185,14 +186,14 @@ async function loadColmexRequests(parent){
   const coverage=(value.coverage||[]).filter(r=>r.provider==='colmex');
   if(coverage.length)section.append(table(['Symbol','Timeframe','Scanner status','Details'],coverage.map(r=>[r.symbol||r.asset,r.timeframe,r.status,r.reason||r.data_notes||''])));
   else section.append(node('p','Scanner readiness has not been checked yet.'));
- }catch(error){section.append(node('p','Colmex requests unavailable: '+error.message));}
+ }catch(error){section.append(node('p','Colmex requests unavailable: '+error.message));}finally{loading.remove();}
 }
-async function loadAssets(savedAsset=null,savedNotice=''){state=await request('/api/assets');content.replaceChildren();
+async function loadAssets(savedAsset=null,savedNotice=''){const loading=settingsLoading('Loading assets…');content.replaceChildren(loading);try{state=await request('/api/assets');}finally{loading.remove();}content.replaceChildren();
  content.append(node('h2','Live assets'),node('p',`Configuration ${state.revision}; scanner applied ${state.applied_revision}. New tickers are disabled drafts until you configure their data feed.`));
  const form=node('form'),input=node('input');input.name='tickers';input.placeholder='NVDA, EURUSD, BTCUSD';input.required=true;input.maxLength=10000;form.append(input,node('button','Add tickers'));form.onsubmit=async e=>{e.preventDefault();await mutate({action:'bulk',tickers:input.value});};if(state.sync?.error)content.append(node('p','Sync: '+state.sync.error));
  if(!online&&state.configuration_conflict)content.append(button('Use online configuration',()=>mutate({action:'accept_online'})));
  if(!online&&state.conflicts)content.append(node('p',`${state.conflicts} sync conflicts retained for review. Pending local edits are preserved.`));
- await loadColmexRequests(content);
+ const colmex=node('div');content.append(colmex);void loadColmexRequests(colmex);
  content.append(form,node('p',`Candle timeframes are independent per asset. Polling interval: ${state.config.poll_seconds/3600} hours.`));
  if(state.config.weekly_stock_screen?.enabled){
   const stocks=state.weekly_stock_selection;
@@ -382,7 +383,7 @@ function signalAssetControls(assets,loadAssets){
  return form;
 }
 async function findings(source){
- if(source!=='live')return renderFindings(source);
+ if(source!=='live'){const loading=settingsLoading('Loading backtests…');content.prepend(loading);try{return await renderFindings(source);}finally{loading.remove();}}
  const version=++signalLoadingVersion;
  status.textContent='Loading signals…';status.className='signals-loading';content.setAttribute('aria-busy','true');
  try{await renderFindings(source);}catch(e){if(!e.superseded&&version===signalLoadingVersion)throw e;}
@@ -465,7 +466,8 @@ if(clerkMode){
 for(const a of document.querySelectorAll?.('nav a')||[])if(a.getAttribute('href')===location.pathname)a.setAttribute('aria-current','page');
 
 async function loadOverview(){
- const data=await request('/api/findings?source=live&page=0');
+ const loading=settingsLoading('Loading overview…');content.replaceChildren(loading);
+ let data;try{data=await request(clerkMode?'/api/overview':'/api/findings?source=live&page=0');}finally{loading.remove();}
  const monitor=node('section');monitor.className='overview-monitor';monitor.setAttribute('aria-labelledby','market-monitor-title');
  const title=node('h2','Market monitor');title.id='market-monitor-title';
  const description=node('p','Closed-candle divergence research · live scanner and alert delivery');description.className='overview-description';
@@ -785,7 +787,7 @@ async function loadVersionDetails(panel,isCurrent){
  try{
   let value;
   if(online){
-   const [manifest,findings]=await Promise.all([fetch('/web/version.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('UI version unavailable');return r.json();}),request('/api/findings?source=live')]);
+   const [manifest,findings]=await Promise.all([fetch('/web/version.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('UI version unavailable');return r.json();}),request(clerkMode?'/api/overview':'/api/findings?source=live')]);
    value={environment:'Online dashboard',local:findings.scan?.versions||{},online_ui:manifest,scanner_checked_at:findings.scan?.scanned_at,scanner_environment:findings.scan?.environment};
   }else value=await request('/api/versions');
   if(!isCurrent())return;

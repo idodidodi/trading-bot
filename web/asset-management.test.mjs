@@ -5,9 +5,10 @@ import {test} from 'node:test';
 
 class Element {
  constructor(tag){this.tag=tag;this.children=[];this.dataset={};this.attrs={};this.textContent='';this.listeners={};this.classList={add(){},toggle(){}};}
- append(...children){this.children.push(...children);if(this.tag==='select'&&this.value===undefined)this.value=children[0]?.value||'';}
- prepend(...children){this.children.unshift(...children);}
- replaceChildren(...children){this.children=children;}
+ append(...children){this.children.push(...children);for(const child of children)if(child instanceof Element)child.parentNode=this;if(this.tag==='select'&&this.value===undefined)this.value=children[0]?.value||'';}
+ prepend(...children){this.children.unshift(...children);for(const child of children)if(child instanceof Element)child.parentNode=this;}
+ replaceChildren(...children){this.children=children;for(const child of children)if(child instanceof Element)child.parentNode=this;}
+ remove(){if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(c=>c!==this);}
  setAttribute(k,v){this.attrs[k]=v;}
  addEventListener(k,fn){this.listeners[k]=fn;}
  showModal(){this.open=true;}
@@ -19,7 +20,7 @@ const text=e=>[e.textContent,...e.children.map(c=>c instanceof Element?text(c):S
 function setup(settings,saveError=null,hosted=false){
  const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
  const requests=[];
- const context=vm.createContext({window:hosted?{DASHBOARD_CONFIG:{supabaseUrl:'https://test.invalid'}}:{},document:{getElementById:get,createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},sessionStorage:{getItem:()=>null},location:{pathname:'/logs'},fetch:async(url,options)=>{
+ const context=vm.createContext({window:hosted?{DASHBOARD_CONFIG:{supabaseUrl:'https://test.invalid'}}:{},document:{createTextNode:text=>String(text),getElementById:get,createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},sessionStorage:{getItem:()=>null},location:{pathname:'/logs'},fetch:async(url,options)=>{
   const body=options.body?JSON.parse(options.body):null;requests.push({url,body});
   if(url==='/api/assets'){
    if(body?.action==='bulk'){settings={...settings,revision:settings.revision+1,config:{...settings.config,assets:[...settings.config.assets,{id:body.tickers,provider:'csv',enabled:false,timeframes:['daily']}]}};}
@@ -213,4 +214,17 @@ test('Colmex rejects unsupported legacy selections locally and saves supported h
  const saved=descendants(get('content'));
  assert.ok(saved.some(e=>e.tag==='details'&&e.open));
  assert.ok(saved.some(e=>e.attrs.role==='alert'&&/SPX: saved.*awaiting scanner/.test(e.textContent)));
+});
+
+
+test('asset controls render while Colmex is pending, with its own loading state',async()=>{
+ const {context,get}=setup(settings,null,true);
+ context.fixture=settings;
+ await vm.runInContext("request=async path=>path==='/api/assets'?fixture:new Promise(resolve=>{finishColmex=resolve;});loadAssets()",context);
+ assert.ok(descendants(get('content')).some(e=>e.tag==='button'&&e.textContent==='Add tickers'));
+ assert.match(text(get('content')),/Loading Colmex requests/);
+ await vm.runInContext("finishColmex({symbols:[],feed:{}})",context);
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.doesNotMatch(text(get('content')),/Loading Colmex requests/);
+ assert.match(text(get('content')),/Feed unavailable or stale/);
 });
