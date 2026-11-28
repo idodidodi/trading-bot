@@ -48,6 +48,28 @@ settings only from earlier entries whose entire outcome window precedes the
 boundary, purging overlaps. No chosen parameter is applied to the live scanner,
 Telegram alerts, positions or production settings.
 
+`research/weekly_rsi_retest_entries.py` compares the same frozen 37 opportunities
+with conditional entries at the first observed price in the confirmed P2 ±0.1%
+band after a favorable minute-close departure. Pending setups invalidated by
+that entry minute do not enter; misses remain cash and do not cause selection
+of a later signal. Its primary research order window and common exit deadline
+are the original fifth regular close, matching the previous retest observation
+study. This can extend past the live weekly watch expiry; the report explicitly
+flags such fills and separately counts fills before the next session open.
+No live order-window change is implied. Gaps are not filled at prices outside
+the band. Entry-minute O-H-L-C and O-L-H-C paths are evaluated and the lower
+full-trade return is used; these are modeled uncertainty, not tick evidence.
+
+The sourced current One-Step HyroTrader profile in
+`research/hyro_one_step_2026_11_28.json` is a hypothetical account-risk overlay,
+not production configuration. Research assumes a $100,000 account, $5,000 fixed
+trade notional at 1x, no payouts/reactivations, and zero costs as in prior studies.
+It audits UTC equity resets, static account loss limits, qualifying trading days,
+profit credit, inactivity and separate funded-stage exposure warnings. It is not
+HyroTrader compliance certification: underlying stock candles do not establish
+USDT-perpetual eligibility, fees/funding, tokenized instrument prices or continuous
+tick equity. No SL/TP price percentage is equated with an account-loss percentage.
+
 ## Stock RSI higher/lower-timeframe watches — delayed SIP deployed enabled, 2026-11-25
 
 Last reviewed **2026-11-25** against `stock_rsi_watch.py`, `stock_rsi_data.py`,

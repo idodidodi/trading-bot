@@ -178,3 +178,72 @@ All 52 research and existing pure-watch tests passed; report totals, unchanged
 entry records and source hashes were independently reconciled. The existing
 annual grouped report links to `retest-exits.html`; detailed outcomes, tested
 settings, retest observations and checksums are retained in `retest-exits.json`.
+
+## Retest-entry comparison and HyroTrader proxy — 2026-11-28
+
+```sh
+python research/weekly_rsi_retest_entries.py \
+  --source output-year/results.json --cache cache --output output-retest-entries
+python -m unittest test_weekly_rsi_retest_entries -v
+```
+
+This additive, cache-only report preserves the original cohort. It compares
+five-close exits, the original fitted bracket applied to both entry methods,
+and separate searches across the same 504 stop/target pairs. Missing retests
+are uninvested opportunities, not replacements or hindsight exclusions from
+the original P&L. Chronological partitions use original signal time, so a
+delayed fill cannot move a training signal into the test cohort. Original
+overlapping outcome windows are purged before parameter selection.
+
+`retest-entry-comparison.html/json` include entry prices/minutes, skipped-entry
+reasons, per-stock P&L, entry-minute uncertainty and account-risk audits. The
+current HyroTrader One-Step profile and primary source URLs are saved in
+`hyro_one_step_2026_11_28.json`; its verified date is not a claim that those
+rules existed throughout the historical year. Legacy purchased accounts may
+have different terms. The user selected a hypothetical $100,000 current account.
+
+The direct comparison keeps $1,000 per entry. The account overlay uses an
+explicit research assumption of $5,000 per entry at 1x, satisfying the minimum
+value for a qualifying day if the trade's absolute return is at least 1%.
+That sizing is not a HyroTrader requirement. Account costs/funding, actual
+USDT-perpetual instrument data, account-specific overrides, other-account
+exposure and payout/reactivation behavior are unavailable, so no full firm
+certification is claimed. Zero transaction costs are retained for comparability.
+
+The audit stops at a certain minute-mark loss or inactivity failure. It also
+tracks conservative minute-extrema equity bounds; those can overstate adverse
+movement before an entry or after an intraminute exit and therefore indicate
+possible breaches, not certain tick-level failures. Stop/target exits are marked
+at their actual simulated fill prices for closing equity. UTC resets precede
+the day's price changes; closed-trade profit is credited to the exit's UTC day.
+The funded-stage margin/notional warning overlay is separate from evaluation
+failure rules. There are no automatic phase transitions or withdrawals.
+
+A parameter-independent inactivity check allows every prior trade to remain
+open to its latest permitted close. If even that deadline plus 30 days precedes
+the next entry, no stop/target choice can bridge the gap under the stated
+no-extra-trades/no-payout/no-reactivation policy. A generous perfect-exit profit
+upper bound (not a tradable strategy) also helps assess whether fixed sizing
+could reach the evaluation target at all.
+
+Verified 2026-11-28 run: 37 original opportunities, 35 eligible retest fills
+(WMT never retested; one XOM parent was invalidated before its retest). At
+$1,000 per trade, five-close P&L was $110.7460 original versus $131.0266 retest.
+Using the original fitted 15% stop / 2.5% target on both produced $150.4894
+versus $148.8052. Independently fitting 504 brackets selected 4% stop / 6%
+target for retests, producing $203.0405. The original fitted stop never fired,
+so its stop distance and reward/risk are not identified by these outcomes.
+The chronological training-selected brackets earned $12.2922 on 12 later
+original entries and $32.2827 on 11 later retest entries; this reused sample
+is sensitivity analysis, not untouched validation. A next-open order expiry
+would reduce retest fills to 27; the primary comparison uses five closes.
+
+All four audited account scenarios failed inactivity before reaching the
+$10,000 target. Even the latest possible previous exit cannot bridge the
+May-to-June gap without another activity/reset event. Thus there is no
+full-year surviving SL/TP under the stated fixed cohort and account policy.
+At $5,000 per trade, the generous perfect-exit upper bounds are $6,390.49
+original and $6,163.71 retest, below the target even before account failure.
+62 local tests passed; original baseline and all stock totals reproduced.
+The immutable source hash is
+`4de4043dda369c355eb85733f9ab085d21922c1b16ec0c27af6b8e619c0a4cdf`.
