@@ -19,7 +19,8 @@ def render(signal):
         if (not all(math.isfinite(b[k]) for k in ('open', 'high', 'low', 'close'))
                 or not b['low'] <= min(b['open'], b['close']) <= max(b['open'], b['close']) <= b['high']):
             raise ValueError('Invalid chart OHLC')
-    image = Image.new('RGB', (1200, 720), '#101b2b')
+    # Double the price-axis scale while retaining candle widths and OHLC ratios.
+    image = Image.new('RGB', (1200, 1170), '#101b2b')
     draw = ImageDraw.Draw(image)
     font = ImageFont.load_default(size=23)
     small = ImageFont.load_default(size=18)
@@ -29,7 +30,7 @@ def render(signal):
     lo, hi = min(b['low'] for b in bars), max(b['high'] for b in bars)
     pad = max((hi-lo)*.12, abs(hi)*.001, 1e-10)
     lo, hi = lo-pad, hi+pad
-    def y(value): return round(580-(value-lo)/(hi-lo)*450)
+    def y(value): return round(1030-(value-lo)/(hi-lo)*900)
     for i in range(6):
         value = lo+(hi-lo)*i/5
         yy = y(value)
@@ -49,8 +50,8 @@ def render(signal):
     from datetime import datetime
     from zoneinfo import ZoneInfo
     stamp = datetime.fromtimestamp(signal['confirmed_at']/1000, ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y %H:%M')
-    draw.text((45, 615), f"O {signal['open']:.7g}    H {signal['high']:.7g}    L {signal['low']:.7g}    C {signal['close']:.7g}", fill='#edf4ff', font=font)
-    draw.text((45, 660), f'Confirmed {stamp} Israel time · {len(bars)} closed candles', fill='#a8bad1', font=small)
+    draw.text((45, 1065), f"O {signal['open']:.7g}    H {signal['high']:.7g}    L {signal['low']:.7g}    C {signal['close']:.7g}", fill='#edf4ff', font=font)
+    draw.text((45, 1110), f'Confirmed {stamp} Israel time · {len(bars)} closed candles', fill='#a8bad1', font=small)
     output = io.BytesIO()
     image.save(output, format='PNG')
     return output.getvalue()

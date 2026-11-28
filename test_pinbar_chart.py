@@ -32,7 +32,7 @@ class ChartTests(unittest.TestCase):
             for full in (True, False):
                 if not full: s.pop('chart_candles')
                 data = render(s)
-                self.assertEqual(Image.open(io.BytesIO(data)).size, (1200, 720))
+                self.assertEqual(Image.open(io.BytesIO(data)).size, (1200, 1170))
                 self.assertEqual(data, render(s))
 
     def test_invalid_data_rejected(self):
