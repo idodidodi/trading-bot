@@ -22,34 +22,34 @@ test('combined filters use inclusive Israel minutes, independently of browser ti
  ctx.signal.confirmed_at=null;
  assert.equal(vm.runInContext('matchesSignalFilters(signal)',ctx),true);
 });
-test('filters apply before pagination to flat signals and nested RSI findings',async()=>{
+test('one request per filtered page, with exact filters and server cursors',async()=>{
  for(const key of ['signals','findings']){
-  const ctx=context(),wrap=s=>key==='findings'?{signal:s}:s;
-  const rejected=wrap({symbol:'EURUSD',timeframe:'1h',direction:'bearish'});
-  const accepted=wrap({symbol:'EURUSD',timeframe:'4h',direction:'bullish'});
-  ctx.request=async path=>path.endsWith('page=0')?{[key]:Array(50).fill(rejected),has_more:true}:{[key]:Array(51).fill(accepted),has_more:false};
-  vm.runInContext("Object.assign(signalAssetFilter,{timeframe:'4h',direction:'bullish'});",ctx);
+  const ctx=context(),calls=[];
+  ctx.request=async(path,body)=>{calls.push({path,body});return {[key]:[{symbol:'EURUSD',signal:{symbol:'EURUSD'}}],has_more:!body.cursor,next_cursor:body.cursor?null:{time:123,id:'last'}};};
+  vm.runInContext("Object.assign(signalAssetFilter,{asset:'EURUSD',timeframe:'4h',direction:'bullish',from:'2026-11-27T12:00',to:'2026-11-27T13:00'});",ctx);
   ctx.key=key;
-  const first=await vm.runInContext("filteredSignalPage('/api/test?view=signals',key)",ctx);
-  assert.equal(first[key].length,50);assert.equal(first.total_count,51);assert.equal(first.has_more,true);
+  await vm.runInContext("filteredSignalPage('/api/pin-bars?view=signals',key)",ctx);
+  assert.equal(calls.length,1);assert.equal(calls[0].path,'/api/signal-query');
+  assert.equal(calls[0].body.timeframe,'4h');assert.equal(calls[0].body.asset,'EURUSD');
+  assert.equal(calls[0].body.from,'2026-11-27T12:00');assert.equal(calls[0].body.cursor,null);
   vm.runInContext('page=1',ctx);
-  const last=await vm.runInContext("filteredSignalPage('/api/test?view=signals',key)",ctx);
-  assert.equal(last[key].length,1);assert.equal(last.has_more,false);
+  await vm.runInContext("filteredSignalPage('/api/pin-bars?view=signals',key)",ctx);
+  assert.equal(calls.length,2);assert.equal(calls[1].body.cursor.id,'last');
+  vm.runInContext('page=0',ctx);
+  await vm.runInContext("filteredSignalPage('/api/pin-bars?view=signals',key)",ctx);
+  assert.equal(calls.length,2);
  }
 });
-
-test('initial load requests only one page; catalog and filtering reuse cached pages',async()=>{
+test('asset catalog uses one compact request, independent of result pagination',async()=>{
  const ctx=context(),calls=[];
- ctx.request=async path=>{calls.push(path);return path.endsWith('page=0')?{signals:Array(50).fill({symbol:'EURUSD',timeframe:'4h'}),has_more:true}:{signals:[{symbol:'BTCUSD',timeframe:'1h'}],has_more:false};};
- const first=await vm.runInContext("filteredSignalPage('/api/test?view=signals','signals')",ctx);
- assert.equal(calls.length,1);assert.equal(first.signals.length,50);assert.equal(first.has_more,true);
+ ctx.request=async(path,body)=>{calls.push(body);return body.catalog?{assets:['BTCUSD','EURUSD']}:{signals:[{symbol:'EURUSD'}],has_more:true,next_cursor:{time:1,id:'a'}};};
+ const first=await vm.runInContext("filteredSignalPage('/api/pin-bars?view=signals','signals')",ctx);
+ assert.equal(calls.length,1);
  assert.deepEqual(Array.from(await first.loadAssets()),['BTCUSD','EURUSD']);assert.equal(calls.length,2);
+ assert.equal(calls[1].catalog,true);await first.loadAssets();assert.equal(calls.length,2);
  vm.runInContext("signalAssetFilter.asset='BTCUSD'",ctx);
- const filtered=await vm.runInContext("filteredSignalPage('/api/test?view=signals','signals')",ctx);
- assert.equal(filtered.signals.length,1);assert.equal(filtered.signals[0].symbol,'BTCUSD');assert.equal(calls.length,2);
- vm.runInContext('signalHistoryCache.clear()',ctx);
- await vm.runInContext("filteredSignalPage('/api/test?view=signals','signals')",ctx);
- assert.equal(calls.length,4);
+ await vm.runInContext("filteredSignalPage('/api/pin-bars?view=signals','signals')",ctx);
+ assert.equal(calls.length,3);assert.equal(calls[2].asset,'BTCUSD');
 });
 test('concurrent loads share requests and obsolete responses cannot render',async()=>{
  const ctx=context();let resolve,calls=0;
@@ -65,7 +65,7 @@ test('failed pages can retry and expired cache retrieves new signals',async()=>{
  ctx.request=async()=>{if(++calls===1)throw Error('Offline');return {signals:[{symbol:'EURUSD'}],has_more:false};};
  await assert.rejects(vm.runInContext("filteredSignalPage('/api/test?view=signals','signals')",ctx),/Offline/);
  await vm.runInContext("filteredSignalPage('/api/test?view=signals','signals')",ctx);
- vm.runInContext("signalHistoryCache.get('/api/test?view=signals').created=0",ctx);
+ vm.runInContext("[...signalHistoryCache.values()][0].pages[0].created=0",ctx);
  await vm.runInContext("filteredSignalPage('/api/test?view=signals','signals')",ctx);
  assert.equal(calls,3);
 });

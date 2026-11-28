@@ -1,0 +1,35 @@
+-- Apply AFTER signal-query.sql using psql autocommit, never inside BEGIN.
+-- Concurrent builds preserve scanner writes. Check indisvalid after completion.
+SET lock_timeout='3s';
+SET statement_timeout='5min';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS signal_search_hash ON bot_runtime.signals (bot_runtime.signal_payload_hash(payload));
+CREATE INDEX CONCURRENTLY IF NOT EXISTS signal_search_time ON bot_runtime.signals ((coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS signal_search_asset ON bot_runtime.signals (((payload::jsonb)->>'symbol'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS signal_search_frame ON bot_runtime.signals (((payload::jsonb)->>'timeframe'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS signal_search_direction ON bot_runtime.signals (((payload::jsonb)->>'direction'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_signal_search_time ON bot_runtime.legacy_findings ((coalesce(((payload::jsonb->'signal')->>'confirmed_at')::bigint,-1)) DESC,id) WHERE source='live';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_signal_search_asset ON bot_runtime.legacy_findings (((payload::jsonb->'signal')->>'symbol'),(coalesce(((payload::jsonb->'signal')->>'confirmed_at')::bigint,-1)) DESC,id) WHERE source='live';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_signal_search_frame ON bot_runtime.legacy_findings (((payload::jsonb->'signal')->>'timeframe'),(coalesce(((payload::jsonb->'signal')->>'confirmed_at')::bigint,-1)) DESC,id) WHERE source='live';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS legacy_signal_search_direction ON bot_runtime.legacy_findings (((payload::jsonb->'signal')->>'direction'),(coalesce(((payload::jsonb->'signal')->>'confirmed_at')::bigint,-1)) DESC,id) WHERE source='live';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS pin_bar_signals_search_time ON bot_runtime.pin_bar_signals ((coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS pin_bar_signals_search_asset ON bot_runtime.pin_bar_signals (((payload::jsonb)->>'symbol'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS pin_bar_signals_search_frame ON bot_runtime.pin_bar_signals (((payload::jsonb)->>'timeframe'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS pin_bar_signals_search_direction ON bot_runtime.pin_bar_signals (((payload::jsonb)->>'direction'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS bb_pin_bar_signals_search_time ON bot_runtime.bb_pin_bar_signals ((coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS bb_pin_bar_signals_search_asset ON bot_runtime.bb_pin_bar_signals (((payload::jsonb)->>'symbol'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS bb_pin_bar_signals_search_frame ON bot_runtime.bb_pin_bar_signals (((payload::jsonb)->>'timeframe'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS bb_pin_bar_signals_search_direction ON bot_runtime.bb_pin_bar_signals (((payload::jsonb)->>'direction'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS rsi_pb_signals_search_time ON bot_runtime.rsi_pb_signals ((coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS rsi_pb_signals_search_asset ON bot_runtime.rsi_pb_signals (((payload::jsonb)->>'symbol'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS rsi_pb_signals_search_frame ON bot_runtime.rsi_pb_signals (((payload::jsonb)->>'timeframe'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS rsi_pb_signals_search_direction ON bot_runtime.rsi_pb_signals (((payload::jsonb)->>'direction'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ma_cross_signals_search_time ON bot_runtime.ma_cross_signals ((coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ma_cross_signals_search_asset ON bot_runtime.ma_cross_signals (((payload::jsonb)->>'symbol'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ma_cross_signals_search_frame ON bot_runtime.ma_cross_signals (((payload::jsonb)->>'timeframe'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS ma_cross_signals_search_direction ON bot_runtime.ma_cross_signals (((payload::jsonb)->>'direction'),(coalesce(((payload::jsonb)->>'confirmed_at')::bigint,-1)) DESC,id);
+ANALYZE bot_runtime.signals;
+ANALYZE bot_runtime.legacy_findings;
+ANALYZE bot_runtime.pin_bar_signals;
+ANALYZE bot_runtime.bb_pin_bar_signals;
+ANALYZE bot_runtime.rsi_pb_signals;
+ANALYZE bot_runtime.ma_cross_signals;

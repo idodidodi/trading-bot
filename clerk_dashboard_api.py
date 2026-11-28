@@ -89,8 +89,13 @@ class Gateway:
                        (json.dumps(claims), str(identity.user_id)))
             # Existing database functions remain the authority for viewer/editor/
             # owner permissions and personal Telegram preference ownership.
-            result = db.execute('SELECT public.dashboard_api(%s::uuid,%s,%s::jsonb)',
-                              (self.installation, operation, Jsonb(rpc_inputs))).fetchone()[0]
+            if operation == '/api/signal-query':
+                # Dedicated read-only function accepts filters for viewers too.
+                result = db.execute('SELECT public.dashboard_signal_query(%s::uuid,%s::jsonb)',
+                                    (self.installation, Jsonb(inputs))).fetchone()[0]
+            else:
+                result = db.execute('SELECT public.dashboard_api(%s::uuid,%s,%s::jsonb)',
+                                    (self.installation, operation, Jsonb(rpc_inputs))).fetchone()[0]
         if not csv_replay:
             return result
         if result.get('authorized') is not True:
@@ -144,7 +149,7 @@ def handler(gateway):
                 self.respond(401, {'error':'Invalid or expired session'})
             except (MembershipError, psycopg.errors.InsufficientPrivilege):
                 self.respond(403, {'error':'Not authorized'})
-            except (ValueError, UnicodeError):
+            except (ValueError, UnicodeError, psycopg.DataError):
                 self.respond(400, {'error':'Invalid or unavailable operation'})
             except psycopg.errors.RaiseException as exc:
                 denied = exc.diag.message_primary in ('Not authorized', 'View-only access', 'Owner only')

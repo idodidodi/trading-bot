@@ -381,3 +381,57 @@ If the Mac's recovery review cannot account for required history or ambiguous ex
 ### Daily SMA crossover upgrade
 
 Apply `cloud/ma-cross.sql` after the existing runtime, worker-role and personal-Telegram migrations, before deploying the matching worker and dashboard. The migration is repeatable and preserves later asset opt-outs. Prepare the installation route with `scripts/configure-other-signals.py` (read-only by default); use `--apply` only with publication authorization. It sets the dedicated route from the ignored local group map and clears the same shared destination from other shared/personal route keys. Publish the UI with the existing Cloudflare `family-trading-bot` destination and update the existing Linux worker, without starting an additional scanner. Verify hosted settings, the daily signal endpoint, asset defaults, and the existing worker's coverage after publication without test alerts/orders. Signal semantics remain documented only in `TELEGRAM_ALERT_LOGIC.md`.
+
+### Signals server-side filtering — 2026-11-28
+
+The Clerk dashboard uses `/api/signal-query`, routed by `clerk_dashboard_api.py`
+to `public.dashboard_signal_query(uuid,jsonb)`. Filters are structured JSON:
+`strategy`, `asset`, `query`, `timeframe`, `direction`, `from`, `to`, `archived`,
+and an optional `{time,id}` cursor. `catalog:true` returns only distinct asset
+names. The SQL function checks installation membership and enabled runtime state;
+viewers can read, and no client can select the underlying views/tables. Clerk
+identity mapping and its transaction recheck remain unchanged.
+
+Each page is at most 50 rows plus an internal lookahead. Live RSI and legacy
+sources are filtered and limited independently before merging, avoiding the
+backtest UNION/sort in `runtime_records`. Feedback and follow-up data are joined
+only after pagination. Israel wall-clock minute bounds are inclusive, including
+both occurrences of a repeated autumn minute. Scanner qualification, alert
+routing and delivery rules are unaffected.
+
+Publication order (requires the repository's explicit publication confirmation):
+
+1. Apply `cloud/signal-query.sql` to **local production PostgreSQL on trading-linux**
+   using the established administrative migration connection. This is additive;
+   do not reapply the broad historical dashboard migrations.
+2. Apply `cloud/signal-query-indexes.sql` with psql autocommit (`ON_ERROR_STOP=1`),
+   outside a transaction. The 25 indexes build concurrently so scanner writes can
+   continue. Verify all new indexes have `pg_index.indisvalid=true` and
+   `indisready=true`. A failed concurrent build can leave an invalid index;
+   inspect it and rebuild that specific index before continuing. `IF NOT EXISTS`
+   alone does not repair an invalid index.
+3. Install only the reviewed `clerk_dashboard_api.py` into the existing API working
+   directory and restart **trading-bot-api.service**, using `systemctl --user`.
+   Preserve the existing environment file, Clerk issuer/origins, restricted
+   database role and service permissions. Do not restart/start a scanner.
+4. Publish the reviewed static bundle to Cloudflare Pages
+   `family-trading-bot-dashboard` / `app.family-trading-bot.dynv6.net`, retaining
+   Clerk build configuration and production branch metadata `codex/clerk-auth`.
+5. Verify exact source SHA/checks, API file hash, UI manifest, authenticated
+   filtering for RSI and the other candle strategies, asset catalog, empty
+   results, Israel date bounds, pagination and clearing filters. Measure cold
+   and warm filter latency on the live page. Do not send alerts/orders.
+
+Rollback: restore the prior UI deployment and API file, then restart only the
+API service. The additive SQL objects can remain while diagnosing; no runtime
+records or settings are migrated by this change.
+
+Diagnostics: a bounded production read-only EXPLAIN of the old first-page view
+query took 4,229 ms and processed backtest history/spilled temporary sorts.
+A direct unindexed 4-hour SELECT took 418 ms. These are individual database
+measurements, not full authenticated HTTP timings. A separate local synthetic
+fixture (10,000 live + 3,000 legacy rows, roughly 1 KB evidence per live row)
+measured five requests per case: medians 3.8 ms initial page, 3.17 ms 4-hour,
+5.39 ms combined, 0.8 ms empty, 110.4 ms asset catalog and 2.48 ms old-date.
+The catalog was 1,109 JSON bytes. Hardware and data differ; these numbers do not
+constitute verified production speed after deployment.

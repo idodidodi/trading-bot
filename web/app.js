@@ -249,6 +249,7 @@ function strategySelector(source){
  select.value=strategyViews[source];select.onchange=()=>change(select.value);label.append(select);return label;
 }
 const signalAssetFilter={query:'',asset:'',timeframe:'',direction:'',from:'',to:''};
+// Daily momentum is already a single bounded response; it retains these local filters.
 const signalTimeFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jerusalem',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
 function signalLocalMinute(value){
  if(value==null||!Number.isFinite(new Date(value).getTime()))return '';
@@ -268,62 +269,40 @@ function matchesSignalAsset(symbol){
 }
 const signalHistoryCache=new Map();
 let signalRequestVersion=0,signalLoadingVersion=0;
-function signalHistory(path,key){
- let entry=signalHistoryCache.get(path);
- if(!entry||Date.now()-entry.created>60000){entry={path,key,created:Date.now(),pages:[],pending:new Map()};signalHistoryCache.set(path,entry);}
- return entry;
-}
-async function signalHistoryPage(entry,index){
- if(entry.pages[index])return entry.pages[index];
- if(!entry.pending.has(index))entry.pending.set(index,(async()=>{
-  try{const data=await request(entry.path+'&page='+index);
-   if(!(data[entry.key]||[]).length&&data.has_more)throw Error('Unable to retrieve all signal results.');
-   entry.pages[index]=data;return data;
-  }finally{entry.pending.delete(index);}
- })());
- return entry.pending.get(index);
-}
-async function completeSignalHistory(entry,isCurrent=()=>true){
- for(let p=0;p<=10000;p++){if(!isCurrent())throw Object.assign(Error('Superseded signal request'),{superseded:true});if(!(await signalHistoryPage(entry,p)).has_more)return;}
- throw Error('Signal history exceeds the supported page limit.');
-}
-function signalHistoryAssets(entry){
- return [...new Set(entry.pages.flatMap(data=>(data?.[entry.key]||[]).map(r=>entry.key==='findings'?r.signal.symbol:r.symbol)))].sort((a,b)=>a.localeCompare(b));
-}
-function signalFilterLowerBound(value){
- if(!value)return null;
- const wall=Date.parse(value+'Z');
- if(!Number.isFinite(wall))return null;
- // Both sides of a clock change: choose the earliest possible instant for a repeated minute.
- const offsets=[-36,0,36].map(hours=>{const utc=wall+hours*3600000;return Date.parse(signalLocalMinute(utc)+'Z')-utc;});
- return wall-Math.max(...offsets);
-}
+// Cache is keyed by the complete filter, never by unfiltered history. Each
+// navigation makes at most one page request; cursors survive cache expiry.
 async function filteredSignalPage(path,key){
- const version=++signalRequestVersion,targetPage=page,entry=signalHistory(path,key);
- const filtered=Object.values(signalAssetFilter).some(Boolean);
- const first=await signalHistoryPage(entry,0);
- const loadAssets=async(isCurrent=()=>true)=>{await completeSignalHistory(entry,isCurrent);return signalHistoryAssets(entry);};
- if(!filtered){
-  for(let p=1;p<=targetPage&&entry.pages[p-1]?.has_more;p++)await signalHistoryPage(entry,p);
-  if(version!==signalRequestVersion)throw Object.assign(Error('Superseded signal request'),{superseded:true});
-  page=Math.min(targetPage,entry.pages.length-1);return {...entry.pages[page],assets:signalHistoryAssets(entry),loadAssets};
- }
- const records=[],lower=signalFilterLowerBound(signalAssetFilter.from);let exhausted=false;
- for(let p=0;p<=10000;p++){
-  if(version!==signalRequestVersion)throw Object.assign(Error('Superseded signal request'),{superseded:true});
-  const data=await signalHistoryPage(entry,p),rows=data[key]||[];
-  for(const row of rows)if(matchesSignalFilters(key==='findings'?row.signal:row))records.push(row);
-  // Live APIs return newest first. Once below the earliest possible From instant,
-  // older pages cannot match, including Israel's repeated autumn hour.
-  const last=rows.length?(key==='findings'?rows.at(-1).signal:rows.at(-1)):null;
-  exhausted=!data.has_more||(lower!==null&&last?.confirmed_at!=null&&Number(last.confirmed_at)<lower);
-  if(exhausted||records.length>(targetPage+1)*50)break;
-  if(p===10000)throw Error('Signal history exceeds the supported page limit.');
+ const version=++signalRequestVersion;
+ const strategy=key==='findings'?'rsi':path.split('?')[0].split('/').at(-1);
+ const filters={strategy,...signalAssetFilter,archived:path.includes('archived=true')};
+ const cacheKey=JSON.stringify(filters);
+ let entry=signalHistoryCache.get(cacheKey);
+ if(!entry){entry={pages:[],pending:new Map(),cursors:[null],assets:null};signalHistoryCache.set(cacheKey,entry);}
+ const targetPage=page;
+ if(targetPage>0&&!entry.cursors[targetPage])throw Error('Results changed. Refresh signals to restart pagination.');
+ const cached=entry.pages[targetPage];
+ if(!cached||Date.now()-cached.created>60000){
+  if(!entry.pending.has(targetPage))entry.pending.set(targetPage,(async()=>{
+   try{
+    const data=await request('/api/signal-query',{...filters,cursor:entry.cursors[targetPage]});
+    if(cached&&JSON.stringify(cached.data.next_cursor)!==JSON.stringify(data.next_cursor)){
+     entry.pages.length=targetPage+1;entry.cursors.length=targetPage+2;
+    }
+    entry.pages[targetPage]={data,created:Date.now()};
+    entry.cursors[targetPage+1]=data.next_cursor;
+    return data;
+   }finally{entry.pending.delete(targetPage);}
+  })());
+  await entry.pending.get(targetPage);
  }
  if(version!==signalRequestVersion)throw Object.assign(Error('Superseded signal request'),{superseded:true});
- page=Math.min(targetPage,Math.max(0,Math.ceil(records.length/50)-1));
- return {...first,[key]:records.slice(page*50,(page+1)*50),has_more:records.length>(page+1)*50,
-  total_count:exhausted?records.length:null,page_count:exhausted?Math.ceil(records.length/50):null,assets:signalHistoryAssets(entry),loadAssets};
+ const data=entry.pages[targetPage].data;
+ const loadAssets=async()=>{
+  if(!entry.assets||Date.now()-entry.assetsCreated>60000){entry.assets=(await request('/api/signal-query',{strategy,archived:filters.archived,catalog:true})).assets;entry.assetsCreated=Date.now();}
+  return entry.assets;
+ };
+ const assets=entry.assets||[...new Set((data[key]||[]).map(r=>key==='findings'?r.signal.symbol:r.symbol))].sort();
+ return {...data,assets,loadAssets};
 }
 let activeSignalPopup=null;
 function signalFilterPopup(title,value,ariaLabel='Filter by '+title.toLowerCase()){

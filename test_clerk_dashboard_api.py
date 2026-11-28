@@ -62,6 +62,21 @@ class GatewayTests(unittest.TestCase):
     def call(self,user=0,operation='/api/telegram-alerts',inputs=None):
         return self.gateway.dispatch(self.token(user),self.origin,dict(installation=self.installation,operation=operation,input=inputs or {}))
 
+    def test_signal_query_preserves_clerk_mapping_and_viewer_access(self):
+        with psycopg.connect(self.dsn) as db:
+            original=db.execute('SELECT installation,enabled FROM bot_runtime.runtime_control WHERE id=1').fetchone()
+            db.execute('INSERT INTO bot_runtime.runtime_control(id,installation,enabled,effects_enabled) VALUES(1,%s,true,false) ON CONFLICT(id) DO UPDATE SET installation=excluded.installation,enabled=true',(self.installation,))
+        try:
+            for user in range(3):
+                result=self.call(user,operation='/api/signal-query',inputs={'strategy':'rsi','timeframe':'4h'})
+                self.assertIn('findings',result)
+            with psycopg.connect(self.dsn) as db:db.execute("UPDATE api_private.clerk_identities SET enabled=false WHERE subject='user_1'")
+            with self.assertRaises(MembershipError):self.call(1,operation='/api/signal-query')
+        finally:
+            with psycopg.connect(self.dsn) as db:
+                if original:db.execute('UPDATE bot_runtime.runtime_control SET installation=%s,enabled=%s WHERE id=1',original)
+                else:db.execute('DELETE FROM bot_runtime.runtime_control WHERE id=1')
+
     def test_owner_viewer_editor_keep_personal_preference_identity(self):
         for user in range(3):
             value=self.call(user);self.assertEqual(value['revision'],0)
