@@ -190,7 +190,7 @@ def for_timeframe(asset, timeframe):
     if feed['provider'] == 'alpaca':
         from alpaca_feed import fallback_asset, supported
         if supported(asset):
-            feed = fallback_asset(asset)
+            feed = fallback_asset(asset, timeframe)
         if asset['provider'] == 'alpaca':
             feed['tradingview_symbol'] = asset.get('tradingview_symbol', '')
     if feed['provider'] == 'kraken':

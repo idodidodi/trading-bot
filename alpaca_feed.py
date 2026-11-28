@@ -23,14 +23,20 @@ def supported(asset):
                  or asset.get('exchange') in ('NASDAQ', 'NYSE', 'AMEX', 'NYSE ARCA')))
 
 
-def fallback_asset(asset):
+def fallback_asset(asset, timeframe=None):
     if not supported(asset):
         raise ValueError('Alpaca fallback requires a confirmed US equity symbol')
     feed = os.environ.get('ALPACA_DATA_FEED', 'sip')
     if feed not in ('sip', 'iex'):
         raise ValueError('ALPACA_DATA_FEED must be sip or iex')
-    return asset | dict(provider='alpaca', exchange='Alpaca-' + feed + '-split',
+    return asset | dict(provider='alpaca', exchange=exchange_name(feed, timeframe),
                         alpaca_feed=feed, tradingview_symbol='', continuous=False)
+
+
+def exchange_name(feed, timeframe):
+    from stock_rth import FRAMES as RTH_FRAMES, VERSION
+    suffix = '-' + VERSION if timeframe in RTH_FRAMES else ''
+    return 'Alpaca-' + feed + '-split' + suffix
 
 
 def request_page(params):
@@ -65,9 +71,11 @@ def fetch_alpaca(asset, timeframe, *, start=None, end=None):
         raise ValueError('Unsupported Alpaca data feed')
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=16)
     end = min(timestamp(end), int(cutoff.timestamp()*1000)) if end else int(cutoff.timestamp()*1000)
+    from stock_rth import FRAMES as RTH_FRAMES, aggregate
+    intraday = timeframe in RTH_FRAMES
     live = start is None
-    params = dict(symbols=asset['symbol'], timeframe=FRAMES[timeframe], feed=feed,
-                  adjustment='split', asof='-', sort='desc' if live else 'asc', limit=500 if live else 10000,
+    params = dict(symbols=asset['symbol'], timeframe='30Min' if intraday else FRAMES[timeframe], feed=feed,
+                  adjustment='split', asof='-', sort='desc' if live else 'asc', limit=10000 if intraday or not live else 500,
                   start=start or '2016-01-01T00:00:00Z',
                   end=datetime.fromtimestamp(end/1000, timezone.utc).isoformat())
     bars, seen_tokens = [], set()
@@ -86,13 +94,14 @@ def fetch_alpaca(asset, timeframe, *, start=None, end=None):
                     raise ValueError()
                 local = dt.astimezone(ZoneInfo('America/New_York'))
                 from market_calendar import stock_candle_end
-                close = stock_candle_end(dt,timeframe)
+                close = dt + timedelta(minutes=30) if intraday else stock_candle_end(dt,timeframe)
                 bars.append(Candle(int(dt.timestamp()*1000), int(close.timestamp()*1000),
                                    *(float(row[k]) for k in ('o','h','l','c'))))
         except (KeyError, TypeError, ValueError, OverflowError):
             raise ValueError('Invalid Alpaca OHLC or timestamp') from None
         token = data.get('next_page_token')
-        if not token or live and len(bars)>=500:
+        enough = live and (len(aggregate(bars, timeframe, end, strict=False)) >= 501 if intraday else len(bars) >= 500)
+        if not token or live and enough:
             break
         if not isinstance(token, str) or token in seen_tokens:
             raise ValueError('Alpaca pagination did not advance')
@@ -101,6 +110,12 @@ def fetch_alpaca(asset, timeframe, *, start=None, end=None):
     else:
         raise ValueError('Alpaca historical download exceeded page limit')
     bars.sort(key=lambda c:c.start)
+    if intraday:
+        result = aggregate(bars, timeframe, end)
+        if live:
+            result[:] = result[-500:]
+        result.notes.insert(0, f'Alpaca {feed}; split-adjusted; 16-minute delay')
+        return result
     closed = check_candles(bars, end)
     return ProviderCandles(closed, [f'Alpaca {feed}; split-adjusted; 16-minute delay; US regular-session closes and holidays'])
 
@@ -122,10 +137,12 @@ def fetch_alpaca_multi(symbols, timeframe, *, end=None, lookback_days=196):
     if type(lookback_days) is not int or not 1<=lookback_days<=800:
         raise ValueError('Invalid Alpaca lookback')
     start_iso=(datetime.fromtimestamp(end_ms/1000,timezone.utc)-timedelta(days=lookback_days)).isoformat()
+    from stock_rth import FRAMES as RTH_FRAMES, aggregate
+    intraday = timeframe in RTH_FRAMES
     output={symbol:[] for symbol in symbols}
     for offset in range(0,len(symbols),100):
         batch=symbols[offset:offset+100];wanted=set(batch);tokens=set()
-        params=dict(symbols=','.join(batch),timeframe=FRAMES[timeframe],feed=feed,
+        params=dict(symbols=','.join(batch),timeframe='30Min' if intraday else FRAMES[timeframe],feed=feed,
                     adjustment='split',asof='-',sort='asc',limit=10000,start=start_iso,end=end_iso)
         for _ in range(100):
             data=request_page(params)
@@ -140,7 +157,7 @@ def fetch_alpaca_multi(symbols, timeframe, *, end=None, lookback_days=196):
                         if dt.tzinfo is None: raise ValueError()
                         local=dt.astimezone(ZoneInfo('America/New_York'))
                         from market_calendar import stock_candle_end
-                        close=stock_candle_end(dt,timeframe)
+                        close=dt+timedelta(minutes=30) if intraday else stock_candle_end(dt,timeframe)
                         output[symbol].append(Candle(int(dt.timestamp()*1000),int(close.timestamp()*1000),
                             *(float(row[key]) for key in ('o','h','l','c'))))
             except (KeyError,TypeError,ValueError,OverflowError):
@@ -156,6 +173,9 @@ def fetch_alpaca_multi(symbols, timeframe, *, end=None, lookback_days=196):
     for symbol,bars in output.items():
         bars.sort(key=lambda candle:candle.start)
         if bars:
+            if intraday:
+                result[symbol] = aggregate(bars, timeframe, end_ms)
+                continue
             result[symbol]=ProviderCandles(check_candles(bars,end_ms),[
                 f'Alpaca {feed}; split-adjusted; native {timeframe} candles'])
     return result

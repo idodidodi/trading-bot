@@ -129,11 +129,11 @@ class EngineTests(PostgresTestCase):
         import json
         asset = dict(id='NVDA', symbol='NVDA', exchange='NASDAQ', feed_confirmed=True)
         data = dict(meta=dict(symbol='NVDA', interval='4h', exchange='NASDAQ'), values=[
-            dict(datetime='2026-10-06 00:00:00', open='10', high='12', low='9', close='11'),
-            dict(datetime='2026-10-06 04:00:00', open='11', high='12', low='10', close='12')])
+            dict(datetime='2026-10-06 13:30:00', open='10', high='12', low='9', close='11'),
+            dict(datetime='2026-10-06 17:30:00', open='11', high='12', low='10', close='12')])
         with patch.dict('os.environ', {'TWELVE_DATA_API_KEY': 'secret'}), patch('scanner.urllib.request.urlopen', return_value=io.StringIO(json.dumps(data))):
             candles = fetch_twelve_data(asset, '4h')
-        now = int(datetime(2026, 10, 6, 6, tzinfo=timezone.utc).timestamp() * 1000)
+        now = int(datetime(2026, 10, 6, 18, tzinfo=timezone.utc).timestamp() * 1000)
         self.assertEqual(check_candles(candles, now), candles[:1])
         data['meta']['exchange'] = 'OTHER'
         with patch.dict('os.environ', {'TWELVE_DATA_API_KEY': 'secret'}), patch('scanner.urllib.request.urlopen', return_value=io.StringIO(json.dumps(data))):

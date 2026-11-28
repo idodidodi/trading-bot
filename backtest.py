@@ -40,11 +40,11 @@ def run_backtest(store, config, rules, *, provisional=False, job_id=None):
             row = dict(asset=asset['id'], timeframe=timeframe)
             try:
                 if asset['provider'] in ('alpaca', 'tiingo', 'fmp'):
-                    from alpaca_feed import fetch_alpaca
+                    from alpaca_feed import fetch_alpaca, exchange_name
                     from tiingo_feed import fetch_tiingo
                     if asset['provider'] == 'alpaca':
                         bars = fetch_alpaca(asset, timeframe, start='2016-01-01T00:00:00Z', end=end_iso)
-                        feed_id = f"alpaca:{asset.get('exchange', 'Alpaca-' + asset.get('alpaca_feed', 'sip') + '-split')}:{asset['symbol']}"
+                        feed_id = f"alpaca:{exchange_name(asset.get('alpaca_feed', 'sip'), timeframe)}:{asset['symbol']}"
                         row['source'] = dict(provider='Alpaca', feed=asset.get('alpaca_feed', 'sip'), adjustment='split')
                     elif asset['provider'] == 'fmp':
                         from fmp_feed import fetch_fmp

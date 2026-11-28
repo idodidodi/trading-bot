@@ -1,5 +1,62 @@
 # Telegram alert logic — canonical reference
 
+Last reviewed: 2026-11-28 (local stock intraday RTH correction; earlier sections retain their stated verification scope).
+
+## Ordinary stock intraday RTH candles — local correction, 2026-11-28
+
+Ordinary Alpaca stock/ETF 1h and 4h scans, including RSI divergence and RSI + PB,
+use split-adjusted `30Min` source bars strictly inside the US regular session.
+OHLC is aggregated from 09:30 America/New_York, never obtained by relabeling an
+existing native hourly/four-hour OHLC. Normal 4h buckets are 09:30–13:30 and
+13:30–16:00. Early-close sessions end at the calendar close: November 27, 2026
+has one 09:30–13:00 bucket. The last hourly bucket may be thirty minutes.
+DST, scheduled holidays and early closes use `market_calendar`; unscheduled
+closures still require that calendar to be updated.
+
+Only complete source half-hours and closed target buckets are evaluated, with
+the existing sixteen-minute Alpaca data delay. An incomplete oldest request
+boundary bucket is discarded; missing interior half-hours or intraday buckets
+make the feed unavailable rather than inventing prices or compressing history.
+This conservative rule can also exclude sparse/illiquid feeds. Live pagination
+counts completed RTH candles and retains the latest 500, subject to available
+provider history. Next polling uses the next actual RTH close plus the delay.
+The same policy applies to Alpaca intraday backtests, multi-symbol fetches and
+4h stock-report history. Strategies sharing these ordinary candles (including
+pin bars) consequently see the corrected candles too.
+
+Alpaca intraday source/cache/state identity is now
+`alpaca:Alpaca-{feed}-split-rth-open-v1:{symbol}`. Existing legacy cached candles
+and alerts remain historical evidence; they are not relabeled, rewritten or
+resent. Permanent ordinary scans establish a fresh baseline; old pending RSI +
+PB setups for configured assets are retired by the existing source-mismatch
+check. Weekly-selected asset admission retains its existing latest-candle rule.
+No queue replay or data migration is performed by the feed change. Any still
+queued legacy alerts need review during the deployment cutover.
+
+Twelve Data stock requests explicitly set `prepost=false`; intraday responses
+must start on an RTH-open-aligned boundary, and their final candle ends at the
+calendar close. Misaligned responses fail as unavailable. Native Alpaca daily,
+weekly and monthly OHLC remain unchanged: daily trade-condition rules exclude
+extended-hours condition T from OHLC, and weekly/monthly aggregate daily bars.
+Their midnight period identifiers are not intraday candle start times.
+[Provider aggregation rules](https://docs.alpaca.markets/us/docs/market-data-faq).
+
+The new four-group Stock RSI watch is unchanged: parent snapshots retain their
+regular-session handling; lower candles still use extended hours and New York
+clock alignment through `stock_rsi_data.request_bars`, `aggregate`, and
+`lower_histories`. The shared low-level Alpaca `request_page` is unchanged.
+
+Validation: candidate code read historical QCOM data without database writes,
+alerts, or production-file changes. November 12 produces 09:30–13:30 and
+13:30–16:00 bars; November 27 produces 09:30–13:00 with close 179.44. A full
+500-candle candidate history was retrieved. This is not a production rollout.
+Sources: `stock_rth.aggregate/next_close`, `alpaca_feed.fetch_alpaca/fetch_alpaca_multi/exchange_name`,
+`managed_assets.for_timeframe`, `scanner.fetch_twelve_data/scan_once`,
+`backtest.run_backtest`, `stock_report_data.fetch_batch`, `rsi_pb.retain_pending`,
+`scan_schedule._next_due`. Regression tests: `test_stock_rth.py` and the existing
+Alpaca, scanner, RSI + PB, stock-report, market-session and four-group watch suites.
+
+
 
 ## RSI divergence heading — reviewed 2026-11-26
 

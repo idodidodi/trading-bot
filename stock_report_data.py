@@ -56,7 +56,7 @@ def fetch_batch(symbols, frame, cutoff, history_bars, feed, *, start_ms=None):
     start = datetime.fromtimestamp(cutoff / 1000, timezone.utc) - timedelta(days=math.ceil(history_bars * days_per_bar) + 30)
     if start_ms is not None:
         start = datetime.fromtimestamp(start_ms / 1000, timezone.utc)
-    params = dict(symbols=','.join(symbols), timeframe='1Min' if frame == '1min' else provider_frames[frame], feed=feed,
+    params = dict(symbols=','.join(symbols), timeframe='1Min' if frame == '1min' else '30Min' if frame == '4h' else provider_frames[frame], feed=feed,
                   adjustment='split', asof='-', sort='asc', limit=10000,
                   start=start.isoformat(), end=datetime.fromtimestamp(cutoff / 1000, timezone.utc).isoformat())
     histories = {s: [] for s in symbols}
@@ -74,13 +74,16 @@ def fetch_batch(symbols, frame, cutoff, history_bars, feed, *, start_ms=None):
                     dt = datetime.fromisoformat(row['t'].replace('Z', '+00:00'))
                     if dt.tzinfo is None:
                         raise ValueError('Provider timestamp has no timezone')
-                    end = dt+timedelta(minutes=1) if frame == '1min' else stock_candle_end(dt, frame)
+                    end = dt+timedelta(minutes=1 if frame == '1min' else 30) if frame in ('1min', '4h') else stock_candle_end(dt, frame)
                     histories[symbol].append(Candle(int(dt.timestamp()*1000), int(end.timestamp()*1000),
                                                    *(float(row[k]) for k in ('o', 'h', 'l', 'c'))))
             except (KeyError,TypeError,ValueError,OverflowError,AttributeError):
                 raise ValueError('Invalid provider candle data') from None
         token = response.get('next_page_token')
         if not token:
+            if frame == '4h':
+                from stock_rth import aggregate
+                return {s: aggregate(bars, frame, cutoff) for s, bars in histories.items()}
             return {s: check_candles(sorted(bars, key=lambda b: b.start), cutoff) for s, bars in histories.items()}
         if not isinstance(token, str) or token in tokens:
             raise ValueError('Provider pagination did not advance')

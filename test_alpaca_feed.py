@@ -52,7 +52,7 @@ class AlpacaTests(PostgresTestCase):
 
     def test_live_feed_follows_short_pages_instead_of_reporting_missing_history(self):
         with patch('alpaca_feed.request_page',side_effect=[self.payload('2020-01-03T05:00:00Z',token='next'),self.payload()]) as request:
-            bars=fetch_alpaca(fallback_asset(self.asset),'4h')
+            bars=fetch_alpaca(fallback_asset(self.asset),'daily')
         self.assertEqual(request.call_count,2)
         self.assertEqual(len(bars),2)
 
@@ -117,7 +117,7 @@ class AlpacaTests(PostgresTestCase):
                                  timeframes=['1h'], tradingview_symbol='NASDAQ:DAX')
         validate_asset(asset)
         feed = for_timeframe(asset, '1h')
-        self.assertEqual(feed['exchange'], 'Alpaca-sip-split')
+        self.assertEqual(feed['exchange'], 'Alpaca-sip-split-rth-open-v1')
         self.assertEqual(feed['tradingview_symbol'], 'NASDAQ:DAX')
         with self.assertRaisesRegex(ValueError, 'US equity'):
             validate_asset(asset | dict(market='index'))
@@ -131,7 +131,7 @@ class AlpacaTests(PostgresTestCase):
             self.assertEqual(coverage[0]['provider'], 'alpaca')
             self.assertEqual(store.rows(), [])
             with store.connect() as db:
-                self.assertEqual(db.execute('select distinct feed from candle_cache').fetchone()[0], 'alpaca:Alpaca-sip-split:DAX')
+                self.assertEqual(db.execute("select distinct feed from candle_cache where timeframe='1h'").fetchone()[0], 'alpaca:Alpaca-sip-split-rth-open-v1:DAX')
 
     def test_hourly_historical_replay_is_supported(self):
         from backtest import replay
@@ -166,13 +166,13 @@ class AlpacaTests(PostgresTestCase):
             with patch('alpaca_feed.fetch_alpaca',return_value=bars):
                 report=run_backtest(store,dict(assets=[fallback_asset(self.asset)],timeframes=['4h']),load_rules()|{'max_band_slope_pct':1.5})
             signal=report['results'][0]['signals'][0]
-            self.assertTrue(signal['symbol'].startswith('alpaca:Alpaca-sip-split:'))
+            self.assertTrue(signal['symbol'].startswith('alpaca:Alpaca-sip-split-rth-open-v1:'))
             chart=detail(store,Path(folder),'backtest',finding_id('backtest',signal))
             self.assertTrue(chart['candles'])
             self.assertEqual(chart['candles'][0]['close'],next(c.close for c in bars if c.start==chart['candles'][0]['start']))
 
     def test_live_incomplete_candles_excluded_and_native_intervals(self):
-        for frame,expected in [('1h','1Hour'),('4h','4Hour'),('daily','1Day'),('weekly','1Week'),('monthly','1Month')]:
+        for frame,expected in [('1h','30Min'),('4h','30Min'),('daily','1Day'),('weekly','1Week'),('monthly','1Month')]:
             with patch('alpaca_feed.request_page',return_value=self.payload()) as request:
                 fetch_alpaca(fallback_asset(self.asset),frame,end='2020-01-02T05:30:00Z')
             self.assertEqual(request.call_args.args[0]['timeframe'],expected)

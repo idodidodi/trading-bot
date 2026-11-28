@@ -229,6 +229,9 @@ def fetch_twelve_data(asset, timeframe):
         raise ValueError('Confirm exact provider symbol/feed in scanner.json first')
     params = dict(symbol=asset['symbol'], interval=TIMEFRAMES[timeframe], outputsize=500,
                   timezone='UTC', order='ASC', apikey=key)
+    from market_calendar import is_stock
+    if is_stock(asset):
+        params['prepost'] = 'false'
     if asset.get('exchange'):
         params['exchange'] = asset['exchange']
     # Errors are sanitized by scan_once; never print the URL containing the API key.
@@ -251,6 +254,16 @@ def fetch_twelve_data(asset, timeframe):
         start = datetime.fromisoformat(row['datetime']).replace(tzinfo=timezone.utc)
         # Conservative calendar cutoff, NOT a claim about the exchange's closing bell.
         end = interval_end(start, timeframe)
+        if is_stock(asset) and timeframe in ('1h', '4h'):
+            from stock_rth import session, FRAMES as RTH_FRAMES
+            from market_calendar import NY, stock_trading_day
+            day = start.astimezone(NY).date()
+            opening, closing = session(day)
+            start_ms = int(start.timestamp()*1000)
+            if (not stock_trading_day(day) or not opening <= start_ms < closing
+                    or (start_ms-opening) % RTH_FRAMES[timeframe]):
+                raise ValueError('Stock provider returned a candle not aligned to the RTH opening')
+            end = datetime.fromtimestamp(min(start_ms+RTH_FRAMES[timeframe], closing)/1000, timezone.utc)
         candles.append(Candle(int(start.timestamp() * 1000), int(end.timestamp() * 1000),
                               *(float(row[k]) for k in ('open', 'high', 'low', 'close'))))
     return normalize_provider_candles(candles)
@@ -414,7 +427,7 @@ def scan_once(store, config, rules, now=None, stop=None, catchup=False, run_mome
                     from alpaca_feed import supported, fallback_asset, fetch_alpaca
                     if not config.get('alpaca_rate_limit_fallback', True) or not supported(asset):
                         raise
-                    asset = fallback_asset(asset)
+                    asset = fallback_asset(asset, timeframe)
                     row.update(provider='alpaca', exchange=asset['exchange'], fallback_from='twelvedata',
                                fallback_reason='Twelve Data quota reached')
                     raw = fetch_alpaca(asset, timeframe)
