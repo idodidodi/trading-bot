@@ -244,6 +244,17 @@ def message(payload):
     def stamp(value):
         return datetime.fromtimestamp(value / 1000, ZoneInfo('Asia/Jerusalem')).strftime('%d %b %Y at %H:%M (Israel time)') if value else 'unavailable in saved finding'
     def candle_range(label, opened_at, closed_at):
+        # Alpaca daily bars are timestamped at NY midnight, not the opening bell.
+        # Use the session open for display only; retain the saved close (including
+        # shortened sessions) and leave detector timestamps/identities untouched.
+        if payload.get('timeframe') == 'daily' and payload.get('symbol', '').startswith('alpaca:'):
+            session = datetime.fromtimestamp(opened_at / 1000, ZoneInfo('America/New_York'))
+            opened = session.replace(hour=9, minute=30, second=0, microsecond=0).astimezone(ZoneInfo('Asia/Jerusalem'))
+            role = 'comparison' if label == 'Reference' else 'trigger'
+            end = (datetime.fromtimestamp(closed_at / 1000, ZoneInfo('Asia/Jerusalem')).strftime('%H:%M')
+                   if closed_at else 'close unavailable in saved finding')
+            return (f"{label} candle ({role}): {session:%d %b %Y}; "
+                    f"regular session {opened:%H:%M}–{end} (Israel time)")
         opened = datetime.fromtimestamp(opened_at / 1000, ZoneInfo('Asia/Jerusalem'))
         if closed_at:
             closed = datetime.fromtimestamp(closed_at / 1000, ZoneInfo('Asia/Jerusalem'))

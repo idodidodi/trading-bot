@@ -1,5 +1,22 @@
 # Telegram alert logic — canonical reference
 
+Last reviewed: 2026-11-28 for daily RSI session wording; other sections retain their stated verification scope.
+
+## Alpaca daily RSI session wording
+
+Local presentation update (2026-11-28; not yet deployed): `platform_app.message`
+labels Alpaca daily RSI P1 as “Reference candle (comparison)” and P2 as
+“Signal candle (trigger)”, with an explicit day, month name and four-digit year.
+The regular session starts at 09:30 America/New_York, converted separately for
+each date to Asia/Jerusalem; the displayed end remains the saved candle close,
+including shortened sessions. Alpaca's midnight daily-bar date marker is not
+shown as the trading-session opening time. Missing saved closes are explicitly
+unavailable. Detection time remains separate. Other providers and timeframes
+retain their existing candle boundaries. This changes presentation only, not
+pivot dates, qualification, delivery identities or timing, and does not edit
+previously delivered messages. Verified by `test_daily_alert_wording.py` against
+the November 25 AVGO example, a shortened session and differing US/Israel DST.
+
 
 ## RSI divergence heading — reviewed 2026-11-26
 
