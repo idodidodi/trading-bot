@@ -24,6 +24,56 @@ class CryptoTests(unittest.TestCase):
             history=b.History(tmp)
             with patch.object(history,'raw',side_effect=[b'corrupt zip',b'0000 file.zip']):
                 with self.assertRaisesRegex(ValueError,'checksum'):history.month('BTCUSDT','1m','2025-11')
+    def test_weekly_eligibility_changes_without_fixed_cohort(self):
+        first=b.week_spec(date(2026,3,8));second=b.week_spec(date(2026,3,15))
+        class Fake:
+            def klines(self,symbol,frame,start,end):
+                count=249 if symbol=='NEW' and end==first['period_start'] else 250
+                return [candle(end-(count-i)*7*b.DAY,end-(count-i-1)*7*b.DAY) for i in range(count)]
+        self.assertEqual(b.weekly_universe(Fake(),['OLD','NEW'],first)['selected'],['OLD'])
+        self.assertEqual(b.weekly_universe(Fake(),['OLD','NEW'],second)['selected'],['NEW','OLD'])
+    def test_weekly_eligibility_failure_is_audited_and_scan_continues(self):
+        class Fake:
+            def klines(self,*args): raise OSError('missing history')
+        result=b.weekly_universe(Fake(),['A','B'],b.week_spec(date(2026,3,8)))
+        self.assertEqual(len(result['errors']),2);self.assertEqual(result['selected'],[])
+    def test_weekly_records_distinguish_empty_and_incomplete(self):
+        audit=dict(week='w',audit=[],coverage={},parents=0,entries=0)
+        self.assertEqual(b.weekly_record(audit,{},[],[])['status'],'no_match')
+        self.assertEqual(b.weekly_record(audit,{},[],[{'reason':'missing'}])['status'],'incomplete')
+        audit['audit']=[dict(kind='higher_admitted',symbol='A',direction='bullish',at=10)]
+        entries=[dict(ticker='A',direction='bullish',tf='30m',entry_time=20)]
+        row=b.weekly_record(audit,{},entries,[])
+        self.assertEqual(row['qualifying'][0]['timeframe'],'weekly')
+        self.assertEqual(row['closed_matches'][0]['timeframe'],'30m')
+        self.assertFalse(row['no_match']);self.assertEqual(row['status'],'matched')
+    def test_annual_main_rescans_all_52_weeks_and_writes_empty_weeks(self):
+        import json
+        import io
+        from contextlib import redirect_stdout
+        from pathlib import Path
+        class Fake:
+            receipts=[]
+        def eligible(history,symbols,spec):
+            self.assertEqual(symbols,['A','B'])
+            return dict(selected=['A'] if spec['week']<'2026-01-01' else ['B'],checks=[],errors=[])
+        def replay(spec,cases,rules):
+            expected='A' if spec['week']<'2026-01-01' else 'B'
+            self.assertEqual(list(cases),[expected])
+            return [],dict(week=spec['week'],coverage={expected:{}},parents=0,entries=0,audit=[])
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()), \
+             patch.object(b,'History',return_value=Fake()), \
+             patch.object(b,'candidate_symbols',return_value=['A','B']), \
+             patch.object(b,'weekly_universe',side_effect=eligible) as scan, \
+             patch.object(b,'fetch_case',return_value={}), \
+             patch.object(b,'replay',side_effect=replay), \
+             patch('sys.argv',['backtest','--annual','--output',tmp]):
+            b.main()
+            result=json.loads((Path(tmp)/'results.json').read_text())
+            self.assertEqual(scan.call_count,52)
+            self.assertEqual(len(result['weeks']),52)
+            self.assertTrue(all(w['status']=='no_match' for w in result['weeks']))
+            self.assertIn('Weekly candidate scan',(Path(tmp)/'report.html').read_text())
     def case(self):
         spec=b.week_spec(date(2026,3,8));first=spec['period_start'];sunday=spec['close']-b.DAY
         return spec,dict(symbol='TEST',weekly=[candle(first-7*b.DAY,first)],daily=[candle(first+i*b.DAY,first+(i+1)*b.DAY) for i in range(6)],minutes=[candle(t) for t in range(sunday,spec['expires'],60000)])

@@ -18,14 +18,32 @@ No parameter optimization or favorable-outcome selection is performed.
 
 All candles come from Binance **spot USDT pairs**. No mixed venues. Public REST
 `/api/v3/exchangeInfo` captures the current active spot USDT pair universe. Known
-stablecoin bases and leveraged-token suffixes are excluded. Python Random seed
-20261127 shuffles the sorted universe. The first six pairs with at least 250
-contiguous completed weekly candles at the study's first week are retained.
-Every coverage check, original candidate universe and selected pair is saved in
-`results.json`. This is a small random sample of surviving currently active pairs
-with long history, not the historical full crypto universe. Delisted coins and
-newer listings are absent. Historical liquidity, spreads and short borrow are not
-selection inputs. Spot short results are hypothetical directional returns.
+stablecoin bases and leveraged-token suffixes are excluded. By default, **each
+historical week scans all pairs in that captured universe anew**. Eligibility
+requires the trailing 250 completed weekly candles to be contiguous at that
+week's period start. Newly history-eligible pairs can join subsequent weeks.
+Every eligible pair is replayed causally; qualifying weekly divergence parents
+and their lower-frame entries are selected by the existing strategy, not by
+random sampling or future returns. Direction caps and deterministic symbol order
+remain unchanged. No candidates or admission state carry across weeks.
+
+`results.json` records each week's eligibility checks, errors, admitted symbols
+and directions (`weekly` timeframe), closed matches with lower timeframe and
+entry time, and explicit no-match status. Incomplete scans are labeled
+`incomplete`, so missing data is not presented as a clean no-match result.
+The HTML report includes these weekly records, including empty weeks.
+
+The universe snapshot contains currently active pairs, not the historical full
+market universe: delisted pairs are absent (survivorship bias). Historical trading
+status is not reconstructed; available candle history is the eligibility proxy.
+Historical liquidity, spreads and borrow availability are not selection inputs.
+Spot short results are hypothetical directional returns.
+
+`--sampled-pilot` explicitly reproduces the legacy seed-20261127 six-coin cohort;
+it cannot be combined with `--annual`. The original four-week/six-coin report is
+an older bounded pilot, not a full-universe or annual result. The new full-universe
+annual mode has not yet been run. The fixed four pilot dates remain available to
+bound the time period while scanning all eligible pairs by default.
 
 Public `/api/v3/klines` supplies weekly and daily candles. Official monthly
 archives supply 15m warmup and 1m replay/outcome candles; each archive is verified

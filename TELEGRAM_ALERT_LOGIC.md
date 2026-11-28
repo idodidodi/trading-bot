@@ -1087,7 +1087,7 @@ The ATR settings release includes the previously deployed UI-only change
 validated in the Assets editor. This preserves existing user controls while adding
 the NEAR ATR explanation. It does not change asset selections or scanner logic.
 
-## Isolated crypto weekly research exception — reviewed 2026-11-27
+## Isolated crypto weekly research exception — reviewed 2026-11-28
 
 `research/crypto_weekly_backtest.py` is local research, not a production alert
 path; it never opens a runtime database, sends Telegram messages, places orders
@@ -1111,3 +1111,15 @@ each entry. Public Binance spot data is read-only, with no production resources.
 Verification: `test_crypto_weekly_backtest.py` covers provisional and closed-parent
 entries, later invalidation, per-TF limits, nonempty causal detector comparisons,
 UTC week boundaries, missing data, timestamp units and directional outcomes.
+
+Research candidate selection (`weekly_universe`, `main`): each historical week
+independently checks the entire captured current-active Binance spot USDT universe
+for 250 contiguous completed weekly bars, then replays every eligible pair with
+fresh parent/admission state. Annual mode never uses the legacy fixed six-coin
+sample; `--sampled-pilot` is an explicit nonannual reproduction option only.
+Eligibility, qualifying weekly symbols/directions, lower entry timeframes and
+no-match/incomplete weeks are recorded by `weekly_record`. The current listing
+snapshot excludes delisted pairs and does not reconstruct historical trading
+status; this survivor bias is disclosed. No production setting or live scanner
+behavior changed. Tests cover changing weekly eligibility, scan errors and weekly
+candidate/no-match records in addition to the existing strategy checks.

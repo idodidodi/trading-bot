@@ -82,11 +82,15 @@ def parse_rows(rows,end):
         out.append(Candle(a//div,(z+1)//div,*(float(r[i]) for i in (1,2,3,4))))
     return check_candles(out,end)
 STABLE={'USDC','USDP','TUSD','BUSD','DAI','FDUSD','USDD','USDS','USD1','USDE','USDF','USDT','EUR','EURI','AEUR','XUSD','PYUSD','RLUSD','UST','USTC','PAX','EURC'}
-def universe(history,seed,count,first_start):
+def candidate_symbols(history):
     info=history.api('exchangeInfo')
     symbols=sorted(s['symbol'] for s in info['symbols'] if s['status']=='TRADING' and s.get('isSpotTradingAllowed')
         and s['quoteAsset']=='USDT' and s['baseAsset'] not in STABLE
         and not re.search(r'(UP|DOWN|BULL|BEAR)$',s['baseAsset']))
+    return symbols
+
+def universe(history,seed,count,first_start):
+    symbols=candidate_symbols(history)
     order=list(symbols);random.Random(seed).shuffle(order);selected=[];checks=[]
     for symbol in order:
         bars=history.klines(symbol,'1w',first_start-275*7*DAY,first_start)
@@ -98,6 +102,33 @@ def universe(history,seed,count,first_start):
     return dict(seed=seed,current_candidate_pool=symbols,permuted_coverage_checks=checks,selected=selected,
       selection='Seeded shuffle of current active Binance spot USDT pairs, retain first with >=250 contiguous completed weekly candles before first pilot week; eligibility uses history coverage only.',
       exclusions='Listed stablecoin bases and UP/DOWN/BULL/BEAR token suffixes excluded. Current listing survivor bias; not historical full market universe.')
+def weekly_universe(history, symbols, spec):
+    """Coverage eligibility is recomputed before each week's open; never outcome-ranked."""
+    selected, checks, errors = [], [], []
+    cutoff = spec['period_start']
+    for symbol in sorted(symbols):
+        try:
+            bars = history.klines(symbol, '1w', cutoff-275*7*DAY, cutoff)
+            tail = bars[-250:]
+            ok = (len(tail)==250 and tail[-1].end==cutoff
+                  and all(b.end-b.start==7*DAY for b in tail)
+                  and all(a.end==b.start for a,b in zip(tail,tail[1:])))
+            checks.append(dict(symbol=symbol,weekly_bars=len(bars),eligible=ok))
+            if ok: selected.append(symbol)
+        except (OSError, ValueError, KeyError) as exc:
+            checks.append(dict(symbol=symbol,eligible=False,reason=str(exc)))
+            errors.append(dict(week=spec['week'],symbol=symbol,stage='weekly_eligibility',reason=str(exc)))
+    return dict(selected=selected,checks=checks,errors=errors)
+
+def weekly_record(audit, eligibility, entries, errors):
+    qualifying = [dict(symbol=a['symbol'],direction=a['direction'],timeframe='weekly',at=a['at'])
+                  for a in audit['audit'] if a['kind']=='higher_admitted']
+    matches = [dict(symbol=e['ticker'],direction=e['direction'],timeframe=e['tf'],at=e['entry_time'])
+               for e in entries]
+    incomplete = bool(errors) or any(a['kind']=='data_unavailable' for a in audit['audit'])
+    return dict(audit, eligibility=eligibility, qualifying=qualifying, closed_matches=matches,
+                no_match=not entries, status='incomplete' if incomplete else ('matched' if entries else 'no_match'))
+
 def fetch_case(h,symbol,spec):
     sunday=spec['close']-DAY;finish=spec['expires']+5*DAY
     return dict(symbol=symbol,weekly=h.klines(symbol,'1w',spec['period_start']-275*7*DAY,spec['period_start']),
@@ -239,38 +270,47 @@ def report(result,path):
     content+=table(['Week beginning UTC','Coins replayed','Weekly parents','Closed lower matches','Unavailable parent evaluations'],[[w['week'],len(w['coverage']),w['parents'],w['entries'],sum(a['kind']=='data_unavailable' for a in w['audit'])] for w in result['weeks']])
     content+='<p>'+html.escape(json.dumps(result['configuration']))+'</p><p>'+html.escape(result['universe']['selection']+' '+result['universe']['exclusions'])+'</p>'
     content+='<p>Pairs: '+', '.join(result['universe']['selected'])+'. All times UTC. Prices and returns in USDT; USDT is not USD. Hypothetical short returns on spot quotes; no borrow assumptions. Zero delays and costs. Entry requires closed lower candle; weekly may still be provisional. Max gain/DD are subsequent minute-bar excursions, not executable exits or realized P&amp;L. No present-day price used. Overlapping trades are not a portfolio.</p>'
+    content+='<h2>Weekly candidate scan</h2>'+table(['Week','Status','Eligible pairs','Symbol','Direction','Timeframe'],[[w['week'],w.get('status','legacy'),len(w.get('eligibility',{}).get('selected',[])),q['symbol'],q['direction'],q['timeframe']] for w in result['weeks'] for q in (w.get('qualifying',[])+w.get('closed_matches',[]) or [dict(symbol='No matches',direction='—',timeframe='—')])])
     content+='<h2>All closed matches, grouped by lower timeframe</h2>'+summary('all_signal_summary')
     content+='<h2>First chronological entry per coin/week/direction</h2><p>Lowest timeframe breaks simultaneous ties only; later lower timeframes cannot replace an earlier entry.</p>'+summary('selected_summary')
     content+='<h2>Signal and outcome details</h2>'+table(['Pair','Name','Week','TF','Side','Entry USDT','Entry UTC','Weekly','Slot','Horizon','Data','Return','Max gain','Gain time UTC','Max DD','DD time UTC'],details)
     content+='<h2>Data exclusions</h2><pre>'+html.escape(json.dumps(result['errors'],indent=2))+'</pre><p>Raw audit, universe eligibility checks and source SHA256 receipts: <a href="results.json">results.json</a></p>'
     (path/'report.html').write_text(content)
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--cache',default='research/data/crypto-cache');p.add_argument('--output',default='research/results/crypto-pilot');p.add_argument('--annual',action='store_true');p.add_argument('--seed',type=int,default=20261127);p.add_argument('--coins',type=int,default=6);p.add_argument('--after-hours',type=int,default=24,choices=(0,24,48));args=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--cache',default='research/data/crypto-cache');p.add_argument('--output',default='research/results/crypto-pilot');p.add_argument('--annual',action='store_true');p.add_argument('--sampled-pilot',action='store_true',help='Reproduce legacy six-coin pilot only; incompatible with --annual');p.add_argument('--seed',type=int,default=20261127);p.add_argument('--coins',type=int,default=6);p.add_argument('--after-hours',type=int,default=24,choices=(0,24,48));args=p.parse_args()
+    if args.annual and args.sampled_pilot: p.error('--annual must rescan the full eligible universe; omit --sampled-pilot')
     h=History(args.cache);rules=load_rules();start=date(2025,11,1);end=date(2026,11,1)
     dates=week_dates(start,end) if args.annual else [date.fromisoformat(s) for s in PILOT]
     specs=[week_spec(d,args.after_hours) for d in dates]
-    # Eligibility is frozen at study start, identical for pilot and annual replay.
-    first_period=week_spec(week_dates(start,end)[0])['period_start']
-    pool=universe(h,args.seed,args.coins,first_period)
-    print('Selected:',','.join(pool['selected']),flush=True)
+    symbols=candidate_symbols(h)
+    if args.sampled_pilot:
+        pool=universe(h,args.seed,args.coins,week_spec(week_dates(start,end)[0])['period_start'])
+    else:
+        pool=dict(current_candidate_pool=symbols,selected=symbols,
+          selection='Every historical week independently checks all current candidate pairs for 250 contiguous completed weekly candles, then causally replays every eligible pair. No fixed six-coin cohort.',
+          exclusions='Current active Binance spot USDT universe snapshot: delisted pairs are absent (survivorship bias). Historical listing/trading status is not reconstructed; weekly history coverage is the eligibility proxy. Stablecoin bases and leveraged-token suffixes excluded.')
+    print('Universe size:',len(pool['selected']),flush=True)
     result=dict(configuration=dict(study_start=str(start),study_end_exclusive=str(end),pilot=not args.annual,
-      venue='Binance spot',quote='USDT',seed=args.seed,weekly_boundary='Monday 00:00 UTC',watch_before_hours=3,
+      venue='Binance spot',quote='USDT',seed=args.seed if args.sampled_pilot else None,selection_mode='legacy_sampled_pilot' if args.sampled_pilot else 'weekly_full_universe',weekly_boundary='Monday 00:00 UTC',watch_before_hours=3,
       watch_after_hours=args.after_hours,watch_window_status='24h continuation explicitly user-confirmed; CLI 0h/48h are alternative research scenarios',
       horizons='Elapsed 24/7 time: 1h,4h,1d,3d,5d',delay=0,costs=0,weekly_warmup=250,
       max_closed_matches_per_pair_tf_week=4,source_commit='02d4ecb0261f3437ac186d867c7f34d365a65f71',
       rules=rules,runner_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()),universe=pool,entries=[],weeks=[],errors=[])
     for spec in specs:
+        eligibility=weekly_universe(h,pool['selected'],spec)
+        week_errors=list(eligibility['errors'])
         cases={}
-        for symbol in pool['selected']:
+        for symbol in eligibility['selected']:
             try:
                 cases[symbol]=fetch_case(h,symbol,spec)
                 print('Downloaded',spec['week'],symbol,flush=True)
             except (OSError,ValueError,KeyError) as exc:
-                result['errors'].append(dict(week=spec['week'],symbol=symbol,reason=str(exc)))
+                week_errors.append(dict(week=spec['week'],symbol=symbol,stage='replay_data',reason=str(exc)))
         entries,audit=replay(spec,cases,rules)
         for e in entries:
             case=cases[e['ticker']];e['outcomes']={label:outcome(e,case['minutes'],e['entry_time']+duration,case['outcome_end']) for label,duration in HORIZONS.items()}
-        result['entries']+=entries;result['weeks'].append(audit)
+        result['errors']+=week_errors
+        result['entries']+=entries;result['weeks'].append(weekly_record(audit,eligibility,entries,week_errors))
         result['all_signal_summary']=summaries(result['entries']);selected=select_first(result['entries']);result['selected_entries']=selected;result['selected_summary']=summaries(selected);result['receipts']=list({r['url']:r for r in h.receipts}.values())
         report(result,args.output)
         print('Replayed',spec['week'],'entries',len(entries),'parents',audit['parents'],flush=True)
